@@ -1,4 +1,4 @@
-# AGENTS.md — 项目指南
+# AGENTS.md — idapro python插件项目指南
 
 ## 项目概述
 

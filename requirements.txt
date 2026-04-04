@@ -1,0 +1,5 @@
+# IDAPython type stubs for IDE autocomplete
+# pip install idapro brings in .pyi stubs for ida_* modules
+# These are NOT runtime dependencies — IDA Pro provides them at runtime
+# They exist solely so your IDE can provide autocomplete and type checking
+idapro
