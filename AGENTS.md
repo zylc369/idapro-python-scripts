@@ -162,8 +162,8 @@ level: beginner|intermediate|advanced
 
 ## 注意事项
 
-- `main.py` 当前为 PyCharm 自动生成的占位文件，开发时应替换为实际入口
-- `.venv/` 为本地开发环境，已在 `.gitignore` 中排除
-- 新脚本应放置在当前目录下，按功能命名（如 `list_encrypted_strings.py`）
-- 复杂功能考虑拆分为子目录（如 `occlusion/`）
-- 脚本中如需用户交互，使用 `ida_kernwin.ask_str`、`ida_kernwin.ask_yn` 等函数
+- `main.py` 当前为 PyCharm 自动生成的占位文件，开发时应替换为实际入口。
+- `.venv/` 为本地开发环境。
+- 新脚本应按功能命名（如 `list_encrypted_strings.py`）。
+- 脚本应按照类型放到对应的子目录（如 `debugger/`、`decompiler/`、`disassembler/`、`idbs`、`misc`、`types`、`ui`）。
+- 脚本中如需用户交互，使用 `ida_kernwin.ask_str`、`ida_kernwin.ask_yn` 等函数。
