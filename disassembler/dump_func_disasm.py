@@ -5,20 +5,21 @@ description:
   根据函数名或十六进制地址，生成完整的反汇编列表（包括所有尾块），
   并写入指定的输出文件或目录。
 
-  对话框模式（无参数 → 弹框）：
+  对话框模式（IDA GUI 内，无参数 → 弹框）：
     exec(open("dump_func_disasm.py", encoding="utf-8").read())
 
-  CLI 模式（通过 sys.argv 传参 → 不弹框）：
+  IDA GUI 内 CLI 模式（通过 sys.argv 传参 → 不弹框）：
     import sys
     sys.argv = ["", "--use-mode", "cli", "--addr", "main", "--output", "/tmp/output/"]
     exec(open("dump_func_disasm.py", encoding="utf-8").read())
 
-  CLI 参数格式：
-    --use-mode cli --addr <函数名或地址> --output <输出目录或文件>
-
-  也可以加载后直接调用函数（同样不弹框）：
+  编程方式调用（IDA GUI 内）：
     exec(open("dump_func_disasm.py", encoding="utf-8").read())
     dump_func_disasm("main", "/tmp/output/")
+
+  命令行 headless 模式（通过 idat -A -S 调用，用环境变量传参）：
+    IDA_FUNC_ADDR=main IDA_OUTPUT=/tmp/output.asm \
+      idat -A -S"dump_func_disasm.py" binary.i64
 
   当 output_path 为目录时，脚本自动生成文件名，格式：<func_name>_0x<addr>.asm
 
@@ -257,7 +258,48 @@ def _parse_cli_argv(argv):
     return args[addr_idx + 1], args[output_idx + 1]
 
 
-if __name__ == "__main__":
+def _parse_env_args():
+    """从环境变量读取 headless 参数。
+
+    Returns:
+        (func_id, output_path) 元组，缺少必要参数时返回 None。
+    """
+    func_id = os.environ.get("IDA_FUNC_ADDR", "").strip()
+    output_path = os.environ.get("IDA_OUTPUT", "").strip()
+    if func_id and output_path:
+        return func_id, output_path
+    return None
+
+
+def _run_headless(func_id, output_path):
+    """idat headless 入口：等待分析 → 导出 → 保存 → 退出。"""
+    import ida_auto
+    import ida_pro
+
+    ida_auto.auto_wait()
+
+    success = dump_func_disasm(func_id, output_path)
+
+    ida_pro.qexit(0 if success else 1)
+
+
+# 注意：headless 入口逻辑必须在模块级执行，不能放在 if __name__ == "__main__" 内。
+# 原因：IDA 通过 ida_idaapi.py 的 exec(code, g) 执行 -S 指定的脚本，
+# 此时 __name__ 被设为脚本文件名而非 "__main__"，if __name__ == "__main__" 永远为 False。
+# 因此用 ida_kernwin.cvar.batch 在模块级判断是否处于 headless 模式。
+
+_batch = bool(ida_kernwin.cvar.batch)
+_env = _parse_env_args()
+
+if _batch and _env is not None:
+    _run_headless(_env[0], _env[1])
+elif _batch:
+    ida_kernwin.msg(
+        "[!] headless mode requires IDA_FUNC_ADDR and IDA_OUTPUT env vars\n"
+    )
+    import ida_pro
+    ida_pro.qexit(1)
+elif __name__ == "__main__":
     has_args = len(sys.argv) > 1
     cli_result = _parse_cli_argv(sys.argv)
     sys.argv = sys.argv[:1]
