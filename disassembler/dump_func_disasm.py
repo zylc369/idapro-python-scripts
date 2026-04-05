@@ -9,8 +9,12 @@ description:
     exec(open("dump_func_disasm.py", encoding="utf-8").read())
 
   CLI 模式（通过 sys.argv 传参 → 不弹框）：
-    import sys; sys.argv = ["", "main", "/tmp/output/"]; exec(open("dump_func_disasm.py", encoding="utf-8").read())
-    import sys; sys.argv = ["", "0x401000", "/tmp/main.asm"]; exec(open("dump_func_disasm.py", encoding="utf-8").read())
+    import sys
+    sys.argv = ["", "--use-mode", "cli", "--addr", "main", "--output", "/tmp/output/"]
+    exec(open("dump_func_disasm.py", encoding="utf-8").read())
+
+  CLI 参数格式：
+    --use-mode cli --addr <函数名或地址> --output <输出目录或文件>
 
   也可以加载后直接调用函数（同样不弹框）：
     exec(open("dump_func_disasm.py", encoding="utf-8").read())
@@ -217,11 +221,52 @@ def show_dialog():
     f.Free()
 
 
+def _parse_cli_argv(argv):
+    """解析 CLI 参数，返回 (func_id, output_path) 或 None。
+
+    合法格式：--use-mode cli --addr <值> --output <值>
+    """
+    args = argv[1:]
+    if len(args) < 6:
+        return None
+
+    try:
+        use_mode_idx = args.index("--use-mode")
+    except ValueError:
+        return None
+
+    if use_mode_idx + 1 >= len(args) or args[use_mode_idx + 1] != "cli":
+        return None
+
+    try:
+        addr_idx = args.index("--addr")
+    except ValueError:
+        return None
+
+    if addr_idx + 1 >= len(args) or args[addr_idx + 1].startswith("--"):
+        return None
+
+    try:
+        output_idx = args.index("--output")
+    except ValueError:
+        return None
+
+    if output_idx + 1 >= len(args) or args[output_idx + 1].startswith("--"):
+        return None
+
+    return args[addr_idx + 1], args[output_idx + 1]
+
+
 if __name__ == "__main__":
-    if len(sys.argv) >= 3:
-        func_id = sys.argv[1]
-        output_path = sys.argv[2]
-        sys.argv = sys.argv[:1]
-        dump_func_disasm(func_id, output_path)
+    has_args = len(sys.argv) > 1
+    cli_result = _parse_cli_argv(sys.argv)
+    sys.argv = sys.argv[:1]
+    if cli_result is not None:
+        dump_func_disasm(cli_result[0], cli_result[1])
     else:
+        if has_args:
+            ida_kernwin.msg(
+                "[!] 参数格式错误，正确格式: "
+                "--use-mode cli --addr <函数名或地址> --output <输出路径>\n"
+            )
         show_dialog()
