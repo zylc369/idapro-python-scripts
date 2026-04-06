@@ -49,3 +49,6 @@ htmlcov/
 .dmypy.json
 dmypy.json
 .pyre/
+
+# Shell script runtime config
+.config/
