@@ -10,16 +10,18 @@ description:
 
   IDA GUI 内 CLI 模式（通过 sys.argv 传参 → 不弹框）：
     import sys
-    sys.argv = ["", "--use-mode", "cli", "--addr", "main", "--output", "/tmp/output/"]
+    sys.argv = ["", "--use-mode", "cli", "--addr", "main", "--output", "/tmp/output/", "--ai-decompiler"]
     exec(open("dump_func_disasm.py", encoding="utf-8").read())
 
   编程方式调用（IDA GUI 内）：
     exec(open("dump_func_disasm.py", encoding="utf-8").read())
-    dump_func_disasm("main", "/tmp/output/")
+    dump_func_disasm("main", "/tmp/output/", ai_decompiler=True)
 
   命令行 headless 模式（通过 idat -A -S 调用，用环境变量传参）：
-    IDA_FUNC_ADDR=main IDA_OUTPUT=/tmp/output.asm \
+    IDA_FUNC_ADDR=main IDA_OUTPUT=/tmp/output.asm IDA_AI_DECOMPILER=1 \
       idat -A -S"dump_func_disasm.py" binary.i64
+
+  --ai-decompiler: 可选，生成汇编后调用 AI 反编译器，将汇编反编译为 Python/C/C++
 
   当 output_path 为目录时，脚本自动生成文件名，格式：<func_name>_0x<addr>.asm
 
@@ -172,17 +174,68 @@ def _resolve_output_path(output_path, func):
     return output_path
 
 
-def dump_func_disasm(func_id, output_path):
+def _call_ai_decompiler(asm_path):
+    """调用 AI 反编译器，对生成的汇编文件进行反编译。
+
+    通过 ai.opencode.run_opencode 以非交互模式调用 opencode，
+    将汇编文件反编译为 Python/C/C++ 代码，输出到汇编文件所在目录。
+
+    Args:
+        asm_path: 汇编文件的绝对路径。
+
+    Returns:
+        成功返回 True，失败返回 False。
+    """
+    asm_path = os.path.abspath(asm_path)
+    asm_dir = os.path.dirname(asm_path)
+
+    prompt = (
+        f"反编译`{asm_path}`到`{asm_dir}`目录中，"
+        "输出语言为C/C++或Python，优先使用Python。"
+        "Python通常能够等价的表达C/C++逻辑，Python不需要考虑较为复杂的内存申请、释放，"
+        "它的库也很丰富、易于安装。"
+        "**Python代码必须严格保持与原汇编代码的功能等价性。**"
+    )
+
+    ida_kernwin.msg(f"[*] 正在调用 AI 反编译器...\n")
+    ida_kernwin.msg(f"[*] 汇编文件: {asm_path}\n")
+    ida_kernwin.msg(f"[*] 输出目录: {asm_dir}\n")
+
+    cwd = os.getcwd()
+    if cwd not in sys.path:
+        sys.path.insert(0, cwd)
+
+    try:
+        from ai.opencode import run_opencode
+    except ImportError:
+        ida_kernwin.msg(
+            "[!] 无法导入 ai.opencode 模块，"
+            "请确认项目根目录在 sys.path 中\n"
+        )
+        return False
+
+    result = run_opencode(prompt)
+
+    if result["success"]:
+        ida_kernwin.msg(f"[+] AI 反编译完成\n")
+    else:
+        ida_kernwin.msg(f"[!] AI 反编译失败: {result['message']}\n")
+
+    return result["success"]
+
+
+def dump_func_disasm(func_id, output_path, ai_decompiler=False):
     """将函数反汇编导出到文件。
 
     Args:
         func_id: 函数名（如 "main"）或十六进制地址（如 "0x401000"）。
         output_path: 输出文件路径，或目录（自动生成文件名）。
+        ai_decompiler: 是否在导出后调用 AI 反编译器。默认 False。
 
     Returns:
         成功返回 True，失败返回 False。
     """
-    ida_kernwin.msg(f"[*] 开始导出函数反汇编: func_id='{func_id}', output='{output_path}'\n")
+    ida_kernwin.msg(f"[*] 开始导出函数反汇编: func_id='{func_id}', output='{output_path}', ai_decompiler={ai_decompiler}\n")
 
     func = resolve_function(func_id)
     if func is None:
@@ -214,6 +267,10 @@ def dump_func_disasm(func_id, output_path):
         f"[+] 已导出 '{func_name}' (0x{func.start_ea:X}, "
         f"{func.size()} 字节) -> {filepath}\n"
     )
+
+    if ai_decompiler:
+        _call_ai_decompiler(filepath)
+
     return True
 
 
@@ -229,10 +286,12 @@ BUTTON CANCEL 取消
 
 <##函数名或地址 (如 main 或 0x401000) :{func_id}>
 <##输出文件或目录路径:{output_path}>
+<{ai_decompiler}>使用 AI 反编译>
 """,
             {
                 "func_id": F.StringInput(),
                 "output_path": F.StringInput(),
+                "ai_decompiler": F.BoolInput(),
             },
         )
 
@@ -244,9 +303,10 @@ def show_dialog():
     if ok == 1:
         func_id = (f.func_id.value or "").strip()
         output_path = (f.output_path.value or "").strip()
+        ai_decompiler = bool(f.ai_decompiler.value)
         if func_id and output_path:
             ida_kernwin.msg("[*] 对话框模式: 用户确认导出\n")
-            dump_func_disasm(func_id, output_path)
+            dump_func_disasm(func_id, output_path, ai_decompiler=ai_decompiler)
         else:
             ida_kernwin.msg("[!] 已取消: 函数标识和输出路径不能为空\n")
     else:
@@ -255,9 +315,9 @@ def show_dialog():
 
 
 def _parse_cli_argv(argv):
-    """解析 CLI 参数，返回 (func_id, output_path) 或 None。
+    """解析 CLI 参数，返回 (func_id, output_path, ai_decompiler) 或 None。
 
-    合法格式：--use-mode cli --addr <值> --output <值>
+    合法格式：--use-mode cli --addr <值> --output <值> [--ai-decompiler]
     """
     args = argv[1:]
     if len(args) < 6:
@@ -287,26 +347,30 @@ def _parse_cli_argv(argv):
     if output_idx + 1 >= len(args) or args[output_idx + 1].startswith("--"):
         return None
 
-    return args[addr_idx + 1], args[output_idx + 1]
+    ai_decompiler = "--ai-decompiler" in args
+
+    return args[addr_idx + 1], args[output_idx + 1], ai_decompiler
 
 
 def _parse_env_args():
     """从环境变量读取 headless 参数。
 
     Returns:
-        (func_id, output_path) 元组，缺少必要参数时返回 None。
+        (func_id, output_path, ai_decompiler) 元组，缺少必要参数时返回 None。
     """
     func_id = os.environ.get("IDA_FUNC_ADDR", "").strip()
     output_path = os.environ.get("IDA_OUTPUT", "").strip()
+    ai_decompiler = bool(os.environ.get("IDA_AI_DECOMPILER", "").strip())
     ida_kernwin.msg(
-        f"[*] 环境变量: IDA_FUNC_ADDR='{func_id}', IDA_OUTPUT='{output_path}'\n"
+        f"[*] 环境变量: IDA_FUNC_ADDR='{func_id}', IDA_OUTPUT='{output_path}', "
+        f"IDA_AI_DECOMPILER='{ai_decompiler}'\n"
     )
     if func_id and output_path:
-        return func_id, output_path
+        return func_id, output_path, ai_decompiler
     return None
 
 
-def _run_headless(func_id, output_path):
+def _run_headless(func_id, output_path, ai_decompiler=False):
     """idat headless 入口：等待分析 → 导出 → 保存 → 退出。"""
     import ida_auto
     import ida_pro
@@ -315,7 +379,7 @@ def _run_headless(func_id, output_path):
     ida_auto.auto_wait()
     ida_kernwin.msg("[*] headless 模式: 自动分析完成，开始导出\n")
 
-    success = dump_func_disasm(func_id, output_path)
+    success = dump_func_disasm(func_id, output_path, ai_decompiler=ai_decompiler)
 
     ida_kernwin.msg(
         f"[{'+'if success else '!'}] headless 模式: "
@@ -335,7 +399,7 @@ _env = _parse_env_args()
 
 if _batch and _env is not None:
     ida_kernwin.msg("[*] 检测到 headless 模式 (batch=True)，使用环境变量参数\n")
-    _run_headless(_env[0], _env[1])
+    _run_headless(_env[0], _env[1], ai_decompiler=_env[2])
 elif _batch:
     ida_kernwin.msg(
         "[!] headless 模式需要设置 IDA_FUNC_ADDR 和 IDA_OUTPUT 环境变量\n"
@@ -348,12 +412,12 @@ elif __name__ == "__main__":
     sys.argv = sys.argv[:1]
     if cli_result is not None:
         ida_kernwin.msg("[*] CLI 模式: 使用命令行参数\n")
-        dump_func_disasm(cli_result[0], cli_result[1])
+        dump_func_disasm(cli_result[0], cli_result[1], ai_decompiler=cli_result[2])
     else:
         if has_args:
             ida_kernwin.msg(
                 "[!] 参数格式错误，正确格式: "
-                "--use-mode cli --addr <函数名或地址> --output <输出路径>\n"
+                "--use-mode cli --addr <函数名或地址> --output <输出路径> [--ai-decompiler]\n"
             )
         ida_kernwin.msg("[*] 对话框模式: 等待用户输入\n")
         show_dialog()

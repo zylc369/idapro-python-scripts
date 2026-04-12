@@ -33,6 +33,7 @@ output=""
 log_path=""
 input_file=""
 ida_path=""
+ai_decompiler=""
 
 print_usage() {
     cat >&2 << EOF
@@ -64,6 +65,7 @@ print_usage() {
     echo "  --output <路径>          可选， 输出文件或目录路径 (默认: 当前执行目录)"
     echo "  --log <路径>             可选， idat 日志文件路径 (默认: 当前执行目录/dump_func_disasm.log)"
     echo "  --ida-path <路径>        可选， IDA Pro 安装目录路径 (默认: 自动检测)"
+    echo "  --ai-decompiler         可选， 生成汇编后调用 AI 反编译器"
     echo "  -h, --help              显示此帮助信息"
 }
 
@@ -90,6 +92,10 @@ parse_args() {
             -p|--ida-path)
                 ida_path="$2"
                 shift 2
+                ;;
+            --ai-decompiler)
+                ai_decompiler="1"
+                shift
                 ;;
             -h|--help)
                 print_usage
@@ -156,10 +162,12 @@ execute_idat() {
     echo "[*] 输出: $output" >&2
     echo "[*] 日志: $log_path" >&2
     echo "[*] 目标: $input_file" >&2
+    echo "[*] AI 反编译: ${ai_decompiler:-否}" >&2
 
     local exit_code=0
     IDA_FUNC_ADDR="$addr" \
     IDA_OUTPUT="$output" \
+    IDA_AI_DECOMPILER="${ai_decompiler:-}" \
     "$ida_dir/idat" -v -A \
         -L"$log_path" \
         -S"$PYTHON_SCRIPT" \
