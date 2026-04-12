@@ -10,7 +10,8 @@
 ai/              # AI 辅助工具（opencode 封装等）
 analysis_details/ # 反汇编分析产物（.asm/.c 文件）
 demo.py          # 示例脚本
-disassembler/    # 反汇编操作脚本
+disassembler/    # 反汇编操作脚本（每个 .py 可附带同名 .sh headless wrapper）
+shell/library/   # 可复用的 shell 库（IDA 路径检测、数据库锁检测等）
 docs/            # 文档与需求
 rules/           # 详细规则文档（按需加载）
 test/            # 测试
@@ -65,6 +66,8 @@ IDA_FUNC_ADDR=main IDA_OUTPUT=/tmp/output.asm \
 实现要点：用 `ida_kernwin.cvar.batch` 判断 headless 模式，`os.environ` 读取环境变量，`ida_auto.auto_wait()` 等待分析完成，`ida_pro.qexit(exit_code)` 退出。
 
 > **关键**：headless 入口逻辑**必须在模块级执行**，不能放在 `if __name__ == "__main__"` 内。原因是 IDA 通过 `ida_idaapi.py` 的 `exec(code, g)` 执行 `-S` 指定的脚本，此时 `__name__` 被设为脚本文件名而非 `"__main__"`。
+
+**新建 headless 脚本时**，参阅 [`rules/headless-automation-guide.md`](rules/headless-automation-guide.md)，包含完整的 .py 三模式实现 + .sh wrapper 编写指南。
 
 ## 外部参考资源
 
