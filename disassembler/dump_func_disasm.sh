@@ -1,4 +1,22 @@
 #!/usr/bin/env bash
+# 本文件是 dump_func_disasm.py 的 shell wrapper，存在原因如下：
+#
+# 1. dump_func_disasm.py 依赖 ida_funcs、ida_kernwin 等 IDAPython 专有模块，
+#    无法在终端中直接用 python 执行，只能由 idat（IDA 命令行版本）加载运行。
+#
+# 2. 直接手写 idat 命令行非常繁琐：
+#      IDA_FUNC_ADDR=main IDA_OUTPUT=/tmp/out.asm \
+#        /opt/ida/idat -A -S"dump_func_disasm.py" -L"/tmp/log" target.i64
+#    还需要自己处理 IDA 安装路径检测、数据库锁检测、相对路径转绝对路径等。
+#
+# 3. 因此 .sh 作为运维胶水层，将这些脏活封装起来，用户只需：
+#      ./dump_func_disasm.sh --addr main --input target.i64
+#
+# 总结：.py 做业务逻辑（反汇编导出），.sh 做运维胶水（构造 idat 命令行），
+# 最终 .sh 通过 `idat -S"$PYTHON_SCRIPT"` 调用 .py，.py 通过环境变量读取参数。
+#
+# 注意：.py 本身也支持在 IDA GUI 内以对话框/CLI 模式独立使用，
+# .sh 只覆盖了其中的 headless（idat 命令行）模式。
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
