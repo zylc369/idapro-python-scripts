@@ -7,14 +7,14 @@
 ## 目录结构
 
 ```
-ai/              # AI 辅助工具（opencode 封装等）
+ai/              # AI 辅助工具（opencode 非交互封装，不依赖 IDA 运行时）
 analysis_details/ # 反汇编分析产物（.asm/.c 文件）
 demo.py          # 示例脚本
-disassembler/    # 反汇编操作脚本（每个 .py 可附带同名 .sh headless wrapper）
+disassembler/    # 反汇编操作脚本（每个 .py 可附带同名 .sh 无头 wrapper）
 shell/library/   # 可复用的 shell 库（IDA 路径检测、数据库锁检测等）
 docs/            # 文档与需求
 rules/           # 详细规则文档（按需加载）
-test/            # 测试
+test/            # Python 测试 + shell 测试（test/shell/*.bats）
 utils/           # 公共工具函数
 requirements.txt # IDE 类型存根依赖（非运行时依赖）
 ```
@@ -27,12 +27,13 @@ requirements.txt # IDE 类型存根依赖（非运行时依赖）
 
 | 命令 | 说明 |
 |------|------|
-| `pytest` | 运行全部测试 |
+| `pytest` | 运行 Python 测试（`ai/` 模块等，不依赖 IDA 运行时） |
 | `pytest test/test_opencode.py` | 运行单个测试文件 |
 | `pytest test/test_opencode.py::TestSingleLinePrompt::test_success` | 运行单个测试用例 |
 | `pytest -k "test_success"` | 按名称过滤运行测试 |
+| `bats test/shell/` | 运行 shell 脚本测试（需安装 [bats-core](https://github.com/bats-core/bats-core)） |
 
-> IDAPython 脚本（`disassembler/`、`demo.py`）无法脱离 IDA Pro 环境运行，没有单元测试。仅 `ai/` 等不依赖 IDA 运行时的模块有测试。
+> IDAPython 脚本（`disassembler/`、`demo.py`）无法脱离 IDA Pro 环境运行，没有单元测试。仅 `ai/` 等不依赖 IDA 运行时的模块有 pytest 测试；shell wrapper（`.sh`）通过 `test/shell/*.bats` 测试，使用 mock `idat` 验证命令构造。
 
 ## 脚本运行方式（IDA Pro 内）
 
@@ -54,7 +55,7 @@ sys.argv = ["", "--use-mode", "cli", "--addr", "main", "--output", "/tmp/output/
 exec(open("disassembler/dump_func_disasm.py", encoding="utf-8").read())
 ```
 
-### 3. Headless 模式（命令行，通过 idat -A -S 调用）
+### 3. Headless / 无头模式（命令行，通过 idat -A -S 调用）
 
 脱离 IDA GUI，使用 `idat` 命令行执行，通过**环境变量**传参：
 
@@ -63,11 +64,11 @@ IDA_FUNC_ADDR=main IDA_OUTPUT=/tmp/output.asm \
   idat -A -S"disassembler/dump_func_disasm.py" binary.i64
 ```
 
-实现要点：用 `ida_kernwin.cvar.batch` 判断 headless 模式，`os.environ` 读取环境变量，`ida_auto.auto_wait()` 等待分析完成，`ida_pro.qexit(exit_code)` 退出。
+实现要点：用 `ida_kernwin.cvar.batch` 判断无头（headless）模式，`os.environ` 读取环境变量，`ida_auto.auto_wait()` 等待分析完成，`ida_pro.qexit(exit_code)` 退出。
 
-> **关键**：headless 入口逻辑**必须在模块级执行**，不能放在 `if __name__ == "__main__"` 内。原因是 IDA 通过 `ida_idaapi.py` 的 `exec(code, g)` 执行 `-S` 指定的脚本，此时 `__name__` 被设为脚本文件名而非 `"__main__"`。
+> **关键**：无头（headless）入口逻辑**必须在模块级执行**，不能放在 `if __name__ == "__main__"` 内。原因是 IDA 通过 `ida_idaapi.py` 的 `exec(code, g)` 执行 `-S` 指定的脚本，此时 `__name__` 被设为脚本文件名而非 `"__main__"`。
 
-**新建 headless 脚本时**，参阅 [`rules/headless-automation-guide.md`](rules/headless-automation-guide.md)，包含完整的 .py 三模式实现 + .sh wrapper 编写指南。
+**新建无头（headless）脚本时**，参阅 [`rules/headless-automation-guide.md`](rules/headless-automation-guide.md)，包含完整的 .py 三模式实现 + .sh wrapper 编写指南。
 
 ## 外部参考资源
 
@@ -77,9 +78,9 @@ IDA_FUNC_ADDR=main IDA_OUTPUT=/tmp/output.asm \
 
 ## 编码规范
 
-### 导入规则（强制）
+### 导入规则（强制，仅限 IDAPython 脚本）
 
-以下规则继承自 IDAPython 官方示例规范，**必须严格遵守**：
+以下规则继承自 IDAPython 官方示例规范，适用于 `disassembler/`、`demo.py` 等 IDA 内运行脚本。`ai/`、`test/` 等不依赖 IDA 的普通 Python 模块不受此限制。
 
 | 规则 | 说明 | 正确 | 错误 |
 |------|------|------|------|
@@ -106,7 +107,7 @@ level: beginner|intermediate|advanced
 
 - `summary:` 不以 `.` 结尾，首选 `list something...` 形式
 - `level:` 标示使用难度
-- description 中应说明所有支持的运行模式（对话框 / CLI / headless）及示例
+- description 中应说明所有支持的运行模式（对话框 / CLI / 无头）及示例
 
 ### 日志规范（强制）
 
@@ -123,17 +124,10 @@ ida_kernwin.msg(f"[!] 警告或错误: {reason}\n")           # 警告/失败
 - 每个关键步骤都必须有 `[*]` 日志（函数解析、文件写入、模式检测等）
 - 成功和失败都要有对应日志（`[+]` / `[!]`）
 - 日志内容使用中文，包含足够的上下文信息（函数名、地址、路径等）
-- headless 模式的日志尤为重要（无 GUI，日志是唯一的排查手段）
+- 无头（headless）模式的日志尤为重要（无 GUI，日志是唯一的排查手段）
 
-### Python 版本与兼容性
+### 代码风格
 
-- Python 3.x（IDA Pro 7.x+ 内置 Python 3），使用 `print()` 函数
-- 类型注解不是必须的，但在复杂函数中推荐使用
-
-### 命名与代码风格
-
-- 函数/变量：`snake_case`，类：`PascalCase`，常量：`UPPER_SNAKE_CASE`
-- 缩进 4 空格，每行不超过 120 字符，使用 f-string 格式化
 - 内部辅助函数以 `_` 前缀标记（如 `_parse_cli_argv`、`_resolve_output_path`）
 - 禁止空 `except` 块（`except: pass`）
 - 捕获异常后必须：向上抛出、记录完整堆栈、或向用户返回清晰错误提示
@@ -148,7 +142,7 @@ ida_kernwin.msg(f"[!] 警告或错误: {reason}\n")           # 警告/失败
 | `ida_bytes` / `ida_xref` / `ida_segment` | 字节读写 / 交叉引用 / 段信息 |
 | `ida_nalt` / `ida_typeinf` / `ida_hexrays` | 导入表 / 类型系统 / 反编译器 |
 | `ida_lines` / `ida_gdl` | 反汇编行 / 流图与调用图 |
-| `ida_auto` / `ida_pro` | `auto_wait`（headless 等待分析）/ `qexit`（headless 退出） |
+| `ida_auto` / `ida_pro` | `auto_wait`（无头等待分析）/ `qexit`（无头退出） |
 | `ida_name` / `ida_loader` | 符号名查询 / 文件加载与导出 |
 | `idautils` | 高级工具（Functions、Strings、CodeRefsTo 等迭代器） |
 | `ida_idaapi` | 基础常量（BADADDR 等）— 仅引用常量时可用 |
@@ -164,3 +158,4 @@ ida_kernwin.msg(f"[!] 警告或错误: {reason}\n")           # 警告/失败
 - 新脚本应按功能命名（如 `list_encrypted_strings.py`）。
 - 脚本中如需用户交互，使用 `ida_kernwin.ask_str`、`ida_kernwin.ask_yn` 等函数。
 - 日志、注释都应该使用中文。
+- `ai/opencode.py` 提供 `run_opencode(prompt)` 函数，可在 IDAPython 脚本内调用 OpenCode 进行 AI 辅助分析（参见 `disassembler/dump_func_disasm.py` 的 `_call_ai_decompiler` 实现）。该模块不依赖 IDA 运行时，有独立的 pytest 测试。
