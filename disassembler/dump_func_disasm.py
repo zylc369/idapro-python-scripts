@@ -30,6 +30,7 @@ level: intermediate
 
 import os
 import sys
+import time
 
 import ida_bytes
 import ida_funcs
@@ -174,6 +175,26 @@ def _resolve_output_path(output_path, func):
     return output_path
 
 
+def _format_elapsed(seconds):
+    """将秒数格式化为人类可读的时间字符串。
+
+    智能选择单位：<60秒显示秒，>=60秒显示分+秒，>=3600秒显示时+分+秒，以此类推。
+    """
+    if seconds < 60:
+        return f"{seconds:.1f} 秒"
+    if seconds < 3600:
+        m, s = divmod(seconds, 60)
+        return f"{int(m)} 分 {s:.1f} 秒"
+    if seconds < 86400:
+        h, remainder = divmod(seconds, 3600)
+        m, s = divmod(remainder, 60)
+        return f"{int(h)} 小时 {int(m)} 分 {s:.1f} 秒"
+    d, remainder = divmod(seconds, 86400)
+    h, remainder = divmod(remainder, 3600)
+    m, s = divmod(remainder, 60)
+    return f"{int(d)} 天 {int(h)} 小时 {int(m)} 分 {s:.1f} 秒"
+
+
 def _call_ai_decompiler(asm_path):
     """调用 AI 反编译器，对生成的汇编文件进行反编译。
 
@@ -192,12 +213,11 @@ def _call_ai_decompiler(asm_path):
     prompt = (
         f"反编译`{asm_path}`到`{asm_dir}`目录中，"
         "输出语言为C/C++或Python，优先使用Python。"
-        "Python通常能够等价的表达C/C++逻辑，Python不需要考虑较为复杂的内存申请、释放，"
-        "它的库也很丰富、易于安装。"
+        "Python通常能够等价的表达C/C++逻辑，Python不需要考虑较为复杂的内存申请、释放，它的库也很丰富、易于安装。"
         "**Python代码必须严格保持与原汇编代码的功能等价性。**"
     )
 
-    ida_kernwin.msg(f"[*] 正在调用 AI 反编译器...\n")
+    ida_kernwin.msg(f"[*] 开始 AI 反编译，这可能需要较长时间，请耐心等待...\n")
     ida_kernwin.msg(f"[*] 汇编文件: {asm_path}\n")
     ida_kernwin.msg(f"[*] 输出目录: {asm_dir}\n")
 
@@ -214,12 +234,20 @@ def _call_ai_decompiler(asm_path):
         )
         return False
 
+    start_time = time.time()
     result = run_opencode(prompt)
+    elapsed = time.time() - start_time
 
     if result["success"]:
-        ida_kernwin.msg(f"[+] AI 反编译完成\n")
+        ida_kernwin.msg(
+            f"[+] AI 反编译完成，耗时 {_format_elapsed(elapsed)}\n"
+        )
+        ida_kernwin.msg(f"[+] 输出目录: {asm_dir}\n")
     else:
-        ida_kernwin.msg(f"[!] AI 反编译失败: {result['message']}\n")
+        ida_kernwin.msg(
+            f"[!] AI 反编译失败 (耗时 {_format_elapsed(elapsed)}): "
+            f"{result['message']}\n"
+        )
 
     return result["success"]
 

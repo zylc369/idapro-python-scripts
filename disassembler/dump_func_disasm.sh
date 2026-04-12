@@ -162,7 +162,7 @@ execute_idat() {
     echo "[*] 输出: $output" >&2
     echo "[*] 日志: $log_path" >&2
     echo "[*] 目标: $input_file" >&2
-    echo "[*] AI 反编译: ${ai_decompiler:-否}" >&2
+    echo "[*] AI 反编译: $([ -n "$ai_decompiler" ] && echo 是 || echo 否)" >&2
 
     local exit_code=0
     IDA_FUNC_ADDR="$addr" \
