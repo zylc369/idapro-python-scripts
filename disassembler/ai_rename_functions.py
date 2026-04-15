@@ -130,6 +130,12 @@ def _is_auto_generated_name(name):
     return any(name.startswith(p) for p in _AUTO_NAME_PREFIXES)
 
 
+def _is_binary_symbol(ea):
+    if ida_name.is_public_name(ea):
+        return True
+    return False
+
+
 # ─────────────────────────────────────────────────────────────
 #  上下文收集
 # ─────────────────────────────────────────────────────────────
@@ -611,6 +617,11 @@ def _apply_global_data_rename(name_str, new_name, dry_run=False):
             f"  [!] 全局数据地址未找到: {name_str}\n"
         )
         return False
+    if _is_binary_symbol(ea):
+        ida_kernwin.msg(
+            f"  [!] 全局数据 '{name_str}' 来自二进制符号表，跳过重命名\n"
+        )
+        return False
 
     if dry_run:
         ida_kernwin.msg(
@@ -697,21 +708,32 @@ def _apply_all_renames(func, ai_result, symbols, dry_run=False):
     total_fail = 0
 
     if func_rename and _validate_name(func_rename):
-        ida_kernwin.msg(
-            f"[*] 函数重命名: {func_name} -> {func_rename}\n"
-        )
-        if _apply_function_rename(
-            func.start_ea, func_name, func_rename, dry_run
-        ):
-            total_success += 1
-            if not dry_run:
-                comment = (
-                    f"AI 重命名 | 原名: {func_name} | "
-                    f"理由: {reasoning} | 置信度: {confidence_label}"
-                )
-                ida_bytes.set_cmt(func.start_ea, comment, 0)
+        if _is_binary_symbol(func.start_ea):
+            ida_kernwin.msg(
+                f"  [!] 函数 '{func_name}' 来自二进制符号表，"
+                f"跳过重命名（AI 建议: {func_rename}）\n"
+            )
+        elif not _is_auto_generated_name(func_name):
+            ida_kernwin.msg(
+                f"  [!] 函数 '{func_name}' 可能是用户或调试符号定义的名称，"
+                f"跳过重命名（AI 建议: {func_rename}）\n"
+            )
         else:
-            total_fail += 1
+            ida_kernwin.msg(
+                f"[*] 函数重命名: {func_name} -> {func_rename}\n"
+            )
+            if _apply_function_rename(
+                func.start_ea, func_name, func_rename, dry_run
+            ):
+                total_success += 1
+                if not dry_run:
+                    comment = (
+                        f"AI 重命名 | 原名: {func_name} | "
+                        f"理由: {reasoning} | 置信度: {confidence_label}"
+                    )
+                    ida_bytes.set_cmt(func.start_ea, comment, 0)
+            else:
+                total_fail += 1
     elif func_rename:
         ida_kernwin.msg(
             f"[!] AI 建议的函数名 '{func_rename}' 不合法，跳过\n"
@@ -779,6 +801,11 @@ def _apply_function_rename_by_name(old_name, new_name, dry_run=False):
     if ea == ida_idaapi.BADADDR:
         ida_kernwin.msg(
             f"  [!] 函数地址未找到: {old_name}\n"
+        )
+        return False
+    if _is_binary_symbol(ea):
+        ida_kernwin.msg(
+            f"  [!] 函数 '{old_name}' 来自二进制符号表，跳过重命名\n"
         )
         return False
     return _apply_function_rename(ea, old_name, new_name, dry_run)
