@@ -1082,6 +1082,7 @@ def _parse_env_args():
 def _run_headless(pattern, dry_run=False, recursive=False,
                   max_depth=_DEFAULT_MAX_DEPTH):
     import ida_auto
+    import ida_loader
     import ida_pro
 
     ida_kernwin.msg("[*] headless 模式: 等待 IDA 自动分析完成...\n")
@@ -1092,6 +1093,11 @@ def _run_headless(pattern, dry_run=False, recursive=False,
         pattern, dry_run=dry_run,
         recursive=recursive, max_depth=max_depth,
     )
+
+    if success and not dry_run:
+        ida_kernwin.msg("[*] headless 模式: 正在保存数据库...\n")
+        ida_loader.save_database(None, 0)
+        ida_kernwin.msg("[+] headless 模式: 数据库已保存\n")
 
     exit_code = 0 if success else 1
     ida_kernwin.msg(
