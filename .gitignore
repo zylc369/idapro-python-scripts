@@ -52,4 +52,4 @@ dmypy.json
 
 # Shell script runtime config
 .config/
-/ai_rename_functions.log
+/ai_analyze.log

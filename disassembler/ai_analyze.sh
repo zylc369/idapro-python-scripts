@@ -1,46 +1,43 @@
 #!/usr/bin/env bash
-# 本文件是 ai_rename_functions.py 的 shell wrapper，存在原因如下：
+# 本文件是 ai_analyze.py 的 shell wrapper。
 #
-# 1. ai_rename_functions.py 依赖 ida_funcs、ida_kernwin 等 IDAPython 专有模块，
-#    无法在终端中直接用 python 执行，只能由 idat（IDA 命令行版本）加载运行。
+# 存在原因：ai_analyze.py 依赖 ida_funcs、ida_kernwin 等 IDAPython 专有模块，
+# 无法在终端中直接用 python 执行，只能由 idat（IDA 命令行版本）加载运行。
+# 本脚本封装了 idat 命令行构造、IDA 路径检测、数据库锁检测等运维细节。
 #
-# 2. 直接手写 idat 命令行非常繁琐：
-#      IDA_PATTERN="sub_123*" \
-#        /opt/ida/idat -A -S"ai_rename_functions.py" -L"/tmp/log" target.i64
-#    还需要自己处理 IDA 安装路径检测、数据库锁检测、相对路径转绝对路径等。
-#
-# 3. 因此 .sh 作为运维胶水层，将这些脏活封装起来，用户只需：
-#      ./ai_rename_functions.sh --pattern "sub_123*" --input target.i64
-#
-# 总结：.py 做业务逻辑（AI 辅助重命名），.sh 做运维胶水（构造 idat 命令行），
-# 最终 .sh 通过 `idat -S"$PYTHON_SCRIPT"` 调用 .py，.py 通过环境变量读取参数。
-#
-# 注意：.py 本身也支持在 IDA GUI 内以对话框/CLI 模式独立使用，
-# .sh 只覆盖了其中的 headless（idat 命令行）模式。
+# 最终调用链：
+#   用户执行 ./ai_analyze.sh rename -p "main_0" -i binary.i64
+#   → 本脚本设置环境变量 → 调用 idat -A -S"ai_analyze.py" binary.i64
+#   → ai_analyze.py 读取环境变量 → 执行业务逻辑 → ida_pro.qexit()
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly CALL_DIR="$(pwd)"
 REPO_ROOT="${REPO_ROOT:-"$(cd "$SCRIPT_DIR/.." && pwd)"}"
-readonly PYTHON_SCRIPT="$SCRIPT_DIR/ai_rename_functions.py"
-readonly DEFAULT_LOG_FILENAME="ai_rename_functions.log"
+readonly PYTHON_SCRIPT="$SCRIPT_DIR/ai_analyze.py"
+readonly DEFAULT_LOG_FILENAME="ai_analyze.log"
 
 source "$SCRIPT_DIR/../shell/library/detect_ida_path.sh"
 source "$SCRIPT_DIR/../shell/library/detect_db_lock.sh"
 source "$SCRIPT_DIR/../shell/library/log.sh"
 
+command=""
 pattern=""
 dry_run=""
 recursive=""
 max_depth=""
-add_comments=""
 log_path=""
 input_file=""
 ida_path=""
 
 print_usage() {
     cat >&2 << EOF
-用法: $(basename "$0") --pattern <函数名或模式> --input <目标文件> [选项]
+用法: $(basename "$0") <命令> --pattern <函数名或模式> --input <目标文件> [选项]
+
+命令:
+  rename    AI 辅助符号重命名（函数、局部变量、全局数据、结构体字段）
+  comment   AI 辅助注释生成（函数摘要 + 行内注释）
+  analyze   完整分析（先重命名，再生成注释）
 
 必填参数:
   -p, --pattern    <值>   函数名（如 main）或通配符模式（如 sub_123*）
@@ -49,21 +46,41 @@ print_usage() {
 可选参数:
   -r, --recursive         递归分析目标函数调用的自动命名函数（sub_XXXXX）
       --max-depth <N>     递归最大深度（默认: 2）
-      --add-comments      添加 AI 生成的注释（函数摘要+行内注释）
-  -l, --log        <路径>  日志文件路径（默认: 当前执行目录/ai_rename_functions.log）
+  -l, --log        <路径>  日志文件路径（默认: 当前执行目录/ai_analyze.log）
       --ida-path   <路径>  IDA Pro 安装目录路径（默认: 自动检测）
-      --dry-run            仅预览 AI 建议，不实际重命名
+      --dry-run            仅预览 AI 建议，不实际执行
   -h, --help               显示此帮助信息
 
 示例:
-  $(basename "$0") --pattern "main_0" --input binary.i64 --recursive
-  $(basename "$0") -p "sub_123*" -i binary.i64 --dry-run
-  $(basename "$0") -p "sub_*" -i binary.i64 -r --max-depth 3
-  $(basename "$0") -p "main_0" -i binary.i64 --add-comments
+  $(basename "$0") rename --pattern "main_0" --input binary.i64 --recursive
+  $(basename "$0") comment -p "sub_123*" -i binary.i64 --dry-run
+  $(basename "$0") analyze -p "main_0" -i binary.i64 -r --max-depth 3
 EOF
 }
 
 parse_args() {
+    if [[ $# -lt 1 ]]; then
+        log_error "必须指定命令: rename / comment / analyze"
+        print_usage
+        return 1
+    fi
+
+    command="$1"
+    shift
+
+    case "$command" in
+        rename|comment|analyze) ;;
+        -h|--help)
+            print_usage
+            return 0
+            ;;
+        *)
+            log_error "未知命令: $command（有效命令: rename / comment / analyze）"
+            print_usage
+            return 1
+            ;;
+    esac
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -p|--pattern)
@@ -92,10 +109,6 @@ parse_args() {
                 ;;
             --dry-run)
                 dry_run="1"
-                shift
-                ;;
-            --add-comments)
-                add_comments="1"
                 shift
                 ;;
             -h|--help)
@@ -146,7 +159,7 @@ _display_results() {
 
     local result_lines
     result_lines=$(grep -E \
-        '\[预览-|\[\+\] (函数|局部变量|全局数据|结构体字段)重命名|\[\+\] (汇编注释|函数摘要|行内注释|伪代码注释)|\[\+\] 总计:|\[\+\] AI (重命名分析|注释生成)完成|\[!\].*不合法|\[!\].*失败|\[!\].*无法解析|\[!\].*重命名失败|\[!\].*符号表|\[!\].*调试符号|\[!\].*用户或|\[\*\] 理由:|\[\*\] AI 分析结果|\[\*\] 函数重命名:' \
+        '\[预览-|\[\+\] (函数|局部变量|全局数据|结构体字段)重命名|\[\+\] (汇编注释|函数摘要|行内注释|伪代码注释)|\[\+\] 总计:|\[\+\] AI (重命名分析|注释生成)完成|\[\+\].*完成 =|\[!\].*不合法|\[!\].*失败|\[!\].*无法解析|\[!\].*重命名失败|\[!\].*符号表|\[!\].*调试符号|\[!\].*用户或|\[\*\] 理由:|\[\*\] AI 分析结果|\[\*\] 函数重命名:' \
         "$log_file" 2>/dev/null || true)
 
     if [[ -z "$result_lines" ]]; then
@@ -171,20 +184,20 @@ execute_idat() {
     mkdir -p "$(dirname "$log_path")"
     : > "$log_path"
 
-    log_info "正在执行 AI 辅助函数重命名..."
+    log_info "正在执行 AI 辅助分析..."
+    log_info "命令: $command"
     log_info "模式: $pattern"
     log_info "目标: $input_file"
     log_info "日志: $log_path"
     log_info "递归: $([ -n "$recursive" ] && echo "是 (深度: ${max_depth:-2})" || echo "否")"
     log_info "仅预览: $([ -n "$dry_run" ] && echo "是" || echo "否")"
-    log_info "添加注释: $([ -n "$add_comments" ] && echo "是" || echo "否")"
 
     local exit_code=0
+    IDA_COMMAND="$command" \
     IDA_PATTERN="$pattern" \
     IDA_DRY_RUN="${dry_run:-}" \
     IDA_RECURSIVE="${recursive:-}" \
     IDA_MAX_DEPTH="${max_depth:-}" \
-    IDA_ADD_COMMENTS="${add_comments:-}" \
     "$ida_dir/idat" -v -A \
         -L"$log_path" \
         -S"$PYTHON_SCRIPT" \
