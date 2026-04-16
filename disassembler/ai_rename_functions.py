@@ -437,19 +437,35 @@ def _build_comprehensive_prompt(func_name, context, symbols):
     sections.append('  "function": "新函数名",')
     sections.append('  "reasoning": "分析理由",')
     sections.append('  "confidence": "high/medium/low",')
+    sections.append('  "summary_comment": "函数功能的一句话中文摘要",')
     sections.append('  "symbols": {')
     sections.append('    "sub_140001234": "validate_password",')
     sections.append('    "v1": "username",')
     sections.append('    "v2": "password",')
     sections.append('    "dword_14000XXXX": "retry_count",')
     sections.append('    "MyStruct.field_4": "checksum"')
+    sections.append("  },")
+    sections.append('  "inline_comments": {')
+    sections.append('    "3": "读取用户名输入",')
+    sections.append('    "5": "读取密码输入",')
+    sections.append('    "7": "调用验证函数校验凭据"')
     sections.append("  }")
     sections.append("}")
     sections.append("```")
     sections.append("")
     sections.append(
         "symbols 中只包含你能确定用途的符号，不确定的不要包含。"
-        "键名保持原始名称，结构体字段用 \"结构体名.字段名\" 格式。"
+        "键名保持原始名称，结构体字段用 \"结构体名.字段名\" 格式。\n"
+    )
+    sections.append(
+        "inline_comments 是对反编译伪代码关键行的中文注释，"
+        "键为行号（从 1 开始，不包含 ``` 标记行），值为中文注释。"
+        "只注释关键的逻辑步骤（如调用、条件判断、重要赋值），"
+        "不要注释每一行，3-8 条注释为宜。\n"
+    )
+    sections.append(
+        "summary_comment 是函数功能的一句话中文摘要，"
+        "用简洁自然的语言描述，不要过于冗长。"
     )
 
     return "\n".join(sections)
@@ -796,6 +812,101 @@ def _apply_all_renames(func, ai_result, symbols, dry_run=False):
     return total_success, total_fail
 
 
+def _apply_comments(func, cfunc, source, ai_result, dry_run=False):
+    if not cfunc:
+        return 0, 0
+
+    summary = ai_result.get("summary_comment", "")
+    inline_comments = ai_result.get("inline_comments", {})
+
+    if not summary and not inline_comments:
+        return 0, 0
+
+    total_success = 0
+    total_fail = 0
+
+    if dry_run:
+        if summary:
+            ida_kernwin.msg(
+                f"  [预览-函数摘要] {summary}\n"
+            )
+        for line_no, cmt in sorted(inline_comments.items(), key=lambda x: int(x[0])):
+            ida_kernwin.msg(
+                f"  [预览-行内注释] 第{line_no}行: {cmt}\n"
+            )
+        return len(inline_comments) + (1 if summary else 0), 0
+
+    if summary:
+        ida_bytes.set_cmt(func.start_ea, summary, 0)
+        ida_kernwin.msg(
+            f"  [+] 汇编注释(函数入口): {summary}\n"
+        )
+        tl = ida_hexrays.treeloc_t()
+        tl.ea = func.start_ea
+        tl.itp = ida_hexrays.ITP_BLOCK1
+        cfunc.set_user_cmt(tl, summary)
+        total_success += 1
+
+    if inline_comments:
+        source_lines = source.splitlines()
+        ea_by_line = {}
+        for item in cfunc.treeitems:
+            if item.ea != ida_idaapi.BADADDR:
+                for i, line in enumerate(source_lines):
+                    if item.ea not in ea_by_line.values():
+                        if f"0x{item.ea:X}" in line or f"0x{item.ea:08X}" in line:
+                            ea_by_line[i + 1] = item.ea
+                            break
+
+        if not ea_by_line:
+            body_ea = {}
+            for item in cfunc.treeitems:
+                if item.ea != ida_idaapi.BADADDR:
+                    body_ea[item.ea] = item
+            sorted_eas = sorted(body_ea.keys())
+            line_count = len(source_lines)
+
+            for line_no_str in inline_comments:
+                try:
+                    line_no = int(line_no_str)
+                except (ValueError, TypeError):
+                    continue
+                idx = max(0, min(int((line_no - 1) * len(sorted_eas) / max(line_count, 1)), len(sorted_eas) - 1))
+                ea_by_line[line_no] = sorted_eas[idx]
+
+        for line_no_str, comment_text in inline_comments.items():
+            try:
+                line_no = int(line_no_str)
+            except (ValueError, TypeError):
+                ida_kernwin.msg(
+                    f"  [!] 无效行号: {line_no_str}\n"
+                )
+                total_fail += 1
+                continue
+
+            ea = ea_by_line.get(line_no)
+            if ea is None:
+                ida_kernwin.msg(
+                    f"  [!] 无法映射行号 {line_no} 到地址\n"
+                )
+                total_fail += 1
+                continue
+
+            tl = ida_hexrays.treeloc_t()
+            tl.ea = ea
+            tl.itp = ida_hexrays.ITP_SEMI
+            cfunc.set_user_cmt(tl, comment_text)
+
+            ida_bytes.set_cmt(ea, comment_text, 0)
+            ida_kernwin.msg(
+                f"  [+] 行内注释(0x{ea:08X} 第{line_no}行): {comment_text}\n"
+            )
+            total_success += 1
+
+    cfunc.save_user_cmts()
+    return total_success, total_fail
+
+
 def _apply_function_rename_by_name(old_name, new_name, dry_run=False):
     ea = ida_name.get_name_ea(ida_idaapi.BADADDR, old_name)
     if ea == ida_idaapi.BADADDR:
@@ -868,8 +979,7 @@ def _analyze_function(func, dry_run=False):
     )
 
     if total_symbols == 0:
-        ida_kernwin.msg(f"  [*] 无可重命名的符号，跳过 AI 分析\n")
-        return 0, 0
+        ida_kernwin.msg(f"  [*] 无可重命名的符号，但仍将生成注释\n")
 
     ida_kernwin.msg(f"[*] 正在调用 AI 分析 ({total_symbols} 个符号)...\n")
     prompt = _build_comprehensive_prompt(func_name, context, symbols)
@@ -902,7 +1012,13 @@ def _analyze_function(func, dry_run=False):
         ida_kernwin.msg(f"[*] AI 原始响应: {raw_preview}\n")
         return 0, 1
 
-    return _apply_all_renames(func, parsed, symbols, dry_run)
+    rename_s, rename_f = _apply_all_renames(func, parsed, symbols, dry_run)
+
+    cmt_s, cmt_f = _apply_comments(
+        func, cfunc, context["source"], parsed, dry_run
+    )
+
+    return rename_s + cmt_s, rename_f + cmt_f
 
 
 def rename_functions(pattern, dry_run=False, recursive=False,
