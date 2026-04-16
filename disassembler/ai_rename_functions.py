@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
-"""summary: AI 辅助符号重命名（函数、局部变量、全局数据、结构体字段）
+"""summary: AI 辅助符号重命名与注释生成
 
 description:
   使用 AI 分析函数及其内部引用的所有符号，自动将自动生成名称
-  （sub_XXXXX、v1、dword_XXXXX、field_0 等）重命名为有意义的名称。
-  支持精确函数名和通配符模式匹配（如 sub_123*），可批量处理。
+  （sub_XXXXX、v1、dword_XXXXX、field_0 等）重命名为有意义的名称，
+  并可选择性生成中文注释（函数摘要 + 行内注释）。
+
+  两个核心类可独立使用：
+    - AIRenamer: 符号重命名（函数、局部变量、全局数据、结构体字段）
+    - AICommenter: 注释生成（函数摘要 + 行内注释，双视图写入）
+
+  当两者配合使用时（add_comments=True），先执行重命名再生成注释，
+  使注释基于重命名后的代码，提升注释质量。
 
   递归模式（--recursive）：分析完目标函数后，自动继续分析其调用的所有
   自动命名函数（sub_XXXXX），实现级联重命名。
@@ -20,20 +27,28 @@ description:
   编程方式调用（IDA GUI 内）：
     exec(open("disassembler/ai_rename_functions.py", encoding="utf-8").read())
     rename_functions("main_0", dry_run=False, recursive=True)
+    rename_functions("main_0", dry_run=False, add_comments=True)
 
   命令行 headless 模式（通过 idat -A -S 调用，用环境变量传参）：
-    IDA_PATTERN="main_0" IDA_RECURSIVE=1 \
+    IDA_PATTERN="main_0" IDA_RECURSIVE=1 \\
+      idat -A -S"disassembler/ai_rename_functions.py" binary.i64
+    IDA_PATTERN="main_0" IDA_ADD_COMMENTS=1 \\
       idat -A -S"disassembler/ai_rename_functions.py" binary.i64
 
-  --dry-run / IDA_DRY_RUN: 仅预览 AI 建议的名称，不实际执行重命名。
+  --dry-run / IDA_DRY_RUN: 仅预览 AI 建议，不实际执行。
   --recursive / IDA_RECURSIVE: 递归分析目标函数调用的自动命名函数。
   --max-depth / IDA_MAX_DEPTH: 递归最大深度，默认 2。
+  --add-comments / IDA_ADD_COMMENTS: 先重命名，再生成中文注释。
 
   重命名范围：
     - 函数名（sub_XXXXX）
     - 局部变量（v1、v2 等）通过 Hex-Rays modify_user_lvars API
     - 全局数据（dword_XXXXX、qword_XXXXX、off_XXXXX 等）
     - 结构体字段（field_0、field_4 等）通过 tinfo_t.rename_udm API
+
+  注释范围：
+    - 函数摘要注释（汇编视图 + 伪代码视图）
+    - 行内注释（关键逻辑步骤的中文注释，汇编视图 + 伪代码视图）
 
 level: advanced
 """
@@ -93,7 +108,7 @@ _C_KEYWORDS = frozenset({
 
 
 # ─────────────────────────────────────────────────────────────
-#  函数匹配
+#  共享工具函数
 # ─────────────────────────────────────────────────────────────
 
 def _match_functions(pattern):
@@ -135,10 +150,6 @@ def _is_binary_symbol(ea):
         return True
     return False
 
-
-# ─────────────────────────────────────────────────────────────
-#  上下文收集
-# ─────────────────────────────────────────────────────────────
 
 def _decompile_function(func):
     if not _HAS_DECOMPILER:
@@ -246,10 +257,6 @@ def _get_referenced_strings(func):
     return strings
 
 
-# ─────────────────────────────────────────────────────────────
-#  符号提取：从反编译代码中提取所有可重命名的符号
-# ─────────────────────────────────────────────────────────────
-
 def _is_auto_local_var_name(name):
     return bool(re.match(r"^v\d+$", name))
 
@@ -339,138 +346,6 @@ def _extract_all_symbols(func, cfunc, source):
     }
 
 
-# ─────────────────────────────────────────────────────────────
-#  AI 集成
-# ─────────────────────────────────────────────────────────────
-
-def _build_comprehensive_prompt(func_name, context, symbols):
-    sections = []
-
-    sections.append(
-        "你是一位资深的逆向工程专家。"
-        "请分析以下反编译代码，为函数本身和其中所有自动命名的符号建议有意义的名称。\n"
-    )
-
-    sections.append("## 函数信息")
-    sections.append(f"- 当前名称: {func_name}")
-    sections.append(f"- 地址: 0x{context['addr']:08X}")
-    sections.append(f"- 大小: {context['size']} 字节\n")
-
-    if context["callers"]:
-        sections.append("## 调用者（谁调用了此函数）")
-        for c in context["callers"]:
-            sections.append(f"- {c}")
-        sections.append("")
-
-    if context["callees"]:
-        sections.append("## 被调用函数（此函数调用了谁）")
-        for c in context["callees"]:
-            sections.append(f"- {c}")
-        sections.append("")
-
-    if context["strings"]:
-        sections.append("## 引用的字符串")
-        for s in context["strings"]:
-            sections.append(f'- "{s}"')
-        sections.append("")
-
-    sections.append("## 反编译伪代码")
-    source_lines = context["source"].splitlines()
-    total_lines = len(source_lines)
-    if total_lines > _MAX_SOURCE_LINES:
-        source_lines = source_lines[:_MAX_SOURCE_LINES]
-        source_lines.append(f"... (已截断，共 {total_lines} 行)")
-    sections.append("```c")
-    sections.extend(source_lines)
-    sections.append("```\n")
-
-    sections.append("## 待重命名的符号列表")
-
-    if symbols["local_vars"]:
-        sections.append("### 局部变量（v1、v2 等自动编号的变量）")
-        for v in symbols["local_vars"]:
-            sections.append(f"- {v}")
-        sections.append("")
-
-    if symbols["called_functions"]:
-        sections.append("### 调用的函数（sub_XXXXX 等自动命名的函数）")
-        for f in symbols["called_functions"]:
-            sections.append(f"- {f}")
-        sections.append("")
-
-    if symbols["global_data"]:
-        sections.append("### 全局数据引用（dword_XXXXX 等自动命名的数据）")
-        for d in symbols["global_data"]:
-            sections.append(f"- {d}")
-        sections.append("")
-
-    if symbols["struct_fields"]:
-        sections.append("### 结构体字段（field_0 等自动命名的字段）")
-        for sname, fields in symbols["struct_fields"].items():
-            for f in fields:
-                sections.append(f"- {sname}.{f}")
-        sections.append("")
-
-    sections.append("## 命名规则")
-    sections.append("1. 使用 snake_case 风格（小写字母 + 下划线）")
-    sections.append(
-        "2. 函数名以动词开头（如 parse_、validate_、decode_、init_ 等）"
-    )
-    sections.append(
-        "3. 变量名应体现用途（如 username、password、buffer_size）"
-    )
-    sections.append(
-        "4. 结构体字段名应体现语义（如 checksum、next_ptr、flags）"
-    )
-    sections.append(
-        "5. 名称应准确反映实际功能，避免过于泛化"
-    )
-    sections.append("6. 仅使用小写英文字母、数字和下划线，以字母或下划线开头")
-    sections.append("7. 不使用 C/C++ 关键字或标准库函数名\n")
-
-    sections.append("## 输出格式")
-    sections.append(
-        '请严格按照以下 JSON 格式返回，不要添加任何其他内容：\n'
-    )
-    sections.append("```json")
-    sections.append("{")
-    sections.append('  "function": "新函数名",')
-    sections.append('  "reasoning": "分析理由",')
-    sections.append('  "confidence": "high/medium/low",')
-    sections.append('  "summary_comment": "函数功能的一句话中文摘要",')
-    sections.append('  "symbols": {')
-    sections.append('    "sub_140001234": "validate_password",')
-    sections.append('    "v1": "username",')
-    sections.append('    "v2": "password",')
-    sections.append('    "dword_14000XXXX": "retry_count",')
-    sections.append('    "MyStruct.field_4": "checksum"')
-    sections.append("  },")
-    sections.append('  "inline_comments": {')
-    sections.append('    "3": "读取用户名输入",')
-    sections.append('    "5": "读取密码输入",')
-    sections.append('    "7": "调用验证函数校验凭据"')
-    sections.append("  }")
-    sections.append("}")
-    sections.append("```")
-    sections.append("")
-    sections.append(
-        "symbols 中只包含你能确定用途的符号，不确定的不要包含。"
-        "键名保持原始名称，结构体字段用 \"结构体名.字段名\" 格式。\n"
-    )
-    sections.append(
-        "inline_comments 是对反编译伪代码关键行的中文注释，"
-        "键为行号（从 1 开始，不包含 ``` 标记行），值为中文注释。"
-        "只注释关键的逻辑步骤（如调用、条件判断、重要赋值），"
-        "不要注释每一行，3-8 条注释为宜。\n"
-    )
-    sections.append(
-        "summary_comment 是函数功能的一句话中文摘要，"
-        "用简洁自然的语言描述，不要过于冗长。"
-    )
-
-    return "\n".join(sections)
-
-
 def _call_ai(prompt):
     cwd = os.getcwd()
     if cwd not in sys.path:
@@ -540,392 +415,6 @@ def _validate_name(name):
     return True
 
 
-# ─────────────────────────────────────────────────────────────
-#  重命名执行
-# ─────────────────────────────────────────────────────────────
-
-def _apply_function_rename(addr, old_name, new_name, dry_run=False):
-    if dry_run:
-        ida_kernwin.msg(
-            f"  [预览-函数] {old_name} -> {new_name}\n"
-        )
-        return True
-
-    success = ida_name.set_name(addr, new_name, ida_name.SN_NOWARN)
-    if success:
-        ida_kernwin.msg(
-            f"  [+] 函数重命名: {old_name} (0x{addr:08X}) -> {new_name}\n"
-        )
-    else:
-        ida_kernwin.msg(
-            f"  [!] 函数重命名失败: {old_name} -> {new_name}\n"
-        )
-    return success
-
-
-def _apply_local_var_rename(func_ea, old_name, new_name, dry_run=False):
-    if dry_run:
-        ida_kernwin.msg(
-            f"  [预览-局部变量] {old_name} -> {new_name}\n"
-        )
-        return True
-
-    if not _HAS_DECOMPILER:
-        ida_kernwin.msg(
-            f"  [!] 局部变量重命名需要 Hex-Rays 反编译器: {old_name}\n"
-        )
-        return False
-
-    cfunc = ida_hexrays.decompile(func_ea)
-    if not cfunc:
-        return False
-
-    target_lvar = None
-    for lv in cfunc.lvars:
-        if lv.name == old_name:
-            target_lvar = lv
-            break
-
-    if target_lvar is None:
-        ida_kernwin.msg(
-            f"  [!] 未找到局部变量: {old_name}\n"
-        )
-        return False
-
-    class _Renamer(ida_hexrays.user_lvar_modifier_t):
-        def __init__(self, lvar_obj, new_n):
-            ida_hexrays.user_lvar_modifier_t.__init__(self)
-            self._lvar = lvar_obj
-            self._new_name = new_n
-            self._found = False
-
-        def modify_lvars(self, lvars):
-            for lv in lvars.lvvec:
-                if lv.ll.defea == self._lvar.defea:
-                    lv.name = self._new_name
-                    self._found = True
-                    return True
-            lsi = ida_hexrays.lvar_saved_info_t()
-            lsi.ll = self._lvar
-            lsi.name = self._new_name
-            lvars.lvvec.push_back(lsi)
-            self._found = True
-            return True
-
-    renamer = _Renamer(target_lvar, new_name)
-    success = ida_hexrays.modify_user_lvars(func_ea, renamer)
-
-    if success and renamer._found:
-        ida_kernwin.msg(
-            f"  [+] 局部变量重命名: {old_name} -> {new_name}\n"
-        )
-    else:
-        ida_kernwin.msg(
-            f"  [!] 局部变量重命名失败: {old_name} -> {new_name}\n"
-        )
-    return success and renamer._found
-
-
-def _apply_global_data_rename(name_str, new_name, dry_run=False):
-    ea = ida_name.get_name_ea(ida_idaapi.BADADDR, name_str)
-    if ea == ida_idaapi.BADADDR:
-        ida_kernwin.msg(
-            f"  [!] 全局数据地址未找到: {name_str}\n"
-        )
-        return False
-    if _is_binary_symbol(ea):
-        ida_kernwin.msg(
-            f"  [!] 全局数据 '{name_str}' 来自二进制符号表，跳过重命名\n"
-        )
-        return False
-
-    if dry_run:
-        ida_kernwin.msg(
-            f"  [预览-全局数据] {name_str} (0x{ea:08X}) -> {new_name}\n"
-        )
-        return True
-
-    success = ida_name.set_name(ea, new_name, ida_name.SN_NOWARN)
-    if success:
-        ida_kernwin.msg(
-            f"  [+] 全局数据重命名: {name_str} (0x{ea:08X}) -> {new_name}\n"
-        )
-    else:
-        ida_kernwin.msg(
-            f"  [!] 全局数据重命名失败: {name_str} -> {new_name}\n"
-        )
-    return success
-
-
-def _apply_struct_field_rename(struct_name, field_name, new_name,
-                               dry_run=False):
-    if dry_run:
-        ida_kernwin.msg(
-            f"  [预览-结构体字段] {struct_name}.{field_name} -> "
-            f"{struct_name}.{new_name}\n"
-        )
-        return True
-
-    til = ida_typeinf.get_idati()
-    tif = ida_typeinf.tinfo_t()
-    if not tif.get_named_type(til, struct_name):
-        ida_kernwin.msg(
-            f"  [!] 结构体类型未找到: {struct_name}\n"
-        )
-        return False
-
-    udt = ida_typeinf.udt_type_data_t()
-    if not tif.get_udt_details(udt):
-        ida_kernwin.msg(
-            f"  [!] 无法获取结构体详情: {struct_name}\n"
-        )
-        return False
-
-    idx, found_udm = tif.get_udm(field_name)
-    if not found_udm:
-        ida_kernwin.msg(
-            f"  [!] 结构体 {struct_name} 中未找到字段: {field_name}\n"
-        )
-        return False
-
-    result = tif.rename_udm(idx, new_name)
-    if result == ida_typeinf.TERR_OK:
-        ida_kernwin.msg(
-            f"  [+] 结构体字段重命名: {struct_name}.{field_name} -> "
-            f"{struct_name}.{new_name}\n"
-        )
-        return True
-
-    ida_kernwin.msg(
-        f"  [!] 结构体字段重命名失败: {struct_name}.{field_name} "
-        f"(错误码: {result})\n"
-    )
-    return False
-
-
-def _apply_all_renames(func, ai_result, symbols, dry_run=False):
-    func_name = ida_funcs.get_func_name(func.start_ea)
-    func_rename = ai_result.get("function", "")
-    symbol_map = ai_result.get("symbols", {})
-    reasoning = ai_result.get("reasoning", "")
-    confidence = ai_result.get("confidence", "low")
-
-    confidence_label = (
-        {"high": "高", "medium": "中", "low": "低"}
-        .get(confidence, str(confidence))
-    )
-
-    ida_kernwin.msg(
-        f"[*] AI 分析结果 (置信度: {confidence_label}):\n"
-    )
-    ida_kernwin.msg(f"[*] 理由: {reasoning}\n")
-
-    total_success = 0
-    total_fail = 0
-
-    if func_rename and _validate_name(func_rename):
-        if _is_binary_symbol(func.start_ea):
-            ida_kernwin.msg(
-                f"  [!] 函数 '{func_name}' 来自二进制符号表，"
-                f"跳过重命名（AI 建议: {func_rename}）\n"
-            )
-        elif not _is_auto_generated_name(func_name):
-            ida_kernwin.msg(
-                f"  [!] 函数 '{func_name}' 可能是用户或调试符号定义的名称，"
-                f"跳过重命名（AI 建议: {func_rename}）\n"
-            )
-        else:
-            ida_kernwin.msg(
-                f"[*] 函数重命名: {func_name} -> {func_rename}\n"
-            )
-            if _apply_function_rename(
-                func.start_ea, func_name, func_rename, dry_run
-            ):
-                total_success += 1
-                if not dry_run:
-                    comment = (
-                        f"AI 重命名 | 原名: {func_name} | "
-                        f"理由: {reasoning} | 置信度: {confidence_label}"
-                    )
-                    ida_bytes.set_cmt(func.start_ea, comment, 0)
-            else:
-                total_fail += 1
-    elif func_rename:
-        ida_kernwin.msg(
-            f"[!] AI 建议的函数名 '{func_rename}' 不合法，跳过\n"
-        )
-        total_fail += 1
-
-    for symbol_key, suggested_name in symbol_map.items():
-        if not _validate_name(suggested_name):
-            ida_kernwin.msg(
-                f"  [!] 建议名称 '{suggested_name}' 不合法，"
-                f"跳过 {symbol_key}\n"
-            )
-            total_fail += 1
-            continue
-
-        if symbol_key in symbols["local_vars"]:
-            if _apply_local_var_rename(
-                func.start_ea, symbol_key, suggested_name, dry_run
-            ):
-                total_success += 1
-            else:
-                total_fail += 1
-
-        elif symbol_key in symbols["called_functions"]:
-            if _apply_function_rename_by_name(
-                symbol_key, suggested_name, dry_run
-            ):
-                total_success += 1
-            else:
-                total_fail += 1
-
-        elif symbol_key in symbols["global_data"]:
-            if _apply_global_data_rename(
-                symbol_key, suggested_name, dry_run
-            ):
-                total_success += 1
-            else:
-                total_fail += 1
-
-        elif "." in symbol_key:
-            parts = symbol_key.split(".", 1)
-            if len(parts) == 2:
-                sname, fname = parts
-                if (
-                    sname in symbols["struct_fields"]
-                    and fname in symbols["struct_fields"][sname]
-                ):
-                    if _apply_struct_field_rename(
-                        sname, fname, suggested_name, dry_run
-                    ):
-                        total_success += 1
-                    else:
-                        total_fail += 1
-                else:
-                    ida_kernwin.msg(
-                        f"  [!] 未识别的符号键: {symbol_key}\n"
-                    )
-                    total_fail += 1
-
-    return total_success, total_fail
-
-
-def _apply_comments(func, cfunc, source, ai_result, dry_run=False):
-    if not cfunc:
-        return 0, 0
-
-    summary = ai_result.get("summary_comment", "")
-    inline_comments = ai_result.get("inline_comments", {})
-
-    if not summary and not inline_comments:
-        return 0, 0
-
-    total_success = 0
-    total_fail = 0
-
-    if dry_run:
-        if summary:
-            ida_kernwin.msg(
-                f"  [预览-函数摘要] {summary}\n"
-            )
-        for line_no, cmt in sorted(inline_comments.items(), key=lambda x: int(x[0])):
-            ida_kernwin.msg(
-                f"  [预览-行内注释] 第{line_no}行: {cmt}\n"
-            )
-        return len(inline_comments) + (1 if summary else 0), 0
-
-    if summary:
-        ida_bytes.set_cmt(func.start_ea, summary, 0)
-        ida_kernwin.msg(
-            f"  [+] 汇编注释(函数入口): {summary}\n"
-        )
-        tl = ida_hexrays.treeloc_t()
-        tl.ea = func.start_ea
-        tl.itp = ida_hexrays.ITP_BLOCK1
-        cfunc.set_user_cmt(tl, summary)
-        total_success += 1
-
-    if inline_comments:
-        source_lines = source.splitlines()
-        ea_by_line = {}
-        for item in cfunc.treeitems:
-            if item.ea != ida_idaapi.BADADDR:
-                for i, line in enumerate(source_lines):
-                    if item.ea not in ea_by_line.values():
-                        if f"0x{item.ea:X}" in line or f"0x{item.ea:08X}" in line:
-                            ea_by_line[i + 1] = item.ea
-                            break
-
-        if not ea_by_line:
-            body_ea = {}
-            for item in cfunc.treeitems:
-                if item.ea != ida_idaapi.BADADDR:
-                    body_ea[item.ea] = item
-            sorted_eas = sorted(body_ea.keys())
-            line_count = len(source_lines)
-
-            for line_no_str in inline_comments:
-                try:
-                    line_no = int(line_no_str)
-                except (ValueError, TypeError):
-                    continue
-                idx = max(0, min(int((line_no - 1) * len(sorted_eas) / max(line_count, 1)), len(sorted_eas) - 1))
-                ea_by_line[line_no] = sorted_eas[idx]
-
-        for line_no_str, comment_text in inline_comments.items():
-            try:
-                line_no = int(line_no_str)
-            except (ValueError, TypeError):
-                ida_kernwin.msg(
-                    f"  [!] 无效行号: {line_no_str}\n"
-                )
-                total_fail += 1
-                continue
-
-            ea = ea_by_line.get(line_no)
-            if ea is None:
-                ida_kernwin.msg(
-                    f"  [!] 无法映射行号 {line_no} 到地址\n"
-                )
-                total_fail += 1
-                continue
-
-            tl = ida_hexrays.treeloc_t()
-            tl.ea = ea
-            tl.itp = ida_hexrays.ITP_SEMI
-            cfunc.set_user_cmt(tl, comment_text)
-
-            ida_bytes.set_cmt(ea, comment_text, 0)
-            ida_kernwin.msg(
-                f"  [+] 行内注释(0x{ea:08X} 第{line_no}行): {comment_text}\n"
-            )
-            total_success += 1
-
-    cfunc.save_user_cmts()
-    return total_success, total_fail
-
-
-def _apply_function_rename_by_name(old_name, new_name, dry_run=False):
-    ea = ida_name.get_name_ea(ida_idaapi.BADADDR, old_name)
-    if ea == ida_idaapi.BADADDR:
-        ida_kernwin.msg(
-            f"  [!] 函数地址未找到: {old_name}\n"
-        )
-        return False
-    if _is_binary_symbol(ea):
-        ida_kernwin.msg(
-            f"  [!] 函数 '{old_name}' 来自二进制符号表，跳过重命名\n"
-        )
-        return False
-    return _apply_function_rename(ea, old_name, new_name, dry_run)
-
-
-# ─────────────────────────────────────────────────────────────
-#  主流程
-# ─────────────────────────────────────────────────────────────
-
 def _format_elapsed(seconds):
     if seconds < 60:
         return f"{seconds:.1f} 秒"
@@ -942,7 +431,7 @@ def _format_elapsed(seconds):
     return f"{int(d)} 天 {int(h)} 小时 {int(m)} 分 {s:.1f} 秒"
 
 
-def _analyze_function(func, dry_run=False):
+def _collect_function_context(func):
     func_name = ida_funcs.get_func_name(func.start_ea)
     context = {
         "name": func_name,
@@ -971,6 +460,706 @@ def _analyze_function(func, dry_run=False):
         )
         cfunc = None
 
+    return context, cfunc, source
+
+
+# ─────────────────────────────────────────────────────────────
+#  AIRenamer: AI 辅助符号重命名
+# ─────────────────────────────────────────────────────────────
+
+class AIRenamer:
+    """AI 辅助符号重命名（函数、局部变量、全局数据、结构体字段）。
+
+    可独立使用，也可与 AICommenter 配合。
+    当配合使用时，应先执行 AIRenamer.analyze()，再执行 AICommenter.analyze()，
+    使注释基于重命名后的代码。
+    """
+
+    def __init__(self, func, context, cfunc, source, symbols):
+        self.func = func
+        self.func_name = ida_funcs.get_func_name(func.start_ea)
+        self.context = context
+        self.cfunc = cfunc
+        self.source = source
+        self.symbols = symbols
+
+    def _build_prompt(self):
+        sections = []
+
+        sections.append(
+            "你是一位资深的逆向工程专家。"
+            "请分析以下反编译代码，为函数本身和其中所有自动命名的符号"
+            "建议有意义的名称。\n"
+        )
+
+        sections.append("## 函数信息")
+        sections.append(f"- 当前名称: {self.func_name}")
+        sections.append(f"- 地址: 0x{self.context['addr']:08X}")
+        sections.append(f"- 大小: {self.context['size']} 字节\n")
+
+        if self.context["callers"]:
+            sections.append("## 调用者（谁调用了此函数）")
+            for c in self.context["callers"]:
+                sections.append(f"- {c}")
+            sections.append("")
+
+        if self.context["callees"]:
+            sections.append("## 被调用函数（此函数调用了谁）")
+            for c in self.context["callees"]:
+                sections.append(f"- {c}")
+            sections.append("")
+
+        if self.context["strings"]:
+            sections.append("## 引用的字符串")
+            for s in self.context["strings"]:
+                sections.append(f'- "{s}"')
+            sections.append("")
+
+        sections.append("## 反编译伪代码")
+        source_lines = self.source.splitlines()
+        total_lines = len(source_lines)
+        if total_lines > _MAX_SOURCE_LINES:
+            source_lines = source_lines[:_MAX_SOURCE_LINES]
+            source_lines.append(f"... (已截断，共 {total_lines} 行)")
+        sections.append("```c")
+        sections.extend(source_lines)
+        sections.append("```\n")
+
+        sections.append("## 待重命名的符号列表")
+
+        if self.symbols["local_vars"]:
+            sections.append("### 局部变量（v1、v2 等自动编号的变量）")
+            for v in self.symbols["local_vars"]:
+                sections.append(f"- {v}")
+            sections.append("")
+
+        if self.symbols["called_functions"]:
+            sections.append("### 调用的函数（sub_XXXXX 等自动命名的函数）")
+            for f in self.symbols["called_functions"]:
+                sections.append(f"- {f}")
+            sections.append("")
+
+        if self.symbols["global_data"]:
+            sections.append("### 全局数据引用（dword_XXXXX 等自动命名的数据）")
+            for d in self.symbols["global_data"]:
+                sections.append(f"- {d}")
+            sections.append("")
+
+        if self.symbols["struct_fields"]:
+            sections.append("### 结构体字段（field_0 等自动命名的字段）")
+            for sname, fields in self.symbols["struct_fields"].items():
+                for f in fields:
+                    sections.append(f"- {sname}.{f}")
+            sections.append("")
+
+        sections.append("## 命名规则")
+        sections.append("1. 使用 snake_case 风格（小写字母 + 下划线）")
+        sections.append(
+            "2. 函数名以动词开头（如 parse_、validate_、decode_、init_ 等）"
+        )
+        sections.append(
+            "3. 变量名应体现用途（如 username、password、buffer_size）"
+        )
+        sections.append(
+            "4. 结构体字段名应体现语义（如 checksum、next_ptr、flags）"
+        )
+        sections.append(
+            "5. 名称应准确反映实际功能，避免过于泛化"
+        )
+        sections.append("6. 仅使用小写英文字母、数字和下划线，以字母或下划线开头")
+        sections.append("7. 不使用 C/C++ 关键字或标准库函数名\n")
+
+        sections.append("## 输出格式")
+        sections.append(
+            "请严格按照以下 JSON 格式返回，不要添加任何其他内容：\n"
+        )
+        sections.append("```json")
+        sections.append("{")
+        sections.append('  "function": "新函数名",')
+        sections.append('  "reasoning": "分析理由",')
+        sections.append('  "confidence": "high/medium/low",')
+        sections.append('  "symbols": {')
+        sections.append('    "sub_140001234": "validate_password",')
+        sections.append('    "v1": "username",')
+        sections.append('    "v2": "password",')
+        sections.append('    "dword_14000XXXX": "retry_count",')
+        sections.append('    "MyStruct.field_4": "checksum"')
+        sections.append("  }")
+        sections.append("}")
+        sections.append("```")
+        sections.append("")
+        sections.append(
+            "symbols 中只包含你能确定用途的符号，不确定的不要包含。"
+            "键名保持原始名称，结构体字段用 \"结构体名.字段名\" 格式。"
+        )
+
+        return "\n".join(sections)
+
+    def _apply_function_rename(self, addr, old_name, new_name, dry_run=False):
+        if dry_run:
+            ida_kernwin.msg(
+                f"  [预览-函数] {old_name} -> {new_name}\n"
+            )
+            return True
+
+        success = ida_name.set_name(addr, new_name, ida_name.SN_NOWARN)
+        if success:
+            ida_kernwin.msg(
+                f"  [+] 函数重命名: {old_name} (0x{addr:08X}) -> {new_name}\n"
+            )
+        else:
+            ida_kernwin.msg(
+                f"  [!] 函数重命名失败: {old_name} -> {new_name}\n"
+            )
+        return success
+
+    def _apply_local_var_rename(self, old_name, new_name, dry_run=False):
+        if dry_run:
+            ida_kernwin.msg(
+                f"  [预览-局部变量] {old_name} -> {new_name}\n"
+            )
+            return True
+
+        if not _HAS_DECOMPILER:
+            ida_kernwin.msg(
+                f"  [!] 局部变量重命名需要 Hex-Rays 反编译器: {old_name}\n"
+            )
+            return False
+
+        cfunc = ida_hexrays.decompile(self.func.start_ea)
+        if not cfunc:
+            return False
+
+        target_lvar = None
+        for lv in cfunc.lvars:
+            if lv.name == old_name:
+                target_lvar = lv
+                break
+
+        if target_lvar is None:
+            ida_kernwin.msg(
+                f"  [!] 未找到局部变量: {old_name}\n"
+            )
+            return False
+
+        class _LVarRenamer(ida_hexrays.user_lvar_modifier_t):
+            def __init__(self, lvar_obj, new_n):
+                ida_hexrays.user_lvar_modifier_t.__init__(self)
+                self._lvar = lvar_obj
+                self._new_name = new_n
+                self._found = False
+
+            def modify_lvars(self, lvars):
+                for lv in lvars.lvvec:
+                    if lv.ll.defea == self._lvar.defea:
+                        lv.name = self._new_name
+                        self._found = True
+                        return True
+                lsi = ida_hexrays.lvar_saved_info_t()
+                lsi.ll = self._lvar
+                lsi.name = self._new_name
+                lvars.lvvec.push_back(lsi)
+                self._found = True
+                return True
+
+        renamer = _LVarRenamer(target_lvar, new_name)
+        success = ida_hexrays.modify_user_lvars(self.func.start_ea, renamer)
+
+        if success and renamer._found:
+            ida_kernwin.msg(
+                f"  [+] 局部变量重命名: {old_name} -> {new_name}\n"
+            )
+        else:
+            ida_kernwin.msg(
+                f"  [!] 局部变量重命名失败: {old_name} -> {new_name}\n"
+            )
+        return success and renamer._found
+
+    def _apply_global_data_rename(self, name_str, new_name, dry_run=False):
+        ea = ida_name.get_name_ea(ida_idaapi.BADADDR, name_str)
+        if ea == ida_idaapi.BADADDR:
+            ida_kernwin.msg(
+                f"  [!] 全局数据地址未找到: {name_str}\n"
+            )
+            return False
+        if _is_binary_symbol(ea):
+            ida_kernwin.msg(
+                f"  [!] 全局数据 '{name_str}' 来自二进制符号表，跳过重命名\n"
+            )
+            return False
+
+        if dry_run:
+            ida_kernwin.msg(
+                f"  [预览-全局数据] {name_str} (0x{ea:08X}) -> {new_name}\n"
+            )
+            return True
+
+        success = ida_name.set_name(ea, new_name, ida_name.SN_NOWARN)
+        if success:
+            ida_kernwin.msg(
+                f"  [+] 全局数据重命名: {name_str} (0x{ea:08X}) -> {new_name}\n"
+            )
+        else:
+            ida_kernwin.msg(
+                f"  [!] 全局数据重命名失败: {name_str} -> {new_name}\n"
+            )
+        return success
+
+    def _apply_struct_field_rename(self, struct_name, field_name, new_name,
+                                   dry_run=False):
+        if dry_run:
+            ida_kernwin.msg(
+                f"  [预览-结构体字段] {struct_name}.{field_name} -> "
+                f"{struct_name}.{new_name}\n"
+            )
+            return True
+
+        til = ida_typeinf.get_idati()
+        tif = ida_typeinf.tinfo_t()
+        if not tif.get_named_type(til, struct_name):
+            ida_kernwin.msg(
+                f"  [!] 结构体类型未找到: {struct_name}\n"
+            )
+            return False
+
+        udt = ida_typeinf.udt_type_data_t()
+        if not tif.get_udt_details(udt):
+            ida_kernwin.msg(
+                f"  [!] 无法获取结构体详情: {struct_name}\n"
+            )
+            return False
+
+        idx, found_udm = tif.get_udm(field_name)
+        if not found_udm:
+            ida_kernwin.msg(
+                f"  [!] 结构体 {struct_name} 中未找到字段: {field_name}\n"
+            )
+            return False
+
+        result = tif.rename_udm(idx, new_name)
+        if result == ida_typeinf.TERR_OK:
+            ida_kernwin.msg(
+                f"  [+] 结构体字段重命名: {struct_name}.{field_name} -> "
+                f"{struct_name}.{new_name}\n"
+            )
+            return True
+
+        ida_kernwin.msg(
+            f"  [!] 结构体字段重命名失败: {struct_name}.{field_name} "
+            f"(错误码: {result})\n"
+        )
+        return False
+
+    def _apply_function_rename_by_name(self, old_name, new_name,
+                                       dry_run=False):
+        ea = ida_name.get_name_ea(ida_idaapi.BADADDR, old_name)
+        if ea == ida_idaapi.BADADDR:
+            ida_kernwin.msg(
+                f"  [!] 函数地址未找到: {old_name}\n"
+            )
+            return False
+        if _is_binary_symbol(ea):
+            ida_kernwin.msg(
+                f"  [!] 函数 '{old_name}' 来自二进制符号表，跳过重命名\n"
+            )
+            return False
+        return self._apply_function_rename(ea, old_name, new_name, dry_run)
+
+    def _apply_all(self, ai_result, dry_run=False):
+        func_rename = ai_result.get("function", "")
+        symbol_map = ai_result.get("symbols", {})
+        reasoning = ai_result.get("reasoning", "")
+        confidence = ai_result.get("confidence", "low")
+
+        confidence_label = (
+            {"high": "高", "medium": "中", "low": "低"}
+            .get(confidence, str(confidence))
+        )
+
+        ida_kernwin.msg(
+            f"[*] AI 分析结果 (置信度: {confidence_label}):\n"
+        )
+        ida_kernwin.msg(f"[*] 理由: {reasoning}\n")
+
+        total_success = 0
+        total_fail = 0
+
+        if func_rename and _validate_name(func_rename):
+            if _is_binary_symbol(self.func.start_ea):
+                ida_kernwin.msg(
+                    f"  [!] 函数 '{self.func_name}' 来自二进制符号表，"
+                    f"跳过重命名（AI 建议: {func_rename}）\n"
+                )
+            elif not _is_auto_generated_name(self.func_name):
+                ida_kernwin.msg(
+                    f"  [!] 函数 '{self.func_name}' 可能是用户或调试符号定义的名称，"
+                    f"跳过重命名（AI 建议: {func_rename}）\n"
+                )
+            else:
+                ida_kernwin.msg(
+                    f"[*] 函数重命名: {self.func_name} -> {func_rename}\n"
+                )
+                if self._apply_function_rename(
+                    self.func.start_ea, self.func_name, func_rename, dry_run
+                ):
+                    total_success += 1
+                    if not dry_run:
+                        comment = (
+                            f"AI 重命名 | 原名: {self.func_name} | "
+                            f"理由: {reasoning} | 置信度: {confidence_label}"
+                        )
+                        ida_bytes.set_cmt(self.func.start_ea, comment, 0)
+                else:
+                    total_fail += 1
+        elif func_rename:
+            ida_kernwin.msg(
+                f"[!] AI 建议的函数名 '{func_rename}' 不合法，跳过\n"
+            )
+            total_fail += 1
+
+        for symbol_key, suggested_name in symbol_map.items():
+            if not _validate_name(suggested_name):
+                ida_kernwin.msg(
+                    f"  [!] 建议名称 '{suggested_name}' 不合法，"
+                    f"跳过 {symbol_key}\n"
+                )
+                total_fail += 1
+                continue
+
+            if symbol_key in self.symbols["local_vars"]:
+                if self._apply_local_var_rename(
+                    symbol_key, suggested_name, dry_run
+                ):
+                    total_success += 1
+                else:
+                    total_fail += 1
+
+            elif symbol_key in self.symbols["called_functions"]:
+                if self._apply_function_rename_by_name(
+                    symbol_key, suggested_name, dry_run
+                ):
+                    total_success += 1
+                else:
+                    total_fail += 1
+
+            elif symbol_key in self.symbols["global_data"]:
+                if self._apply_global_data_rename(
+                    symbol_key, suggested_name, dry_run
+                ):
+                    total_success += 1
+                else:
+                    total_fail += 1
+
+            elif "." in symbol_key:
+                parts = symbol_key.split(".", 1)
+                if len(parts) == 2:
+                    sname, fname = parts
+                    if (
+                        sname in self.symbols["struct_fields"]
+                        and fname in self.symbols["struct_fields"][sname]
+                    ):
+                        if self._apply_struct_field_rename(
+                            sname, fname, suggested_name, dry_run
+                        ):
+                            total_success += 1
+                        else:
+                            total_fail += 1
+                    else:
+                        ida_kernwin.msg(
+                            f"  [!] 未识别的符号键: {symbol_key}\n"
+                        )
+                        total_fail += 1
+
+        return total_success, total_fail
+
+    def analyze(self, dry_run=False):
+        ida_kernwin.msg(
+            f"[*] 正在调用 AI 分析重命名 ({self._count_symbols()} 个符号)...\n"
+        )
+        prompt = self._build_prompt()
+
+        start_time = time.time()
+        result = _call_ai(prompt)
+        elapsed = time.time() - start_time
+
+        if result is None:
+            ida_kernwin.msg(
+                f"[!] AI 调用失败 (耗时 {_format_elapsed(elapsed)})\n"
+            )
+            return 0, 1
+
+        if not result["success"]:
+            ida_kernwin.msg(
+                f"[!] AI 分析失败 (耗时 {_format_elapsed(elapsed)}): "
+                f"{result['message']}\n"
+            )
+            return 0, 1
+
+        ida_kernwin.msg(
+            f"[+] AI 重命名分析完成 (耗时 {_format_elapsed(elapsed)})\n"
+        )
+
+        parsed = _parse_ai_response(result["message"])
+        if parsed is None:
+            ida_kernwin.msg("[!] 无法解析 AI 响应为 JSON\n")
+            raw_preview = result["message"][:300]
+            ida_kernwin.msg(f"[*] AI 原始响应: {raw_preview}\n")
+            return 0, 1
+
+        return self._apply_all(parsed, dry_run)
+
+    def _count_symbols(self):
+        return (
+            len(self.symbols["local_vars"])
+            + len(self.symbols["called_functions"])
+            + len(self.symbols["global_data"])
+            + sum(len(v) for v in self.symbols["struct_fields"].values())
+        )
+
+
+# ─────────────────────────────────────────────────────────────
+#  AICommenter: AI 辅助注释生成
+# ─────────────────────────────────────────────────────────────
+
+class AICommenter:
+    """AI 辅助注释生成（函数摘要 + 行内注释，汇编视图 + 伪代码视图双写）。
+
+    可独立使用，也可在 AIRenamer 之后调用以获得更好的注释质量
+    （基于重命名后的代码生成注释）。
+    """
+
+    def __init__(self, func, context, cfunc, source):
+        self.func = func
+        self.func_name = ida_funcs.get_func_name(func.start_ea)
+        self.context = context
+        self.cfunc = cfunc
+        self.source = source
+
+    def _build_prompt(self):
+        sections = []
+
+        sections.append(
+            "你是一位资深的逆向工程专家。"
+            "请分析以下反编译代码，为函数生成中文注释。\n"
+        )
+
+        sections.append("## 函数信息")
+        sections.append(f"- 当前名称: {self.func_name}")
+        sections.append(f"- 地址: 0x{self.context['addr']:08X}")
+        sections.append(f"- 大小: {self.context['size']} 字节\n")
+
+        if self.context["callers"]:
+            sections.append("## 调用者（谁调用了此函数）")
+            for c in self.context["callers"]:
+                sections.append(f"- {c}")
+            sections.append("")
+
+        if self.context["callees"]:
+            sections.append("## 被调用函数（此函数调用了谁）")
+            for c in self.context["callees"]:
+                sections.append(f"- {c}")
+            sections.append("")
+
+        if self.context["strings"]:
+            sections.append("## 引用的字符串")
+            for s in self.context["strings"]:
+                sections.append(f'- "{s}"')
+            sections.append("")
+
+        sections.append("## 反编译伪代码（带行号标注）")
+        source_lines = self.source.splitlines()
+        total_lines = len(source_lines)
+        display_lines = source_lines[:_MAX_SOURCE_LINES]
+        numbered_lines = []
+        for i, line in enumerate(display_lines, 1):
+            numbered_lines.append(f"{i:>4}: {line}")
+        if total_lines > _MAX_SOURCE_LINES:
+            numbered_lines.append(
+                f"  ... (已截断，共 {total_lines} 行)"
+            )
+        sections.append("```c")
+        sections.extend(numbered_lines)
+        sections.append("```\n")
+
+        sections.append("## 输出格式")
+        sections.append(
+            "请严格按照以下 JSON 格式返回，不要添加任何其他内容：\n"
+        )
+        sections.append("```json")
+        sections.append("{")
+        sections.append('  "summary_comment": "函数功能的一句话中文摘要",')
+        sections.append('  "inline_comments": {')
+        sections.append('    "3": "读取用户名输入",')
+        sections.append('    "5": "调用验证函数校验凭据"')
+        sections.append("  }")
+        sections.append("}")
+        sections.append("```")
+        sections.append("")
+        sections.append(
+            "inline_comments 是对反编译伪代码关键行的中文注释，"
+            "键为行号（从 1 开始，不包含 ``` 标记行），值为中文注释。"
+            "只注释关键的逻辑步骤（如函数调用、条件判断、重要赋值），"
+            "不要注释每一行，3-8 条注释为宜。"
+        )
+        sections.append(
+            "summary_comment 是函数功能的一句话中文摘要，"
+            "用简洁自然的语言描述，不要过于冗长。"
+        )
+
+        return "\n".join(sections)
+
+    def _apply_comments(self, ai_result, dry_run=False):
+        if not self.cfunc:
+            return 0, 0
+
+        summary = ai_result.get("summary_comment", "")
+        inline_comments = ai_result.get("inline_comments", {})
+
+        if not summary and not inline_comments:
+            return 0, 0
+
+        total_success = 0
+        total_fail = 0
+
+        if dry_run:
+            if summary:
+                ida_kernwin.msg(
+                    f"  [预览-函数摘要] {summary}\n"
+                )
+            for line_no, cmt in sorted(
+                inline_comments.items(), key=lambda x: int(x[0])
+            ):
+                ida_kernwin.msg(
+                    f"  [预览-行内注释] 第{line_no}行: {cmt}\n"
+                )
+            return len(inline_comments) + (1 if summary else 0), 0
+
+        if summary:
+            ida_bytes.set_cmt(self.func.start_ea, summary, 0)
+            ida_kernwin.msg(
+                f"  [+] 汇编注释(函数入口): {summary}\n"
+            )
+            tl = ida_hexrays.treeloc_t()
+            tl.ea = self.func.start_ea
+            tl.itp = ida_hexrays.ITP_BLOCK1
+            self.cfunc.set_user_cmt(tl, summary)
+            total_success += 1
+
+        if inline_comments:
+            source_lines = self.source.splitlines()
+            ea_by_line = {}
+            for item in self.cfunc.treeitems:
+                if item.ea != ida_idaapi.BADADDR:
+                    for i, line in enumerate(source_lines):
+                        if item.ea not in ea_by_line.values():
+                            if (
+                                f"0x{item.ea:X}" in line
+                                or f"0x{item.ea:08X}" in line
+                            ):
+                                ea_by_line[i + 1] = item.ea
+                                break
+
+            if not ea_by_line:
+                body_ea = {}
+                for item in self.cfunc.treeitems:
+                    if item.ea != ida_idaapi.BADADDR:
+                        body_ea[item.ea] = item
+                sorted_eas = sorted(body_ea.keys())
+                line_count = len(source_lines)
+
+                for line_no_str in inline_comments:
+                    try:
+                        line_no = int(line_no_str)
+                    except (ValueError, TypeError):
+                        continue
+                    idx = max(
+                        0,
+                        min(
+                            int(
+                                (line_no - 1)
+                                * len(sorted_eas)
+                                / max(line_count, 1)
+                            ),
+                            len(sorted_eas) - 1,
+                        ),
+                    )
+                    ea_by_line[line_no] = sorted_eas[idx]
+
+            for line_no_str, comment_text in inline_comments.items():
+                try:
+                    line_no = int(line_no_str)
+                except (ValueError, TypeError):
+                    ida_kernwin.msg(
+                        f"  [!] 无效行号: {line_no_str}\n"
+                    )
+                    total_fail += 1
+                    continue
+
+                ea = ea_by_line.get(line_no)
+                if ea is None:
+                    ida_kernwin.msg(
+                        f"  [!] 无法映射行号 {line_no} 到地址\n"
+                    )
+                    total_fail += 1
+                    continue
+
+                tl = ida_hexrays.treeloc_t()
+                tl.ea = ea
+                tl.itp = ida_hexrays.ITP_SEMI
+                self.cfunc.set_user_cmt(tl, comment_text)
+
+                ida_bytes.set_cmt(ea, comment_text, 0)
+                ida_kernwin.msg(
+                    f"  [+] 行内注释(0x{ea:08X} 第{line_no}行): "
+                    f"{comment_text}\n"
+                )
+                total_success += 1
+
+        self.cfunc.save_user_cmts()
+        return total_success, total_fail
+
+    def analyze(self, dry_run=False):
+        ida_kernwin.msg("[*] 正在调用 AI 生成注释...\n")
+        prompt = self._build_prompt()
+
+        start_time = time.time()
+        result = _call_ai(prompt)
+        elapsed = time.time() - start_time
+
+        if result is None:
+            ida_kernwin.msg(
+                f"[!] AI 调用失败 (耗时 {_format_elapsed(elapsed)})\n"
+            )
+            return 0, 1
+
+        if not result["success"]:
+            ida_kernwin.msg(
+                f"[!] AI 分析失败 (耗时 {_format_elapsed(elapsed)}): "
+                f"{result['message']}\n"
+            )
+            return 0, 1
+
+        ida_kernwin.msg(
+            f"[+] AI 注释生成完成 (耗时 {_format_elapsed(elapsed)})\n"
+        )
+
+        parsed = _parse_ai_response(result["message"])
+        if parsed is None:
+            ida_kernwin.msg("[!] 无法解析 AI 响应为 JSON\n")
+            raw_preview = result["message"][:300]
+            ida_kernwin.msg(f"[*] AI 原始响应: {raw_preview}\n")
+            return 0, 1
+
+        return self._apply_comments(parsed, dry_run)
+
+
+# ─────────────────────────────────────────────────────────────
+#  编排：分析单个函数
+# ─────────────────────────────────────────────────────────────
+
+def _analyze_function(func, dry_run=False, add_comments=False):
+    context, cfunc, source = _collect_function_context(func)
+
     symbols = _extract_all_symbols(func, cfunc, source)
     total_symbols = (
         len(symbols["local_vars"]) + len(symbols["called_functions"])
@@ -978,55 +1167,46 @@ def _analyze_function(func, dry_run=False):
         + sum(len(v) for v in symbols["struct_fields"].values())
     )
 
-    if total_symbols == 0:
-        ida_kernwin.msg(f"  [*] 无可重命名的符号，但仍将生成注释\n")
+    total_success = 0
+    total_fail = 0
 
-    ida_kernwin.msg(f"[*] 正在调用 AI 分析 ({total_symbols} 个符号)...\n")
-    prompt = _build_comprehensive_prompt(func_name, context, symbols)
+    # 第一步：重命名（AIRenamer 独立决定）
+    if total_symbols > 0:
+        renamer = AIRenamer(func, context, cfunc, source, symbols)
+        s, f_ = renamer.analyze(dry_run)
+        total_success += s
+        total_fail += f_
+    else:
+        ida_kernwin.msg(f"  [*] 无可重命名的符号，跳过重命名\n")
 
-    start_time = time.time()
-    result = _call_ai(prompt)
-    elapsed = time.time() - start_time
+    # 第二步：注释（AICommenter 独立决定；在重命名之后执行以获得更好的代码上下文）
+    if not add_comments:
+        ida_kernwin.msg(f"  [*] 未启用注释生成，跳过\n")
+    else:
+        if total_symbols > 0 and not dry_run:
+            new_cfunc = _decompile_function(func)
+            if new_cfunc:
+                cfunc = new_cfunc
+                source = str(cfunc)
+                context["source"] = source
+                ida_kernwin.msg(
+                    "[*] 重新反编译获取重命名后的代码，用于注释生成\n"
+                )
 
-    if result is None:
-        ida_kernwin.msg(
-            f"[!] AI 调用失败 (耗时 {_format_elapsed(elapsed)})\n"
-        )
-        return 0, 1
+        commenter = AICommenter(func, context, cfunc, source)
+        s, f_ = commenter.analyze(dry_run)
+        total_success += s
+        total_fail += f_
 
-    if not result["success"]:
-        ida_kernwin.msg(
-            f"[!] AI 分析失败 (耗时 {_format_elapsed(elapsed)}): "
-            f"{result['message']}\n"
-        )
-        return 0, 1
-
-    ida_kernwin.msg(
-        f"[+] AI 分析完成 (耗时 {_format_elapsed(elapsed)})\n"
-    )
-
-    parsed = _parse_ai_response(result["message"])
-    if parsed is None:
-        ida_kernwin.msg("[!] 无法解析 AI 响应为 JSON\n")
-        raw_preview = result["message"][:300]
-        ida_kernwin.msg(f"[*] AI 原始响应: {raw_preview}\n")
-        return 0, 1
-
-    rename_s, rename_f = _apply_all_renames(func, parsed, symbols, dry_run)
-
-    cmt_s, cmt_f = _apply_comments(
-        func, cfunc, context["source"], parsed, dry_run
-    )
-
-    return rename_s + cmt_s, rename_f + cmt_f
+    return total_success, total_fail
 
 
 def rename_functions(pattern, dry_run=False, recursive=False,
-                     max_depth=_DEFAULT_MAX_DEPTH):
+                     max_depth=_DEFAULT_MAX_DEPTH, add_comments=False):
     ida_kernwin.msg(
         f"[*] 开始 AI 辅助符号重命名: pattern='{pattern}', "
         f"dry_run={dry_run}, recursive={recursive}, "
-        f"max_depth={max_depth}\n"
+        f"max_depth={max_depth}, add_comments={add_comments}\n"
     )
 
     matched = _match_functions(pattern)
@@ -1056,7 +1236,7 @@ def rename_functions(pattern, dry_run=False, recursive=False,
             f"==========\n"
         )
 
-        s, f_ = _analyze_function(func, dry_run)
+        s, f_ = _analyze_function(func, dry_run, add_comments=add_comments)
         success_count += s
         fail_count += f_
 
@@ -1097,12 +1277,14 @@ AI 辅助符号重命名
 <##函数名或通配符模式 (如 sub_123* 或 main) :{pattern}>
 <{recursive}>递归分析被调用的自动命名函数>
 <##递归最大深度 (默认 2):{max_depth}>
+<{add_comments}>添加 AI 生成的注释（函数摘要+行内注释）>
 <{dry_run}>仅预览（不实际重命名）>
 """,
             {
                 "pattern": F.StringInput(),
                 "recursive": F.BoolInput(),
                 "max_depth": F.StringInput(),
+                "add_comments": F.BoolInput(),
                 "dry_run": F.BoolInput(),
             },
         )
@@ -1116,6 +1298,7 @@ def show_dialog():
         pattern = (f.pattern.value or "").strip()
         recursive = bool(f.recursive.value)
         max_depth_str = (f.max_depth.value or "").strip()
+        add_comments = bool(f.add_comments.value)
         dry_run = bool(f.dry_run.value)
         try:
             max_depth = int(max_depth_str) if max_depth_str else _DEFAULT_MAX_DEPTH
@@ -1126,6 +1309,7 @@ def show_dialog():
             rename_functions(
                 pattern, dry_run=dry_run,
                 recursive=recursive, max_depth=max_depth,
+                add_comments=add_comments,
             )
         else:
             ida_kernwin.msg("[!] 已取消: 函数名或模式不能为空\n")
@@ -1161,6 +1345,7 @@ def _parse_cli_argv(argv):
 
     dry_run = "--dry-run" in args
     recursive = "--recursive" in args
+    add_comments = "--add-comments" in args
 
     max_depth = _DEFAULT_MAX_DEPTH
     try:
@@ -1170,7 +1355,7 @@ def _parse_cli_argv(argv):
     except (ValueError, IndexError):
         pass
 
-    return args[pattern_idx + 1], dry_run, recursive, max_depth
+    return args[pattern_idx + 1], dry_run, recursive, max_depth, add_comments
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1181,6 +1366,7 @@ def _parse_env_args():
     pattern = os.environ.get("IDA_PATTERN", "").strip()
     dry_run = bool(os.environ.get("IDA_DRY_RUN", "").strip())
     recursive = bool(os.environ.get("IDA_RECURSIVE", "").strip())
+    add_comments = bool(os.environ.get("IDA_ADD_COMMENTS", "").strip())
     try:
         max_depth = int(os.environ.get("IDA_MAX_DEPTH", "").strip())
     except (ValueError, AttributeError):
@@ -1188,15 +1374,15 @@ def _parse_env_args():
     ida_kernwin.msg(
         f"[*] 环境变量: IDA_PATTERN='{pattern}', "
         f"IDA_DRY_RUN='{dry_run}', IDA_RECURSIVE='{recursive}', "
-        f"IDA_MAX_DEPTH='{max_depth}'\n"
+        f"IDA_MAX_DEPTH='{max_depth}', IDA_ADD_COMMENTS='{add_comments}'\n"
     )
     if pattern:
-        return pattern, dry_run, recursive, max_depth
+        return pattern, dry_run, recursive, max_depth, add_comments
     return None
 
 
 def _run_headless(pattern, dry_run=False, recursive=False,
-                  max_depth=_DEFAULT_MAX_DEPTH):
+                  max_depth=_DEFAULT_MAX_DEPTH, add_comments=False):
     import ida_auto
     import ida_loader
     import ida_pro
@@ -1208,6 +1394,7 @@ def _run_headless(pattern, dry_run=False, recursive=False,
     success = rename_functions(
         pattern, dry_run=dry_run,
         recursive=recursive, max_depth=max_depth,
+        add_comments=add_comments,
     )
 
     if success and not dry_run:
@@ -1236,6 +1423,7 @@ if _batch and _env is not None:
     _run_headless(
         _env[0], dry_run=_env[1],
         recursive=_env[2], max_depth=_env[3],
+        add_comments=_env[4],
     )
 elif _batch:
     ida_kernwin.msg("[!] headless 模式需要设置 IDA_PATTERN 环境变量\n")
@@ -1250,13 +1438,15 @@ elif __name__ == "__main__":
         rename_functions(
             cli_result[0], dry_run=cli_result[1],
             recursive=cli_result[2], max_depth=cli_result[3],
+            add_comments=cli_result[4],
         )
     else:
         if has_args:
             ida_kernwin.msg(
                 "[!] 参数格式错误，正确格式: "
                 "--use-mode cli --pattern <函数名或模式> "
-                "[--dry-run] [--recursive] [--max-depth <N>]\n"
+                "[--dry-run] [--recursive] [--max-depth <N>] "
+                "[--add-comments]\n"
             )
         ida_kernwin.msg("[*] 对话框模式: 等待用户输入\n")
         show_dialog()

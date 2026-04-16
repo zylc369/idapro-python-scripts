@@ -33,6 +33,7 @@ pattern=""
 dry_run=""
 recursive=""
 max_depth=""
+add_comments=""
 log_path=""
 input_file=""
 ida_path=""
@@ -48,6 +49,7 @@ print_usage() {
 可选参数:
   -r, --recursive         递归分析目标函数调用的自动命名函数（sub_XXXXX）
       --max-depth <N>     递归最大深度（默认: 2）
+      --add-comments      添加 AI 生成的注释（函数摘要+行内注释）
   -l, --log        <路径>  日志文件路径（默认: 当前执行目录/ai_rename_functions.log）
       --ida-path   <路径>  IDA Pro 安装目录路径（默认: 自动检测）
       --dry-run            仅预览 AI 建议，不实际重命名
@@ -57,6 +59,7 @@ print_usage() {
   $(basename "$0") --pattern "main_0" --input binary.i64 --recursive
   $(basename "$0") -p "sub_123*" -i binary.i64 --dry-run
   $(basename "$0") -p "sub_*" -i binary.i64 -r --max-depth 3
+  $(basename "$0") -p "main_0" -i binary.i64 --add-comments
 EOF
 }
 
@@ -89,6 +92,10 @@ parse_args() {
                 ;;
             --dry-run)
                 dry_run="1"
+                shift
+                ;;
+            --add-comments)
+                add_comments="1"
                 shift
                 ;;
             -h|--help)
@@ -139,7 +146,7 @@ _display_results() {
 
     local result_lines
     result_lines=$(grep -E \
-        '\[预览-|\[\+\] (函数|局部变量|全局数据|结构体字段)重命名|\[\+\] (汇编注释|函数摘要|行内注释|伪代码注释)|\[\+\] 总计:|\[\+\] AI 分析完成|\[!\].*不合法|\[!\].*失败|\[!\].*无法解析|\[!\].*重命名失败|\[!\].*符号表|\[!\].*调试符号|\[!\].*用户或|\[\*\] 理由:|\[\*\] AI 分析结果|\[\*\] 函数重命名:' \
+        '\[预览-|\[\+\] (函数|局部变量|全局数据|结构体字段)重命名|\[\+\] (汇编注释|函数摘要|行内注释|伪代码注释)|\[\+\] 总计:|\[\+\] AI (重命名分析|注释生成)完成|\[!\].*不合法|\[!\].*失败|\[!\].*无法解析|\[!\].*重命名失败|\[!\].*符号表|\[!\].*调试符号|\[!\].*用户或|\[\*\] 理由:|\[\*\] AI 分析结果|\[\*\] 函数重命名:' \
         "$log_file" 2>/dev/null || true)
 
     if [[ -z "$result_lines" ]]; then
@@ -170,12 +177,14 @@ execute_idat() {
     log_info "日志: $log_path"
     log_info "递归: $([ -n "$recursive" ] && echo "是 (深度: ${max_depth:-2})" || echo "否")"
     log_info "仅预览: $([ -n "$dry_run" ] && echo "是" || echo "否")"
+    log_info "添加注释: $([ -n "$add_comments" ] && echo "是" || echo "否")"
 
     local exit_code=0
     IDA_PATTERN="$pattern" \
     IDA_DRY_RUN="${dry_run:-}" \
     IDA_RECURSIVE="${recursive:-}" \
     IDA_MAX_DEPTH="${max_depth:-}" \
+    IDA_ADD_COMMENTS="${add_comments:-}" \
     "$ida_dir/idat" -v -A \
         -L"$log_path" \
         -S"$PYTHON_SCRIPT" \
