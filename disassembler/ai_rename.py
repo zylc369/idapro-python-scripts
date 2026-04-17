@@ -457,16 +457,18 @@ class AIRenamer:
                         )
                     else:
                         ai_utils.log(
-                            f"  [!] 未识别的符号键: {symbol_key}\n"
+                            f"  [!] {self.func_name}: 未识别的符号键 '{symbol_key}'"
+                            f"（结构体或字段不在提取列表中）\n"
                         )
                 else:
                     ai_utils.log(
-                        f"  [!] 未识别的符号键: {symbol_key}\n"
+                        f"  [!] {self.func_name}: 未识别的符号键 '{symbol_key}'\n"
                     )
             else:
                 ai_utils.log(
-                    f"  [!] 未识别的符号键: {symbol_key}\n"
-                )
+                    f"  [!] {self.func_name}: 未识别的符号键 '{symbol_key}'"
+                    f"（不属于局部变量、函数、全局数据或结构体字段）\n"
+                    )
 
             if ok:
                 total_success += 1
@@ -476,10 +478,12 @@ class AIRenamer:
                     status="preview" if dry_run else "success",
                 ))
             else:
+                reason = "未识别的符号键" if rename_type == "未知" else "重命名操作失败"
                 total_fail += 1
                 self.last_details.append(ai_utils.RenameDetail(
                     type=rename_type, old=symbol_key,
                     new=suggested_name, status="failed",
+                    reason=reason,
                 ))
 
         return total_success, total_fail
@@ -558,7 +562,8 @@ def rename_functions(pattern, dry_run=False, recursive=False,
             return 0, 0
 
         renamer = AIRenamer(func, context, cfunc, source, symbols)
-        return renamer.analyze(dry_run)
+        result = renamer.analyze(dry_run)
+        return result.success, result.fail
 
     return ai_utils.process_functions(
         pattern, _processor, recursive, max_depth, "重命名"

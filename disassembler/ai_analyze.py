@@ -336,10 +336,13 @@ if _IN_IDA:
                     )
                     for d in result.details:
                         tag = "[预览]" if d.status == "preview" else f"[{d.status}]"
-                        lines.append(
+                        detail_line = (
                             f"{depth_indent}    {tag} "
                             f"{d.old} -> {d.new}"
                         )
+                        if d.reason:
+                            detail_line += f"  ({d.reason})"
+                        lines.append(detail_line)
 
                 elif action_name == "comment" and isinstance(result, ai_utils.CommentResult):
                     if result.summary:

@@ -51,6 +51,7 @@ class RenameDetail:
     old: str
     new: str
     status: str
+    reason: str = ""
 
 
 @dataclass

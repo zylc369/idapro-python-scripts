@@ -310,7 +310,8 @@ def comment_functions(pattern, dry_run=False, recursive=False,
     def _processor(func, depth, idx):
         context, cfunc, source = ai_utils.collect_function_context(func)
         commenter = AICommenter(func, context, cfunc, source)
-        return commenter.analyze(dry_run)
+        result = commenter.analyze(dry_run)
+        return result.success, result.fail
 
     return ai_utils.process_functions(
         pattern, _processor, recursive, max_depth, "注释"

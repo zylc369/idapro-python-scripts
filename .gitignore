@@ -53,3 +53,4 @@ dmypy.json
 # Shell script runtime config
 .config/
 /ai_analyze.log
+/ai_analyze.log.results
