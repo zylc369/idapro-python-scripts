@@ -18,7 +18,6 @@ import json
 import os
 import re
 import sys
-import time
 
 import ida_bytes
 import ida_funcs

@@ -186,7 +186,7 @@ execute_idat() {
 
     log_info "正在执行 AI 辅助分析..."
     log_info "命令: $command"
-    log_info "模式: $pattern"
+    log_info "匹配模式: $pattern"
     log_info "目标: $input_file"
     log_info "日志: $log_path"
     log_info "递归: $([ -n "$recursive" ] && echo "是 (深度: ${max_depth:-2})" || echo "否")"

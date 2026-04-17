@@ -25,7 +25,6 @@ import time
 import ida_bytes
 import ida_funcs
 import ida_idaapi
-import ida_kernwin
 
 try:
     import ida_hexrays
@@ -136,6 +135,10 @@ class AICommenter:
 
     def _apply_comments(self, ai_result, dry_run=False):
         if not self.cfunc:
+            return 0, 0
+
+        if not ai_utils._HAS_DECOMPILER:
+            ai_utils.log("[!] 注释生成需要 Hex-Rays 反编译器\n")
             return 0, 0
 
         summary = ai_result.get("summary_comment", "")
