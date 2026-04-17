@@ -19,6 +19,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Dict, List
 
 import ida_bytes
@@ -122,15 +123,28 @@ C_KEYWORDS = frozenset({
 # ─────────────────────────────────────────────────────────────
 
 def log(msg):
-    """统一日志输出：IDA 输出窗口 + headless 模式下同时输出到 stderr。
-
-    headless 模式下 ida_kernwin.msg() 的内容会被 -L 参数捕获到日志文件，
-    但不会显示在终端。通过同时写入 stderr，用户可以在 shell 中实时看到进度。
-    """
-    ida_kernwin.msg(msg)
-    if bool(ida_kernwin.cvar.batch):
-        sys.stderr.write(msg)
+    """统一日志输出。GUI 模式手动加时间戳；headless 模式仅写 stderr（idat -L 自动加时间戳）。"""
+    is_batch = bool(ida_kernwin.cvar.batch)
+    lines = msg.split("\n")
+    if is_batch:
+        out_msg = ""
+        for line in lines:
+            if line:
+                out_msg += line + "\n"
+        if not msg.endswith("\n") and lines and lines[-1]:
+            out_msg = out_msg.rstrip("\n")
+        sys.stderr.write(out_msg)
         sys.stderr.flush()
+    else:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ts_lines = []
+        for line in lines:
+            if line:
+                ts_lines.append(f"{ts} {line}")
+        ts_msg = "\n".join(ts_lines)
+        if msg.endswith("\n"):
+            ts_msg += "\n"
+        ida_kernwin.msg(ts_msg)
 
 
 # ─────────────────────────────────────────────────────────────

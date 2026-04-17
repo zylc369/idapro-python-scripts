@@ -310,7 +310,7 @@ if _IN_IDA:
     }
 
     def _format_results(analysis_result, actions, dry_run):
-        """将 AnalysisResult 格式化为可读文本并输出到 stderr。"""
+        """将 AnalysisResult 格式化为可读文本并写入结果文件。"""
         lines = []
         lines.append("")
         lines.append("===== 分析结果 =====")
@@ -334,13 +334,12 @@ if _IN_IDA:
                         f"{depth_indent}  "
                         f"可重命名符号 {result.symbols_total} 个"
                     )
-                    if result.details:
-                        for d in result.details:
-                            tag = "[预览]" if d.status == "preview" else f"[{d.status}]"
-                            lines.append(
-                                f"{depth_indent}    {tag} "
-                                f"{d.old} -> {d.new}"
-                            )
+                    for d in result.details:
+                        tag = "[预览]" if d.status == "preview" else f"[{d.status}]"
+                        lines.append(
+                            f"{depth_indent}    {tag} "
+                            f"{d.old} -> {d.new}"
+                        )
 
                 elif action_name == "comment" and isinstance(result, ai_utils.CommentResult):
                     if result.summary:
@@ -363,8 +362,13 @@ if _IN_IDA:
         )
 
         text = "\n".join(lines) + "\n"
-        sys.stderr.write(text)
-        sys.stderr.flush()
+        results_file = os.environ.get("IDA_RESULTS_FILE", "")
+        if results_file:
+            try:
+                with open(results_file, "w", encoding="utf-8") as f:
+                    f.write(text)
+            except OSError:
+                pass
 
     # ─── 对话框模式 ────────────────────────────────────────────
 
@@ -671,6 +675,8 @@ else:
         if not os.path.isabs(log_path):
             log_path = os.path.join(call_dir, log_path)
 
+        results_path = log_path + ".results"
+
         try:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             with open(log_path, "w", encoding="utf-8") as f:
@@ -680,11 +686,17 @@ else:
             sys.exit(1)
 
         actions_str = ",".join(actions)
-        print(f"[*] 正在执行 AI 辅助分析...", file=sys.stderr)
-        print(f"[*] 动作: {actions_str}", file=sys.stderr)
-        print(f"[*] 匹配模式: {args.pattern}", file=sys.stderr)
-        print(f"[*] 目标: {input_file}", file=sys.stderr)
-        print(f"[*] 日志: {log_path}", file=sys.stderr)
+
+        def _print(msg):
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"{ts} {msg}", file=sys.stderr)
+
+        _print(f"[*] 正在执行 AI 辅助分析...")
+        _print(f"[*] 动作: {actions_str}")
+        _print(f"[*] 匹配模式: {args.pattern}")
+        _print(f"[*] 目标: {input_file}")
+        _print(f"[*] 日志: {log_path}")
 
         idat_bin = os.path.join(ida_dir, "idat")
         script_path = os.path.abspath(__file__)
@@ -695,21 +707,53 @@ else:
             "IDA_DRY_RUN": "1" if args.dry_run else "",
             "IDA_RECURSIVE": "1" if args.recursive else "",
             "IDA_MAX_DEPTH": str(args.max_depth),
+            "IDA_RESULTS_FILE": results_path,
         }
 
-        exit_code = 0
+        import time
+
         try:
-            proc_result = subprocess.run(
+            proc = subprocess.Popen(
                 [idat_bin, "-v", "-A", f"-L{log_path}", f"-S{script_path}", input_file],
                 env=env,
             )
-            exit_code = proc_result.returncode
         except FileNotFoundError:
-            print(f"[!] idat 未找到: {idat_bin}", file=sys.stderr)
+            _print(f"[!] idat 未找到: {idat_bin}")
             sys.exit(1)
         except OSError as e:
-            print(f"[!] 启动 idat 失败: {e}", file=sys.stderr)
+            _print(f"[!] 启动 idat 失败: {e}")
             sys.exit(1)
+
+        progress_patterns = [
+            r"\[\*\] =+ \[\d+\]",
+            r"\[\+\] AI .+完成",
+            r"\[!\]",
+        ]
+        progress_re = re.compile("|".join(progress_patterns))
+        log_pos = 0
+        prev_line = None
+
+        while proc.poll() is None:
+            time.sleep(0.5)
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(log_pos)
+                    for line in f:
+                        cleaned = re.sub(
+                            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ ", "", line
+                        ).strip()
+                        if cleaned and progress_re.search(cleaned) and cleaned != prev_line:
+                            print(f"  {cleaned}", file=sys.stderr)
+                            prev_line = cleaned
+                    log_pos = f.tell()
+            except (OSError, IOError):
+                pass
+
+        exit_code = proc.returncode
+
+        if os.path.isfile(results_path):
+            with open(results_path, "r", encoding="utf-8") as f:
+                print(f.read(), end="", file=sys.stderr)
 
         sys.exit(exit_code)
 
