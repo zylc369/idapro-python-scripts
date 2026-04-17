@@ -532,6 +532,11 @@ def process_functions(pattern, processor, recursive=False,
                 for callee in callee_funcs:
                     if callee.start_ea not in visited:
                         queue.append((callee, depth + 1))
+            else:
+                log(
+                    f"[*] 未发现自动命名的被调用函数"
+                    f"，递归到此结束 (当前深度 {depth}/{max_depth})\n"
+                )
 
     log(f"\n[+] ========== {command_label}完成 ==========\n")
     log(

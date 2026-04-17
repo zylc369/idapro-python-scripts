@@ -545,17 +545,24 @@ else:
             r"\[\*\] 理由:",
             r"\[\*\] AI 分析结果",
             r"\[\*\] 函数重命名:",
+            r"\[\*\] 无可重命名",
+            r"\[\*\] 提取到",
+            r"\[\*\] 正在调用 AI",
+            r"\[\*\] (发现|未发现).*被调用函数",
         ]
         combined = "|".join(patterns)
 
         print("\n===== 分析结果 =====", file=sys.stderr)
+        prev = None
         with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
                 cleaned = re.sub(
                     r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ ", "", line
                 )
-                if re.search(combined, cleaned):
-                    print(f"  {cleaned.rstrip()}", file=sys.stderr)
+                stripped = cleaned.rstrip()
+                if re.search(combined, stripped) and stripped != prev:
+                    print(f"  {stripped}", file=sys.stderr)
+                    prev = stripped
 
     def main():
         parser = _build_parser()
