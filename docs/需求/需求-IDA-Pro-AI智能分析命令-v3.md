@@ -91,11 +91,32 @@
 ```markdown
 ## 运行环境
 
-IDA Pro 路径: !\`python3 -c "import json,sys;print(json.load(open('.config/ida_config.json'))['ida_path'])"\`
+IDA Pro 路径: !\`python3 -c "
+import json, sys, os
+config = '.config/ida_config.json'
+if not os.path.isfile(config):
+    print('未配置: 请手动创建 ' + config + ' 写入 {\"ida_path\": \"/path/to/ida/MacOS\"}，或直接告诉我路径我来配置')
+    sys.exit(0)
+p = json.load(open(config)).get('ida_path','')
+if p and os.path.isfile(os.path.join(p, 'idat')):
+    print(p)
+else:
+    print('配置无效: idat 不存在于 ' + (p or '空路径') + '，请更新 ' + config)
+"\`
 项目根目录: !\`pwd\`
 ```
 
-这样 AI 在收到 prompt 时就已经知道 idat 的完整路径（含空格），无需额外查询。AI 构造 idat 命令时必须用引号包裹路径。
+**处理策略**：
+
+| 情况 | prompt 中显示 | AI 行为 |
+|------|-------------|---------|
+| 配置文件存在且路径有效 | `IDA Pro 路径: /Applications/IDA Professional 9.1.app/Contents/MacOS` | 正常执行 |
+| 配置文件不存在 | `未配置: 请运行任意 disassembler/*.sh 脚本...` | 立即告知用户需要先配置，不执行任何 idat 命令 |
+| 配置文件存在但路径无效 | `配置无效: idat 不存在于 ...` | 告知用户路径有误，提示修正方法 |
+
+**用户配置 IDA 路径的方式**：
+
+用户只需在对话中告诉 AI IDA 的安装路径（如 "IDA 安装在 /Applications/IDA Professional 9.1.app/Contents/MacOS"），AI 自动验证路径有效性（目录下存在 `idat`）后写入 `.config/ida_config.json`，后续不再需要重复配置。
 
 ### 2.4 需求类型与执行策略（改进建议 5）
 
