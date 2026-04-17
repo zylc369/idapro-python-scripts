@@ -168,25 +168,25 @@ def _query_entry_points():
 
     if file_type in ("dll", "so"):
         log(f"[*] {file_type} 类型文件，补充导出函数到入口列表\n")
-        eqty2 = ida_entry.get_entry_qty()
-        for i in range(eqty2):
-            ordinal = ida_entry.get_entry_ordinal(i)
-            ea = ida_entry.get_entry(ordinal)
-            if ea == ida_idaapi.BADADDR or ea in seen:
+        export_count = 0
+        for ea in idautils.Functions():
+            if ea in seen:
+                continue
+            name = _get_func_name_safe(ea)
+            is_export = ida_bytes.is_mapped(ea) and name and not name.startswith("sub_")
+            if not is_export:
                 continue
             seen.add(ea)
-            name = ida_entry.get_entry_name(ordinal)
-            if not name:
-                name = _get_func_name_safe(ea)
             func = ida_funcs.get_func(ea)
             entries.append({
                 "name": name,
                 "addr": _hex(ea),
                 "type": "export",
-                "ordinal": ordinal,
+                "ordinal": -1,
                 "size": func.size() if func else 0,
             })
-        log(f"[+] 补充导出函数后共 {len(entries)} 个入口点\n")
+            export_count += 1
+        log(f"[+] 补充 {export_count} 个导出函数，共 {len(entries)} 个入口点\n")
     else:
         log(f"[+] 找到 {len(entries)} 个入口点\n")
     return {"entries": entries, "file_type": file_type, "total": len(entries)}
@@ -357,10 +357,11 @@ def _query_func_info():
     except Exception:
         pass
 
+    _FUNC_STATIC = getattr(ida_funcs, "FUNC_STATIC", None)
     flags = []
     if func.flags & ida_funcs.FUNC_LIB:
         flags.append("library")
-    if func.flags & ida_funcs.FUNC_STATIC:
+    if _FUNC_STATIC is not None and func.flags & _FUNC_STATIC:
         flags.append("static")
     if func.flags & ida_funcs.FUNC_FRAME:
         flags.append("frame")
