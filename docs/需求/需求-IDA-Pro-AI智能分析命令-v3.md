@@ -1,6 +1,7 @@
 # 需求：IDA Pro AI 智能分析命令（v3）
 
 > 基于 v2 审计报告修订，修正 7 个关键问题、落地 5 个改进建议。
+> v3 补充：脚本沉淀机制、执行过程可见性、不复用现有脚本（新建专用工具体系）。
 
 ## 1. 背景与目标
 
@@ -62,9 +63,9 @@
 1. **环境预加载**：通过 `!`shell 输出注入 idat 路径、项目根目录等运行时信息
 2. **角色与能力定义**：AI 的角色、可用工具、约束
 3. **参数解析规则**：如何从 `$ARGUMENTS` 提取文件路径和需求
-4. **执行流程**：按需求类型选择执行策略
-5. **脚本清单与调用模板**：可用脚本及其参数格式
-6. **临时脚本骨架**：AI 生成新脚本时的模板和规则
+4. **执行流程**：按需求类型选择执行策略，每个步骤输出进度信息
+5. **工具脚本清单与调用模板**：可用脚本（`query.py`、`update.py`、`scripts/` 沉淀脚本）及其参数格式
+6. **脚本生成与沉淀规则**：AI 生成新脚本时的骨架模板、编码规则、沉淀流程
 7. **输出格式与安全规则**
 
 ### 2.2 参数解析规则（修正 v2 问题 2）
@@ -111,16 +112,19 @@ AI 在执行前先判断需求类型，选择对应的执行策略：
 ```
 ┌─────────────────┐
 │ 1. 解析参数       │  从 $ARGUMENTS 提取文件路径 + 需求描述
+│   输出: [1/N]    │  → 用户可见进度
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │ 2. 预检查         │  文件存在性 + 数据库锁检测
+│   输出: [2/N]    │  → 用户可见进度
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │ 3. 判断需求类型    │  查询型 / 分析型 / 混合型
+│   输出: [3/N]    │  → 用户可见：需求类型 + 计划步骤数
 └────────┬────────┘
          │
          ▼
@@ -130,29 +134,36 @@ AI 在执行前先判断需求类型，选择对应的执行策略：
          │
          ▼
 ┌─────────────────┐  ┌───────────────────────────────────┐
-│ 5. 执行          │──│ idat 调用 → 读取输出 → 解析 JSON   │
+│ 5. 执行          │──│ 输出进度 → idat 调用 → 读取输出    │
+│   输出: [i/N]    │  │ → 输出完成信息                     │
 └────────┬────────┘  └───────────────────────────────────┘
          │
          ▼
 ┌─────────────────┐
 │ 6. 审计          │  返回码=0？输出非空？结果匹配需求？
 │    ├─ 通过 → 继续
-│    └─ 不通过 → 重试（回到步骤 4 调整参数）
+│    └─ 不通过 → 输出失败原因 → 重试（回到步骤 4）
 └────────┬────────┘
          │ 最多重试 3 次
          ▼
 ┌─────────────────┐
 │ 7. 持久化（可选） │  如需求涉及更新数据库 → 调用更新脚本
+│   输出: [i/N]    │  → 用户可见：正在更新数据库...
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│ 8. 保存存档       │  写 summary.json + idat 日志
+│ 8. 沉淀（可选）   │  如生成了新脚本 → 保存到 scripts/ + 更新 registry.json
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│ 9. 格式化输出     │  返回分析结果给用户
+│ 9. 保存存档       │  写 summary.json
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ 10. 格式化输出    │  返回分析结果给用户
 └─────────────────┘
 ```
 
@@ -169,10 +180,12 @@ AI 在执行前先判断需求类型，选择对应的执行策略：
 ### 2.6 核心设计原则
 
 1. **无头模式为主**：所有 IDA 操作通过 `idat -A -S` 执行，不依赖 IDA GUI
-2. **脚本驱动**：分析操作封装为独立的 IDAPython 脚本（`disassembler/` 目录），AI 通过 Bash 调用 idat 执行这些脚本
-3. **AI 编排**：命令提示词引导 AI 选择/组合/按需生成脚本，AI 充当"编排器"
-4. **结果可验证**：每步执行后通过返回码和输出文件判断成功/失败
-5. **查询合并**：查询和更新操作合并在同一个脚本中，减少 idat 启动开销（每次启动约 10-30 秒）
+2. **脚本驱动**：分析操作封装为独立的 IDAPython 工具脚本（`disassembler/ida_tool/` 目录），AI 通过 Bash 调用 idat 执行这些脚本
+3. **不复用现有脚本**：现有脚本（`dump_func_disasm.py`、`ai_analyze.py` 等）运行模式不同，新建专用工具脚本
+4. **AI 编排**：命令提示词引导 AI 选择/组合/按需生成脚本，AI 充当"编排器"
+5. **结果可验证**：每步执行后通过返回码和输出文件判断成功/失败
+6. **脚本沉淀**：AI 生成的新脚本经验证后保存到 `scripts/` 库，越用越聪明
+7. **过程可见**：每个步骤输出进度信息，用户不会看到长时间无响应
 
 ---
 
@@ -205,11 +218,11 @@ AI 执行任何 IDA 操作的固定模式：
 ```bash
 # 查询操作
 IDA_QUERY=<查询类型> IDA_OUTPUT=<输出路径> IDA_PATTERN=<可选> IDA_FUNC_ADDR=<可选> \
-  "<ida_path>/idat" -A -S"<项目根>/disassembler/ida_tool.py" -L<日志路径> <目标文件>
+  "<ida_path>/idat" -A -S"<项目根>/disassembler/ida_tool/query.py" -L<日志路径> <目标文件>
 
 # 更新操作
 IDA_OPERATION=<操作类型> IDA_BATCH_FILE=<批量操作JSON路径> IDA_OUTPUT=<输出路径> \
-  "<ida_path>/idat" -A -S"<项目根>/disassembler/ida_tool.py" -L<日志路径> <目标文件>
+  "<ida_path>/idat" -A -S"<项目根>/disassembler/ida_tool/update.py" -L<日志路径> <目标文件>
 ```
 
 **注意事项**：
@@ -257,7 +270,61 @@ idat 执行失败时的诊断步骤：
    - `ModuleNotFoundError` → 脚本路径错误
    - `qexit(1)` 或 exit code 1 → 脚本内部错误，查看日志定位
 
-#### 3.2.5 AI 的最终输出格式
+#### 3.2.5 执行过程可见性
+
+AI 在执行过程中**必须**向用户输出进度信息，让用户知道任务没有卡死。具体要求：
+
+**每个关键步骤执行前，输出进度行**：
+
+```
+[*] [1/5] 正在解析用户输入...
+[*] [2/5] 正在预检查（文件存在性、数据库锁）...
+[*] [3/5] 正在查询入口点（idat 执行中，约需 10-30 秒）...
+[*] [4/5] 正在分析查询结果...
+[*] [5/5] 正在格式化输出...
+```
+
+**idat 执行期间**（耗时最长的环节），AI 应告知用户预计等待时间和当前状态：
+
+```
+[*] 正在调用 idat 执行查询，此步骤通常需要 10-30 秒...
+[*] idat 执行完成，正在读取结果...
+```
+
+**多步骤任务**（分析型需求），每完成一步都输出进度：
+
+```
+[*] 步骤 1/3 完成: 查询到 3 个入口函数
+[*] 步骤 2/3: 正在反编译 main 函数（idat 执行中）...
+[*] 步骤 2/3 完成: 反编译成功
+[*] 步骤 3/3: 正在分析验证逻辑...
+```
+
+**原则**：
+
+1. 用户不应看到超过 30 秒的无输出间隔
+2. 涉及 idat 调用时必须提示"执行中"（因为 idat 启动需要时间）
+3. 出错时立即输出错误信息，不要等到最后
+4. 进度信息直接输出到对话中（用户在 opencode TUI 中可见）
+
+#### 3.2.6 日志规范
+
+命令执行过程的日志分为三层，**同时服务于 AI 和用户**：
+
+| 层级 | 位置 | 受众 | 内容 |
+|------|------|------|------|
+| **进度输出** | AI 对话中直接输出 | 用户 | 步骤编号、当前动作、预计耗时（参见 3.2.5） |
+| **idat 日志** | `-L` 指定的路径 | AI + 用户（事后排查） | IDAPython 脚本执行细节（`[*]`/`[+]`/`[!]` 前缀，中文） |
+| **任务存档** | `analysis_intermediate/<task_id>/summary.json` | 用户（历史存档） | 最终结果摘要、数据库修改记录 |
+
+**idat 日志的关键要求**：
+
+- 工具脚本（`query.py`、`update.py`、`scripts/*.py`）内部日志必须详细，记录每个关键操作
+- 日志前缀约定：`[*]` 进行中、`[+]` 成功、`[!]` 警告/失败
+- 日志使用中文，包含上下文信息（函数名、地址、路径等）
+- AI 在 idat 执行失败时，应读取日志文件进行错误诊断并向用户展示关键错误信息
+
+#### 3.2.7 AI 的最终输出格式
 
 ```
 ## 分析摘要
@@ -277,50 +344,76 @@ idat 执行失败时的诊断步骤：
 
 ---
 
-## 4. 依赖的 IDAPython 工具脚本
+## 4. 工具脚本体系
 
-### 4.1 实现前提与依赖关系（修正 v2 问题 4）
+### 4.1 为什么不复用现有脚本
 
-**关键**：命令的实现前提是核心脚本先完成。交付顺序：
+现有脚本（`disassembler/ai_analyze.py`、`dump_func_disasm.py` 等）的运行模式是 **命令行为前端、opencode 为后端**：用户在终端执行 shell 脚本 → shell 调用 idat → IDAPython 脚本内部再调用 opencode（通过 `ai/opencode.py`）来完成 AI 分析。
+
+本需求的运行模式完全相反：**opencode 为前端、IDAPython 脚本为后端工具**：用户在 opencode 中输入命令 → opencode 的 AI 编排执行 → AI 调用 idat 运行 IDAPython 脚本 → 脚本返回结构化结果给 AI。
+
+关键差异：
+
+| 维度 | 现有脚本 | 本需求脚本 |
+|------|---------|-----------|
+| 调用者 | shell / IDA GUI | opencode AI（通过 Bash 工具） |
+| 输出方向 | 脚本内部调 AI（`ai/opencode.py`） | AI 调脚本（脚本结果给 AI） |
+| 输出格式 | 文件（`.asm`、`.c`） | 结构化 JSON（给 AI 解析） |
+| 交互模式 | 三模式（对话框/CLI/headless） | 纯 headless（无 GUI） |
+| 日志受众 | IDA Output 窗口 / 终端用户 | AI + 用户双受众 |
+
+因此，本需求应**新建专用工具脚本**，不复用现有脚本。现有脚本继续服务于它们原有的使用场景。
+
+### 4.2 实现前提与依赖关系
+
+**关键**：命令的实现前提是核心工具脚本先完成。交付顺序：
 
 ```
-ida_tool.py（含核心查询+更新能力）
+工具脚本（ida_tool/ 目录）
     ↓
-ida-pro-analysis.md（命令 prompt）
+命令文件（.opencode/commands/ida-pro-analysis.md）
     ↓
 端到端验证（用典型场景逐一测试）
+    ↓
+使用中持续沉淀新脚本（脚本库自动增长）
 ```
 
-### 4.2 已有脚本（可直接复用）
+### 4.3 工具脚本目录结构
 
-| 脚本 | 说明 | 复用方式 |
-|------|------|---------|
-| `disassembler/dump_func_disasm.py` | 函数反汇编导出 | `idat -A -S` 调用，环境变量传参 |
-| `disassembler/ai_analyze.py` | AI 重命名/注释统合入口 | 终端 `python` 调用（内部自动调用 `idat`） |
-| `disassembler/ai_utils.py` | AI 分析工具函数库 | 被 IDAPython 脚本 import |
-| `disassembler/ai_rename.py` | AI 重命名功能 | 被 `ai_analyze.py` 调用 |
-| `disassembler/ai_comment.py` | AI 注释功能 | 被 `ai_analyze.py` 调用 |
-| `shell/library/detect_ida_path.sh` | IDA 路径检测 | shell 脚本 source |
-| `shell/library/detect_db_lock.sh` | 数据库锁检测 | shell 脚本 source |
-| `shell/library/log.sh` | 日志工具 | shell 脚本 source |
-| `ai/opencode.py` | opencode 非交互调用 | Python import |
+```
+disassembler/ida_tool/               # 专用工具脚本目录（仅供 ida-pro-analysis 命令使用）
+├── _base.py                         # 公共基础设施（骨架、环境变量解析、JSON 输出、日志）
+├── query.py                         # 查询操作（入口点、函数、反编译、交叉引用等）
+├── update.py                        # 更新操作（重命名、注释、批量操作）
+├── scripts/                         # 沉淀脚本库（AI 生成的脚本经过验证后保存在此）
+│   ├── registry.json                # 脚本注册表（名称、功能描述、参数格式）
+│   ├── analyze_auth.py              # 示例：分析认证逻辑的沉淀脚本
+│   └── find_crypto_constants.py     # 示例：查找加密常量的沉淀脚本
+└── README.md                        # 工具脚本使用说明（供 AI 和人阅读）
+```
 
-### 4.3 需要新建的脚本
+### 4.4 公共基础模块 `_base.py`
 
-#### 4.3.1 统合工具脚本 `disassembler/ida_tool.py`（合并查询+更新，改进建议 2）
+提供所有工具脚本共享的基础设施，**所有新建工具脚本必须 import 此模块**：
 
-**用途**：单脚本同时支持查询和更新操作，通过环境变量 `IDA_MODE` 区分模式，减少 idat 启动次数。
+```python
+# _base.py 提供的功能：
+# 1. run_headless(business_func) — headless 入口模板
+# 2. write_json_output(output_path, result) — JSON 输出
+# 3. env_str(key, default="") — 读取环境变量
+# 4. env_bool(key) — 读取布尔环境变量
+# 5. log(msg) — 日志输出（中文、[*]/[+]/[!] 前缀）
+```
 
-**模式**：
+工具脚本只需关注业务逻辑，基础设施由 `_base.py` 统一处理（环境变量解析、`auto_wait`、`qexit`、JSON 输出、异常兜底）。
 
-| 模式 | 环境变量 | 说明 |
-|------|---------|------|
-| `query` | `IDA_MODE=query` | 查询数据库信息，输出 JSON |
-| `update` | `IDA_MODE=update` | 更新数据库（重命名、注释等） |
+### 4.5 核心工具脚本
 
-##### 查询模式（`IDA_MODE=query`）
+#### 4.5.1 查询脚本 `query.py`
 
-通过 `IDA_QUERY` 指定查询类型：
+**用途**：查询 IDA 数据库信息，输出 JSON 供 AI 解析。通过环境变量 `IDA_QUERY` 指定查询类型。
+
+**支持的查询类型**：
 
 | 查询类型 | 说明 | 参数 |
 |---------|------|------|
@@ -336,33 +429,30 @@ ida-pro-analysis.md（命令 prompt）
 | `exports` | 列出所有导出函数 | 无 |
 | `segments` | 列出所有段信息 | 无 |
 
-**输出格式**（写入 `IDA_OUTPUT` 指定的文件）：
+**调用方式**：
+
+```bash
+IDA_QUERY=entry_points IDA_OUTPUT=/tmp/result.json \
+  "<ida_path>/idat" -A -S"<项目根>/disassembler/ida_tool/query.py" \
+  -L/tmp/idat.log <目标文件>
+```
+
+**输出格式**（写入 `IDA_OUTPUT`）：
 
 ```json
 {
   "success": true,
-  "mode": "query",
   "query": "entry_points",
   "data": { ... },
   "error": null
 }
 ```
 
-失败时：
+#### 4.5.2 更新脚本 `update.py`
 
-```json
-{
-  "success": false,
-  "mode": "query",
-  "query": "entry_points",
-  "data": null,
-  "error": "未找到名为 'xxx' 的函数"
-}
-```
+**用途**：更新 IDA 数据库（重命名、注释等），操作后自动保存数据库。通过环境变量 `IDA_OPERATION` 指定操作类型。
 
-##### 更新模式（`IDA_MODE=update`）
-
-通过 `IDA_OPERATION` 指定操作类型：
+**支持的操作类型**：
 
 | 操作类型 | 说明 | 参数 |
 |---------|------|------|
@@ -383,105 +473,98 @@ ida-pro-analysis.md（命令 prompt）
 }
 ```
 
+**调用方式**：
+
+```bash
+IDA_OPERATION=batch IDA_BATCH_FILE=/tmp/ops.json IDA_OUTPUT=/tmp/result.json \
+  "<ida_path>/idat" -A -S"<项目根>/disassembler/ida_tool/update.py" \
+  -L/tmp/idat.log <目标文件>
+```
+
 **设计要点**：
 
-- 公共逻辑（环境变量解析、headless 入口、JSON 输出、日志）提取到内部函数
 - 每个查询/操作类型对应一个独立的处理函数
-- 遵循 `rules/headless-automation-guide.md` 的三模式实现规范
+- 公共逻辑由 `_base.py` 提供（环境变量解析、headless 入口、JSON 输出、日志）
 - 包含详细的中文执行日志（`[*]`/`[+]`/`[!]` 前缀）
 - 更新操作执行后调用 `ida_loader.save_database` 持久化修改
 
-### 4.4 AI 生成临时脚本的规范（修正 v2 问题 7）
+### 4.6 脚本沉淀机制（AI 越用越聪明）
 
-当 `ida_tool.py` 的功能无法覆盖需求时，AI 可以生成临时 IDAPython 脚本。但必须遵循以下规范：
+#### 4.6.1 核心思路
 
-#### 脚本骨架模板
+当 AI 发现 `query.py` / `update.py` 无法覆盖需求时，会生成新的专用脚本。这些脚本**不应是用完即弃的临时文件**，而应经过验证后沉淀到脚本库（`ida_tool/scripts/`）中：
 
-AI 生成临时脚本时，必须使用以下骨架（只填充 `_do_business` 函数的业务逻辑）：
+1. **首次遇到新需求** → AI 生成脚本 → 执行 → 验证结果
+2. **验证通过** → 脚本沉淀到 `scripts/` 目录 + 注册到 `registry.json`
+3. **后续遇到相同需求** → AI 优先查找 `registry.json` → 直接调用已有脚本（更快、更可靠）
 
-```python
-# -*- coding: utf-8 -*-
-"""summary: 临时分析脚本（AI 生成）
+这样命令会越用越聪明：首次可能需要生成脚本（耗时较长），后续相同类型的需求可以直接调用沉淀脚本（快速准确）。
 
-description: <AI 填充具体描述>
+#### 4.6.2 脚本注册表 `scripts/registry.json`
 
-level: intermediate
-"""
-
-import os
-import sys
-import json
-
-import ida_auto
-import ida_bytes
-import ida_funcs
-import ida_idaapi
-import ida_kernwin
-import ida_name
-
-
-def _do_business():
-    """业务逻辑 — AI 在此处填充具体代码。
-
-    Returns:
-        dict: {"success": bool, "data": ..., "error": ...}
-    """
-    result = {"success": False, "data": None, "error": "未实现"}
-    # === AI 在此处编写业务逻辑 ===
-
-    # === 业务逻辑结束 ===
-    return result
-
-
-def _parse_env_args():
-    output_path = os.environ.get("IDA_OUTPUT", "").strip()
-    ida_kernwin.msg(f"[*] 环境变量: IDA_OUTPUT='{output_path}'\n")
-    if output_path:
-        return output_path
-    return None
-
-
-def _run_headless(output_path):
-    import ida_pro
-
-    ida_kernwin.msg("[*] headless 模式: 等待 IDA 自动分析完成...\n")
-    ida_auto.auto_wait()
-    ida_kernwin.msg("[*] headless 模式: 自动分析完成，开始执行\n")
-
-    result = _do_business()
-
-    if output_path:
-        try:
-            parent = os.path.dirname(output_path)
-            if parent:
-                os.makedirs(parent, exist_ok=True)
-            with open(output_path, "w", encoding="utf-8") as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
-            ida_kernwin.msg(f"[+] 结果已写入: {output_path}\n")
-        except OSError as e:
-            ida_kernwin.msg(f"[!] 写入输出文件失败: {e}\n")
-
-    exit_code = 0 if result["success"] else 1
-    ida_kernwin.msg(
-        f"[{'+'if result['success'] else '!'}] headless: "
-        f"{'成功' if result['success'] else '失败'} (exit code {exit_code})\n"
-    )
-    ida_pro.qexit(exit_code)
-
-
-_batch = bool(ida_kernwin.cvar.batch)
-_env = _parse_env_args()
-
-if _batch and _env is not None:
-    ida_kernwin.msg("[*] 检测到 headless 模式\n")
-    _run_headless(_env)
-elif _batch:
-    ida_kernwin.msg("[!] headless 模式缺少 IDA_OUTPUT 环境变量\n")
-    import ida_pro
-    ida_pro.qexit(1)
+```json
+{
+  "scripts": [
+    {
+      "name": "analyze_auth",
+      "file": "analyze_auth.py",
+      "description": "分析函数中的认证/验证逻辑，提取硬编码的用户名、密码等凭证",
+      "params": ["IDA_FUNC_ADDR"],
+      "example_call": "IDA_FUNC_ADDR=main_0 IDA_OUTPUT=/tmp/result.json idat -A -S.../scripts/analyze_auth.py ...",
+      "added_at": "2026-04-17",
+      "verified": true
+    },
+    {
+      "name": "find_crypto_constants",
+      "file": "find_crypto_constants.py",
+      "description": "在二进制中搜索已知加密算法的特征常量（AES S-Box、MD5 init、SHA256 K 等）",
+      "params": [],
+      "example_call": "IDA_OUTPUT=/tmp/result.json idat -A -S.../scripts/find_crypto_constants.py ...",
+      "added_at": "2026-04-17",
+      "verified": true
+    }
+  ]
+}
 ```
 
-#### IDAPython 编码规则（AI 必须遵守）
+#### 4.6.3 沉淀流程
+
+```
+AI 生成新脚本
+    ↓
+执行并通过语法校验
+    ↓
+执行并验证结果正确性
+    ↓
+写入 scripts/<功能名>.py（遵循 _base.py 骨架）
+    ↓
+更新 registry.json（名称、描述、参数、示例调用）
+    ↓
+后续使用时 AI 通过 registry.json 发现该脚本
+```
+
+**命令 prompt 中的指令**：
+
+```
+当你发现现有 query.py / update.py 无法满足需求时：
+1. 先检查 scripts/registry.json 中是否已有可用的沉淀脚本
+2. 如果没有，则使用 _base.py 骨架生成新脚本
+3. 新脚本执行成功后，将其保存到 scripts/ 目录并更新 registry.json
+4. 保存前确保脚本有清晰的 docstring 说明用途和参数
+```
+
+#### 4.6.4 脚本质量保障
+
+沉淀到 `scripts/` 的脚本必须：
+
+1. 基于 `_base.py` 骨架，使用 `run_headless()` 入口
+2. 通过语法检查：`python3 -c "compile(...)"`
+3. 输出符合标准 JSON 格式（`{"success": bool, "data": ..., "error": ...}`）
+4. 有完整的 docstring（`summary` + `description`）
+5. 包含中文日志
+6. 在 `registry.json` 中有准确的描述和调用示例
+
+### 4.7 AI 生成脚本的编码规则
 
 命令 prompt 中应包含以下关键规则：
 
@@ -489,21 +572,15 @@ elif _batch:
 |------|------|------|------|
 | 禁止 `import idc` | `idc` 语义模糊 | `import ida_nalt` | `import idc` |
 | 禁止 `import idaapi` | 隐藏符号来源 | `import ida_funcs` | `import idaapi` |
-| 禁止 `from X import Y` | 必须通过模块前缀引用 | `ida_kernwin.msg("hi")` | `from ida_kernwin import msg` |
+| 禁止 `from X import Y`（IDA 模块） | IDAPython 模块必须通过前缀引用 | `ida_kernwin.msg("hi")` | `from ida_kernwin import msg` |
+| 允许 `from _base import`（本项目模块） | `ida_tool/` 内部的公共模块可以直接导入 | `from _base import run_headless` | 不导入直接重写 headless 入口 |
 | 字符串用双引号 | 所有字符串字面量 | `"hello"` | `'hello'` |
 | headless 入口在模块级 | 不在 `if __name__ == "__main__"` 内 | 见骨架模板 | `if __name__ == "__main__": _run_headless()` |
 | 必须调用 `auto_wait()` | 等待 IDA 自动分析完成 | 见骨架模板 | 跳过 |
 | 必须调用 `qexit()` | headless 模式不调用则不退出 | 见骨架模板 | 跳过 |
 | 输出为 JSON | 写入 `IDA_OUTPUT` 指定文件 | `json.dump(result, f)` | `print()` |
 | 日志使用中文 | 包含上下文信息 | `ida_kernwin.msg("[*] 正在分析函数: xxx\n")` | `ida_kernwin.msg("analyzing\n")` |
-
-#### 临时脚本执行前校验
-
-AI 生成脚本后，写入文件前应进行语法检查：
-
-```bash
-python3 -c "compile(open('<脚本路径>').read(), '<脚本路径>', 'exec')" && echo "语法OK" || echo "语法错误"
-```
+| 使用 `_base.py` | 继承公共基础设施 | `from _base import run_headless` | 自己实现 headless 入口 |
 
 ---
 
@@ -556,26 +633,16 @@ analysis_intermediate/
 ```
 用户输入: /ida-pro-analysis /Users/aserlili/Downloads/lesson1.exe.i64 找到所有入口函数
 
-实际执行过程:
-1. opencode 将命令 prompt + "$ARGUMENTS" 发送给 AI
-2. AI 解析:
-   - 文件路径: /Users/aserlili/Downloads/lesson1.exe.i64
-   - 需求: 找到所有入口函数
-   - 需求类型: 查询型
-3. AI 预检查:
-   - 文件存在性: ✓
-   - 数据库锁检测: ✓（UNLOCKED）
-   - 创建输出目录: mkdir -p /tmp/ida_analysis/20260417_143052/
-4. AI 通过 Bash 执行:
-   IDA_MODE=query IDA_QUERY=entry_points \
-     IDA_OUTPUT=/tmp/ida_analysis/20260417_143052/query_result.json \
-     "/Applications/IDA Professional 9.1.app/Contents/MacOS/idat" \
-     -A -S"/Users/aserlili/Documents/Codes/idapro-python-scripts/disassembler/ida_tool.py" \
-     -L/tmp/ida_analysis/20260417_143052/idat.log \
-     /Users/aserlili/Downloads/lesson1.exe.i64
-5. AI 通过 Read 读取 query_result.json:
-   {"success": true, "data": {"entry_points": [{"name": "main", "addr": "0x401000", "type": "main"}, ...]}}
-6. AI 格式化输出:
+用户在 TUI 中看到的实时输出:
+────────────────────────────────────
+[*] [1/4] 正在解析用户输入...
+[*] 文件: /Users/aserlili/Downloads/lesson1.exe.i64
+[*] 需求: 找到所有入口函数（查询型）
+[*] [2/4] 正在预检查...
+[+] 文件存在: ✓  数据库锁: ✓
+[*] [3/4] 正在查询入口点（idat 执行中，约需 10-30 秒）...
+[+] idat 执行完成（耗时 18 秒）
+[*] [4/4] 正在格式化输出...
 
 ## 分析摘要
 lesson1.exe.i64 中找到 3 个入口函数。
@@ -586,6 +653,7 @@ lesson1.exe.i64 中找到 3 个入口函数。
 | main | 0x00401000 | 主函数 |
 | _init | 0x00401050 | 初始化函数 |
 | __libc_start_main | 0x00401100 | C 运行时入口 |
+────────────────────────────────────
 ```
 
 ### 示例 2：分析型 — 分析验证逻辑
@@ -593,18 +661,21 @@ lesson1.exe.i64 中找到 3 个入口函数。
 ```
 用户输入: /ida-pro-analysis /Users/aserlili/Downloads/lesson1.exe.i64 分析 main_0 函数的 user_name 和 password 验证逻辑
 
-实际执行过程:
-1. AI 解析 → 文件路径 + 分析型需求
-2. AI 预检查 → 通过
-3. 第一步: 查询函数信息
-   IDA_QUERY=func_info IDA_FUNC_ADDR=main_0 → 获取反编译代码、调用关系、字符串引用
-4. 第二步: AI 分析反编译代码
-   - 识别出 strcmp 调用、硬编码字符串
-   - 推导出正确的 user_name 和 password
-5. 第三步: 更新数据库（如用户要求）
-   IDA_MODE=update IDA_OPERATION=batch IDA_BATCH_FILE=... → 重命名 + 添加注释
-6. 保存 summary.json
-7. 格式化输出:
+用户在 TUI 中看到的实时输出:
+────────────────────────────────────
+[*] [1/7] 正在解析用户输入...
+[*] 文件: /Users/aserlili/Downloads/lesson1.exe.i64
+[*] 需求: 分析 main_0 函数的验证逻辑（分析型）
+[*] [2/7] 正在预检查...
+[+] 文件存在: ✓  数据库锁: ✓
+[*] [3/7] 正在查询 main_0 函数信息（idat 执行中，约需 10-30 秒）...
+[+] idat 执行完成（耗时 15 秒），已获取反编译代码
+[*] [4/7] 正在分析验证逻辑...
+[*] [5/7] 正在更新数据库注释和重命名（idat 执行中）...
+[+] 数据库更新完成: 重命名 1 个, 注释 1 个
+[*] [6/7] 正在沉淀分析脚本到脚本库...
+[+] 已保存沉淀脚本: scripts/analyze_auth.py
+[*] [7/7] 正在格式化输出...
 
 ## 分析摘要
 main_0 函数通过 strcmp 比较用户输入与硬编码值来验证身份。
@@ -621,6 +692,7 @@ main_0 函数通过 strcmp 比较用户输入与硬编码值来验证身份。
 ## 置信度说明
 - 确定: strcmp 调用位置、比较的字符串值（来自 IDA 数据库精确数据）
 - 推测: 函数语义命名（中等置信度，基于调用模式和字符串内容）
+────────────────────────────────────
 ```
 
 ---
@@ -659,38 +731,40 @@ main_0 函数通过 strcmp 比较用户输入与硬编码值来验证身份。
 
 **交付顺序**（严格按序）：
 
-1. 实现 `disassembler/ida_tool.py` 的查询模式核心查询类型：
+1. 创建 `disassembler/ida_tool/` 目录和 `_base.py` 公共基础模块
+2. 实现 `query.py` 的核心查询类型：
    - `entry_points`：智能识别文件类型的入口点
    - `functions`：按模式匹配函数
    - `decompile`：反编译函数
    - `func_info`：函数详细信息
    - `xrefs_to`、`xrefs_from`：交叉引用
    - `strings`：字符串搜索
-2. 为 `ida_tool.py` 编写 shell 测试（`test/shell/ida_tool.bats`，用 mock `idat` 验证命令构造）
-3. 创建命令文件 `.opencode/commands/ida-pro-analysis.md`
-4. 用典型场景中的"查询型"案例进行端到端验证
+3. 创建 `scripts/` 目录和 `registry.json` 初始空注册表
+4. 创建命令文件 `.opencode/commands/ida-pro-analysis.md`（含进度输出规范）
+5. 用典型场景中的"查询型"案例进行端到端验证
 
 ### Phase 2：更新能力 + 分析型需求
 
 **目标**：能处理分析型需求
 
-1. 实现 `ida_tool.py` 的更新模式：
+1. 实现 `update.py`：
    - `rename`：重命名
    - `set_func_comment`：函数注释
    - `set_line_comment`：行内注释
    - `batch`：批量操作
 2. 补充查询模式：`imports`、`exports`、`segments`、`disassemble`
-3. 完善命令 prompt（增加分析型需求的编排策略）
-4. 用典型场景中的"分析型"案例进行端到端验证
+3. 完善命令 prompt（增加分析型需求的编排策略 + 脚本沉淀指令）
+4. 用典型场景中的"分析型"案例进行端到端验证，沉淀首批脚本
 
 ### Phase 3：增强体验
 
 **目标**：提升可靠性和易用性
 
 1. 根据实际使用反馈优化命令 prompt
-2. 添加执行超时保护
-3. 增加临时脚本的质量校验（语法检查 + 关键 API 调用检查）
-4. 优化输出格式（表格、调用链可视化等）
+2. 完善沉淀脚本库（从实际使用中积累更多脚本）
+3. 添加执行超时保护
+4. 增加生成脚本的质量校验（语法检查 + 关键 API 调用检查）
+5. 优化输出格式（表格、调用链可视化等）
 
 ---
 
@@ -703,20 +777,24 @@ main_0 函数通过 strcmp 比较用户输入与硬编码值来验证身份。
 - 分析结果准确，注释和重命名能正确写入 IDA 数据库
 - 查询型需求只需单次 idat 调用即可完成
 - 分析型需求能自动编排多轮查询
+- AI 生成的新脚本能正确沉淀到 `scripts/` 目录并在 `registry.json` 中注册
+- 后续相同类型的需求能直接调用沉淀脚本
 
 ### 9.2 质量验收
 
 - 命令执行有完整日志，日志使用中文，包含上下文信息
 - 代码遵循 AGENTS.md 编码规范
-- `ida_tool.py` 通过 shell 测试框架验证
-- 临时脚本能通过语法检查
+- `query.py`、`update.py` 通过 shell 测试框架验证
+- 新生成的脚本能通过语法检查
 - 所有路径正确处理空格（引号包裹）
+- 执行过程中用户能看到进度信息，不会出现超过 30 秒的无输出间隔
 
 ### 9.3 架构验收
 
 - 命令为单文件，prompt 精简无冗余
-- `ida_tool.py` 查询/更新合并在单脚本中，减少 idat 启动开销
-- 公共逻辑（环境变量解析、JSON 输出、日志）有良好抽象
+- 工具脚本在 `ida_tool/` 目录下独立维护，不复用现有脚本
+- `_base.py` 提供公共基础设施，查询/更新脚本只关注业务逻辑
+- 沉淀脚本通过 `registry.json` 管理发现与调用
 - 中间文件管理轻量，不做过度设计
 
 ---
@@ -734,3 +812,5 @@ main_0 函数通过 strcmp 比较用户输入与硬编码值来验证身份。
 | 项目编码规范 | `AGENTS.md` |
 | v2 审计报告 | `docs/需求/审计报告-IDA-Pro-AI智能分析命令-v2.md` |
 | v1 原始需求 | `docs/需求/需求-与AI结合自动分析-v1.md` |
+| 工具脚本使用说明 | `disassembler/ida_tool/README.md`（实现时创建） |
+| 脚本注册表 | `disassembler/ida_tool/scripts/registry.json`（实现时创建） |
