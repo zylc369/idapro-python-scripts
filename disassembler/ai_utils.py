@@ -18,6 +18,8 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass, field
+from typing import Dict, List
 
 import ida_bytes
 import ida_funcs
@@ -35,6 +37,56 @@ try:
     _HAS_DECOMPILER = True
 except ImportError:
     _HAS_DECOMPILER = False
+
+
+# ─────────────────────────────────────────────────────────────
+#  结果数据类
+# ─────────────────────────────────────────────────────────────
+
+@dataclass
+class RenameDetail:
+    """单次重命名结果。"""
+    type: str
+    old: str
+    new: str
+    status: str
+
+
+@dataclass
+class RenameResult:
+    """单个函数的重命名分析结果。"""
+    success: int = 0
+    fail: int = 0
+    symbols_total: int = 0
+    symbols_by_type: Dict[str, int] = field(default_factory=dict)
+    details: List[RenameDetail] = field(default_factory=list)
+
+
+@dataclass
+class CommentResult:
+    """单个函数的注释生成结果。"""
+    success: int = 0
+    fail: int = 0
+    summary: str = ""
+    inline_comments: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class FuncActionResults:
+    """单个函数在所有动作下的结果。"""
+    name: str = ""
+    addr: str = ""
+    depth: int = 0
+    actions: Dict[str, object] = field(default_factory=dict)
+
+
+@dataclass
+class AnalysisResult:
+    """一次完整分析的结果（多个函数、多个动作）。"""
+    functions: List[FuncActionResults] = field(default_factory=list)
+    total_functions: int = 0
+    total_success: int = 0
+    total_fail: int = 0
 
 
 AUTO_NAME_PREFIXES = (

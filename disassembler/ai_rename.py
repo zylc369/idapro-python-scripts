@@ -68,6 +68,7 @@ class AIRenamer:
         self.cfunc = cfunc
         self.source = source
         self.symbols = symbols
+        self.last_details = []
 
     def _build_prompt(self):
         sections = []
@@ -355,6 +356,7 @@ class AIRenamer:
 
         total_success = 0
         total_fail = 0
+        self.last_details = []
 
         if func_rename and ai_utils.validate_name(func_rename):
             if ai_utils.is_binary_symbol(self.func.start_ea):
@@ -362,11 +364,19 @@ class AIRenamer:
                     f"  [!] 函数 '{self.func_name}' 来自二进制符号表，"
                     f"跳过重命名（AI 建议: {func_rename}）\n"
                 )
+                self.last_details.append(ai_utils.RenameDetail(
+                    type="函数", old=self.func_name,
+                    new=func_rename, status="skipped_binary",
+                ))
             elif not ai_utils.is_auto_generated_name(self.func_name):
                 ai_utils.log(
                     f"  [!] 函数 '{self.func_name}' 可能是用户或调试符号定义的名称，"
                     f"跳过重命名（AI 建议: {func_rename}）\n"
                 )
+                self.last_details.append(ai_utils.RenameDetail(
+                    type="函数", old=self.func_name,
+                    new=func_rename, status="skipped_user",
+                ))
             else:
                 ai_utils.log(
                     f"[*] 函数重命名: {self.func_name} -> {func_rename}\n"
@@ -375,6 +385,11 @@ class AIRenamer:
                     self.func.start_ea, self.func_name, func_rename, dry_run
                 ):
                     total_success += 1
+                    self.last_details.append(ai_utils.RenameDetail(
+                        type="函数", old=self.func_name,
+                        new=func_rename,
+                        status="preview" if dry_run else "success",
+                    ))
                     if not dry_run:
                         comment = (
                             f"AI 重命名 | 原名: {self.func_name} | "
@@ -383,11 +398,19 @@ class AIRenamer:
                         ida_bytes.set_cmt(self.func.start_ea, comment, 0)
                 else:
                     total_fail += 1
+                    self.last_details.append(ai_utils.RenameDetail(
+                        type="函数", old=self.func_name,
+                        new=func_rename, status="failed",
+                    ))
         elif func_rename:
             ai_utils.log(
                 f"[!] AI 建议的函数名 '{func_rename}' 不合法，跳过\n"
             )
             total_fail += 1
+            self.last_details.append(ai_utils.RenameDetail(
+                type="函数", old=self.func_name,
+                new=func_rename, status="invalid_name",
+            ))
 
         for symbol_key, suggested_name in symbol_map.items():
             if not ai_utils.validate_name(suggested_name):
@@ -396,32 +419,30 @@ class AIRenamer:
                     f"跳过 {symbol_key}\n"
                 )
                 total_fail += 1
+                self.last_details.append(ai_utils.RenameDetail(
+                    type="未知", old=symbol_key,
+                    new=suggested_name, status="invalid_name",
+                ))
                 continue
 
+            ok = False
+            rename_type = "未知"
+
             if symbol_key in self.symbols["local_vars"]:
-                if self._apply_local_var_rename(
+                rename_type = "局部变量"
+                ok = self._apply_local_var_rename(
                     symbol_key, suggested_name, dry_run
-                ):
-                    total_success += 1
-                else:
-                    total_fail += 1
-
+                )
             elif symbol_key in self.symbols["called_functions"]:
-                if self._apply_function_rename_by_name(
+                rename_type = "函数"
+                ok = self._apply_function_rename_by_name(
                     symbol_key, suggested_name, dry_run
-                ):
-                    total_success += 1
-                else:
-                    total_fail += 1
-
+                )
             elif symbol_key in self.symbols["global_data"]:
-                if self._apply_global_data_rename(
+                rename_type = "全局数据"
+                ok = self._apply_global_data_rename(
                     symbol_key, suggested_name, dry_run
-                ):
-                    total_success += 1
-                else:
-                    total_fail += 1
-
+                )
             elif "." in symbol_key:
                 parts = symbol_key.split(".", 1)
                 if len(parts) == 2:
@@ -430,29 +451,43 @@ class AIRenamer:
                         sname in self.symbols["struct_fields"]
                         and fname in self.symbols["struct_fields"][sname]
                     ):
-                        if self._apply_struct_field_rename(
+                        rename_type = "结构体字段"
+                        ok = self._apply_struct_field_rename(
                             sname, fname, suggested_name, dry_run
-                        ):
-                            total_success += 1
-                        else:
-                            total_fail += 1
+                        )
                     else:
                         ai_utils.log(
                             f"  [!] 未识别的符号键: {symbol_key}\n"
                         )
-                        total_fail += 1
+                else:
+                    ai_utils.log(
+                        f"  [!] 未识别的符号键: {symbol_key}\n"
+                    )
             else:
                 ai_utils.log(
                     f"  [!] 未识别的符号键: {symbol_key}\n"
                 )
+
+            if ok:
+                total_success += 1
+                self.last_details.append(ai_utils.RenameDetail(
+                    type=rename_type, old=symbol_key,
+                    new=suggested_name,
+                    status="preview" if dry_run else "success",
+                ))
+            else:
                 total_fail += 1
+                self.last_details.append(ai_utils.RenameDetail(
+                    type=rename_type, old=symbol_key,
+                    new=suggested_name, status="failed",
+                ))
 
         return total_success, total_fail
 
     def analyze(self, dry_run=False):
         """执行 AI 辅助重命名分析。
 
-        返回 (success_count, fail_count)。
+        返回 RenameResult。
         """
         symbol_count = ai_utils.count_symbols(self.symbols)
         ai_utils.log(
@@ -468,14 +503,14 @@ class AIRenamer:
             ai_utils.log(
                 f"[!] AI 调用失败 (耗时 {ai_utils.format_elapsed(elapsed)})\n"
             )
-            return 0, 1
+            return ai_utils.RenameResult(fail=1)
 
         if not result["success"]:
             ai_utils.log(
                 f"[!] AI 分析失败 (耗时 {ai_utils.format_elapsed(elapsed)}): "
                 f"{result['message']}\n"
             )
-            return 0, 1
+            return ai_utils.RenameResult(fail=1)
 
         ai_utils.log(
             f"[+] AI 重命名分析完成 (耗时 {ai_utils.format_elapsed(elapsed)})\n"
@@ -486,9 +521,12 @@ class AIRenamer:
             ai_utils.log("[!] 无法解析 AI 响应为 JSON\n")
             raw_preview = result["message"][:300]
             ai_utils.log(f"[*] AI 原始响应: {raw_preview}\n")
-            return 0, 1
+            return ai_utils.RenameResult(fail=1)
 
-        return self._apply_all(parsed, dry_run)
+        s, f = self._apply_all(parsed, dry_run)
+        return ai_utils.RenameResult(
+            success=s, fail=f, details=self.last_details,
+        )
 
 
 def rename_functions(pattern, dry_run=False, recursive=False,

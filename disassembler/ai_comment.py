@@ -59,6 +59,8 @@ class AICommenter:
         self.context = context
         self.cfunc = cfunc
         self.source = source
+        self.last_summary = ""
+        self.last_inline_comments = {}
 
     def _build_prompt(self):
         sections = []
@@ -143,6 +145,9 @@ class AICommenter:
 
         summary = ai_result.get("summary_comment", "")
         inline_comments = ai_result.get("inline_comments", {})
+
+        self.last_summary = summary
+        self.last_inline_comments = dict(inline_comments)
 
         if not summary and not inline_comments:
             return 0, 0
@@ -242,7 +247,7 @@ class AICommenter:
     def analyze(self, dry_run=False):
         """执行 AI 辅助注释生成。
 
-        返回 (success_count, fail_count)。
+        返回 CommentResult。
         """
         ai_utils.log("[*] 正在调用 AI 生成注释...\n")
         prompt = self._build_prompt()
@@ -255,14 +260,14 @@ class AICommenter:
             ai_utils.log(
                 f"[!] AI 调用失败 (耗时 {ai_utils.format_elapsed(elapsed)})\n"
             )
-            return 0, 1
+            return ai_utils.CommentResult(fail=1)
 
         if not result["success"]:
             ai_utils.log(
                 f"[!] AI 分析失败 (耗时 {ai_utils.format_elapsed(elapsed)}): "
                 f"{result['message']}\n"
             )
-            return 0, 1
+            return ai_utils.CommentResult(fail=1)
 
         ai_utils.log(
             f"[+] AI 注释生成完成 (耗时 {ai_utils.format_elapsed(elapsed)})\n"
@@ -273,9 +278,14 @@ class AICommenter:
             ai_utils.log("[!] 无法解析 AI 响应为 JSON\n")
             raw_preview = result["message"][:300]
             ai_utils.log(f"[*] AI 原始响应: {raw_preview}\n")
-            return 0, 1
+            return ai_utils.CommentResult(fail=1)
 
-        return self._apply_comments(parsed, dry_run)
+        s, f = self._apply_comments(parsed, dry_run)
+        return ai_utils.CommentResult(
+            success=s, fail=f,
+            summary=self.last_summary,
+            inline_comments=self.last_inline_comments,
+        )
 
 
 def comment_functions(pattern, dry_run=False, recursive=False,

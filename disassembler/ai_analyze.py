@@ -208,14 +208,29 @@ if _IN_IDA:
             f"结构体字段 {sum(len(v) for v in symbols['struct_fields'].values())}）\n"
         )
         if symbol_count == 0:
-            return 0, 0
+            return ai_utils.RenameResult(
+                symbols_total=0,
+                symbols_by_type={
+                    "local_vars": len(symbols["local_vars"]),
+                    "called_functions": len(symbols["called_functions"]),
+                    "global_data": len(symbols["global_data"]),
+                    "struct_fields": sum(len(v) for v in symbols["struct_fields"].values()),
+                },
+            )
         renamer = ai_rename.AIRenamer(
             actx.func, actx.context, actx.cfunc, actx.source, symbols
         )
-        s, f = renamer.analyze(dry_run)
-        if s > 0:
+        result = renamer.analyze(dry_run)
+        result.symbols_total = symbol_count
+        result.symbols_by_type = {
+            "local_vars": len(symbols["local_vars"]),
+            "called_functions": len(symbols["called_functions"]),
+            "global_data": len(symbols["global_data"]),
+            "struct_fields": sum(len(v) for v in symbols["struct_fields"].values()),
+        }
+        if result.success > 0:
             actx.mark_for_refresh()
-        return s, f
+        return result
 
     def _handle_comment(actx, dry_run):
         func_name = ida_funcs.get_func_name(actx.func.start_ea)
@@ -234,10 +249,13 @@ if _IN_IDA:
 
     def _dispatch(actions, pattern, dry_run=False, recursive=False,
                   max_depth=ai_utils.DEFAULT_MAX_DEPTH):
-        """按顺序组合执行多个动作，每个函数内部依次执行所有动作。"""
+        """按顺序组合执行多个动作，每个函数内部依次执行所有动作。
+
+        返回 AnalysisResult。
+        """
         if not actions:
             ai_utils.log("[!] 未指定任何动作\n")
-            return False
+            return ai_utils.AnalysisResult()
 
         labels = "+".join(actions)
         ai_utils.log(
@@ -246,9 +264,16 @@ if _IN_IDA:
             f"max_depth={max_depth}\n"
         )
 
+        func_results = []
+
         def _processor(func, depth, idx):
             actx = _ActionContext(func)
-            total_s, total_f = 0, 0
+            func_name = ida_funcs.get_func_name(func.start_ea)
+            far = ai_utils.FuncActionResults(
+                name=func_name,
+                addr=f"0x{func.start_ea:08X}",
+                depth=depth,
+            )
 
             for i, action_name in enumerate(actions):
                 handler = _ACTION_HANDLERS.get(action_name)
@@ -256,19 +281,90 @@ if _IN_IDA:
                     ai_utils.log(f"[!] 未知动作: {action_name}\n")
                     continue
                 ai_utils.log(f"[*] 执行动作: {action_name}\n")
-                s, f = handler(actx, dry_run)
-                total_s += s
-                total_f += f
+                result = handler(actx, dry_run)
+                far.actions[action_name] = result
 
                 if i < len(actions) - 1:
                     actx.refresh_if_needed(dry_run)
 
+            func_results.append(far)
+            total_s = sum(a.success for a in far.actions.values() if hasattr(a, "success"))
+            total_f = sum(a.fail for a in far.actions.values() if hasattr(a, "fail"))
             return total_s, total_f
 
         total_success, total_fail, total = ai_utils.process_functions(
             pattern, _processor, recursive, max_depth, labels
         )
-        return total_success > 0
+        return ai_utils.AnalysisResult(
+            functions=func_results,
+            total_functions=total,
+            total_success=total_success,
+            total_fail=total_fail,
+        )
+
+    # ─── 结果格式化 ──────────────────────────────────────────
+
+    _ACTION_LABELS = {
+        "rename": "符号重命名",
+        "comment": "注释生成",
+    }
+
+    def _format_results(analysis_result, actions, dry_run):
+        """将 AnalysisResult 格式化为可读文本并输出到 stderr。"""
+        lines = []
+        lines.append("")
+        lines.append("===== 分析结果 =====")
+
+        for action_name in actions:
+            label = _ACTION_LABELS.get(action_name, action_name)
+            lines.append("")
+            lines.append(f"----- {label} -----")
+
+            for far in analysis_result.functions:
+                result = far.actions.get(action_name)
+                if result is None:
+                    continue
+
+                depth_indent = "  " + "  " * far.depth
+                depth_tag = f" (递归深度 {far.depth})" if far.depth > 0 else ""
+                lines.append(f"{depth_indent}{far.name} ({far.addr}){depth_tag}")
+
+                if action_name == "rename" and isinstance(result, ai_utils.RenameResult):
+                    lines.append(
+                        f"{depth_indent}  "
+                        f"可重命名符号 {result.symbols_total} 个"
+                    )
+                    if result.details:
+                        for d in result.details:
+                            tag = "[预览]" if d.status == "preview" else f"[{d.status}]"
+                            lines.append(
+                                f"{depth_indent}    {tag} "
+                                f"{d.old} -> {d.new}"
+                            )
+
+                elif action_name == "comment" and isinstance(result, ai_utils.CommentResult):
+                    if result.summary:
+                        tag = "[预览]" if dry_run else "[+]"
+                        lines.append(
+                            f"{depth_indent}  {tag} 函数摘要: {result.summary}"
+                        )
+                    for line_no in sorted(result.inline_comments.keys(), key=int):
+                        cmt = result.inline_comments[line_no]
+                        tag = "[预览]" if dry_run else "[+]"
+                        lines.append(
+                            f"{depth_indent}  {tag} 行内注释 第{line_no}行: {cmt}"
+                        )
+
+        lines.append("")
+        lines.append(
+            f"总计: {analysis_result.total_functions} 个函数 | "
+            f"成功: {analysis_result.total_success} | "
+            f"失败: {analysis_result.total_fail}"
+        )
+
+        text = "\n".join(lines) + "\n"
+        sys.stderr.write(text)
+        sys.stderr.flush()
 
     # ─── 对话框模式 ────────────────────────────────────────────
 
@@ -383,9 +479,12 @@ if _IN_IDA:
         ida_auto.auto_wait()
         ai_utils.log("[*] headless 模式: 自动分析完成，开始 AI 分析\n")
 
-        success = _dispatch(actions, pattern, dry_run=dry_run,
-                            recursive=recursive, max_depth=max_depth)
+        analysis_result = _dispatch(actions, pattern, dry_run=dry_run,
+                                    recursive=recursive, max_depth=max_depth)
 
+        _format_results(analysis_result, actions, dry_run)
+
+        success = analysis_result.total_success > 0
         if success and not dry_run:
             ai_utils.log("[*] headless 模式: 正在保存数据库...\n")
             ida_loader.save_database(None, 0)
@@ -540,117 +639,6 @@ else:
             print(f"[*] 数据库锁检测跳过: {e}", file=sys.stderr)
         return True
 
-    def _display_results(log_path):
-        if not os.path.isfile(log_path):
-            return
-
-        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-            raw_lines = f.readlines()
-
-        cleaned = []
-        for line in raw_lines:
-            stripped = re.sub(
-                r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ ", "", line
-            ).rstrip()
-            if stripped:
-                cleaned.append(stripped)
-
-        _ACTION_LABELS = {
-            "rename": "符号重命名",
-            "comment": "注释生成",
-        }
-        _RESULT_PATTERNS = [
-            r"\[预览-",
-            r"\[\+\] (函数|局部变量|全局数据|结构体字段)重命名",
-            r"\[\+\] (汇编注释|函数摘要|行内注释)",
-            r"\[\+\] 总计:",
-            r"\[\+\] AI (重命名分析|注释生成)完成",
-            r"\[\+\].*完成 =",
-            r"\[!\].*不合法",
-            r"\[!\].*失败",
-            r"\[!\].*无法解析",
-            r"\[!\].*符号表",
-            r"\[\*\] 理由:",
-            r"\[\*\] AI 分析结果",
-            r"\[\*\] 函数重命名:",
-        ]
-        _DETAIL_PATTERNS = [
-            r"^\s*\[(rename|comment)\]",
-            r"\[\*\] (发现|未发现).*被调用函数",
-            r"\[\*\] 继续遍历以查找",
-        ]
-        result_re = re.compile("|".join(_RESULT_PATTERNS))
-        detail_re = re.compile("|".join(_DETAIL_PATTERNS))
-        func_header_re = re.compile(
-            r"^\[\*\] =+ \[\d+\] .+ \(0x[0-9A-Fa-f]+"
-        )
-        action_marker_re = re.compile(
-            r"^\[\*\] 执行动作: (.+)$"
-        )
-        action_label_re = re.compile(
-            r"^\s*\[(rename|comment)\] (.+):"
-        )
-
-        sections = []
-        current_action = None
-        current_lines = []
-        current_func_header = None
-        seen_funcs = set()
-
-        def flush():
-            if current_lines:
-                sections.append({
-                    "action": current_action,
-                    "lines": current_lines[:],
-                })
-
-        for line in cleaned:
-            m_action = action_marker_re.match(line)
-            if m_action:
-                flush()
-                current_action = m_action.group(1)
-                current_lines = []
-                continue
-
-            if func_header_re.match(line):
-                current_func_header = line
-                seen_funcs = set()
-                continue
-
-            m_label = action_label_re.match(line)
-            if m_label:
-                func_id = m_label.group(2)
-                if func_id not in seen_funcs:
-                    seen_funcs.add(func_id)
-                    if current_func_header:
-                        current_lines.append(current_func_header)
-                        current_func_header = None
-                current_lines.append(line)
-                continue
-
-            if result_re.search(line) or detail_re.search(line):
-                if current_func_header and not seen_funcs:
-                    current_lines.append(current_func_header)
-                    seen_funcs.add("__header__")
-                    current_func_header = None
-                current_lines.append(line)
-
-        flush()
-
-        if not sections:
-            return
-
-        print("\n===== 分析结果 =====", file=sys.stderr)
-        prev = None
-        for sec in sections:
-            label = _ACTION_LABELS.get(sec["action"], sec["action"])
-            print(f"\n----- {label} -----", file=sys.stderr)
-            prev = None
-            for line in sec["lines"]:
-                if line != prev:
-                    print(f"  {line}", file=sys.stderr)
-                    prev = line
-
     def main():
         parser = _build_parser()
         args = parser.parse_args()
@@ -711,11 +699,11 @@ else:
 
         exit_code = 0
         try:
-            result = subprocess.run(
+            proc_result = subprocess.run(
                 [idat_bin, "-v", "-A", f"-L{log_path}", f"-S{script_path}", input_file],
                 env=env,
             )
-            exit_code = result.returncode
+            exit_code = proc_result.returncode
         except FileNotFoundError:
             print(f"[!] idat 未找到: {idat_bin}", file=sys.stderr)
             sys.exit(1)
@@ -723,12 +711,6 @@ else:
             print(f"[!] 启动 idat 失败: {e}", file=sys.stderr)
             sys.exit(1)
 
-        if exit_code == 0:
-            print(f"[+] idat 执行成功 (exit code: 0)", file=sys.stderr)
-        else:
-            print(f"[!] idat 执行失败 (exit code: {exit_code})", file=sys.stderr)
-
-        _display_results(log_path)
         sys.exit(exit_code)
 
     if __name__ == "__main__":
