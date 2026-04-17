@@ -172,16 +172,16 @@ def _op_batch(batch_file, dry_run):
     log(f"[*] 批量操作模式，文件: {batch_file}\n")
 
     if not batch_file:
-        return {"success": False, "error": "IDA_BATCH_FILE 未指定"}
+        return {"error": "IDA_BATCH_FILE 未指定"}
 
     if not os.path.isfile(batch_file):
-        return {"success": False, "error": f"批量操作文件不存在: {batch_file}"}
+        return {"error": f"批量操作文件不存在: {batch_file}"}
 
     try:
         with open(batch_file, "r", encoding="utf-8") as f:
             batch_data = json.load(f)
     except Exception as e:
-        return {"success": False, "error": f"读取批量操作文件失败: {e}"}
+        return {"error": f"读取批量操作文件失败: {e}"}
 
     operations = batch_data.get("operations", [])
     if not operations:
@@ -224,7 +224,7 @@ def _main():
     operation = env_str("IDA_OPERATION", "")
     if not operation:
         log("[!] 未指定操作类型（IDA_OPERATION 为空）\n")
-        return {"success": False, "error": "IDA_OPERATION 环境变量未设置", "data": None}
+        return {"success": False, "operation": None, "data": None, "error": "IDA_OPERATION 环境变量未设置"}
 
     dry_run = env_bool("IDA_DRY_RUN")
     result_data = None
@@ -233,21 +233,21 @@ def _main():
         old_name = env_str("IDA_OLD_NAME", "")
         new_name = env_str("IDA_NEW_NAME", "")
         if not old_name or not new_name:
-            return {"success": False, "error": "重命名需要 IDA_OLD_NAME 和 IDA_NEW_NAME"}
+            return {"success": False, "operation": operation, "data": None, "error": "重命名需要 IDA_OLD_NAME 和 IDA_NEW_NAME"}
         result_data = _op_rename(old_name, new_name, dry_run)
 
     elif operation == "set_func_comment":
         func_addr = env_str("IDA_FUNC_ADDR", "")
         comment = env_str("IDA_COMMENT", "")
         if not func_addr or not comment:
-            return {"success": False, "error": "函数注释需要 IDA_FUNC_ADDR 和 IDA_COMMENT"}
+            return {"success": False, "operation": operation, "data": None, "error": "函数注释需要 IDA_FUNC_ADDR 和 IDA_COMMENT"}
         result_data = _op_set_func_comment(func_addr, comment, dry_run)
 
     elif operation == "set_line_comment":
         addr = env_str("IDA_ADDR", "")
         comment = env_str("IDA_COMMENT", "")
         if not addr or not comment:
-            return {"success": False, "error": "行内注释需要 IDA_ADDR 和 IDA_COMMENT"}
+            return {"success": False, "operation": operation, "data": None, "error": "行内注释需要 IDA_ADDR 和 IDA_COMMENT"}
         result_data = _op_set_line_comment(addr, comment, dry_run)
 
     elif operation == "batch":
@@ -257,15 +257,16 @@ def _main():
     else:
         return {
             "success": False,
+            "operation": operation,
+            "data": None,
             "error": f"不支持的操作类型: {operation}",
-            "available_operations": ["rename", "set_func_comment", "set_line_comment", "batch"],
         }
 
     if not dry_run:
         _save_database()
 
-    if isinstance(result_data, dict) and "success" in result_data and not result_data["success"]:
-        return result_data
+    if isinstance(result_data, dict) and "error" in result_data and "success" not in result_data:
+        return {"success": False, "operation": operation, "data": None, "error": result_data["error"]}
 
     return {"success": True, "operation": operation, "data": result_data, "dry_run": dry_run, "error": None}
 

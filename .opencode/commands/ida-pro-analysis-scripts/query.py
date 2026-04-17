@@ -167,13 +167,28 @@ def _query_entry_points():
         })
 
     if file_type in ("dll", "so"):
-        try:
-            import ida_nalt as _nalt
-            nimps = _nalt.get_import_module_qty()
-        except Exception:
-            nimps = 0
-
-    log(f"[+] 找到 {len(entries)} 个入口点\n")
+        log(f"[*] {file_type} 类型文件，补充导出函数到入口列表\n")
+        eqty2 = ida_entry.get_entry_qty()
+        for i in range(eqty2):
+            ordinal = ida_entry.get_entry_ordinal(i)
+            ea = ida_entry.get_entry(ordinal)
+            if ea == ida_idaapi.BADADDR or ea in seen:
+                continue
+            seen.add(ea)
+            name = ida_entry.get_entry_name(ordinal)
+            if not name:
+                name = _get_func_name_safe(ea)
+            func = ida_funcs.get_func(ea)
+            entries.append({
+                "name": name,
+                "addr": _hex(ea),
+                "type": "export",
+                "ordinal": ordinal,
+                "size": func.size() if func else 0,
+            })
+        log(f"[+] 补充导出函数后共 {len(entries)} 个入口点\n")
+    else:
+        log(f"[+] 找到 {len(entries)} 个入口点\n")
     return {"entries": entries, "file_type": file_type, "total": len(entries)}
 
 
@@ -210,7 +225,7 @@ def _query_decompile():
 
     func = _resolve_func(addr_str)
     if func is None:
-        return {"success": False, "error": f"无法解析函数: {addr_str}"}
+        return {"error": f"无法解析函数: {addr_str}"}
 
     func_name = _get_func_name_safe(func.start_ea)
     source_type = "disassembly"
@@ -268,7 +283,7 @@ def _query_disassemble():
 
     func = _resolve_func(addr_str)
     if func is None:
-        return {"success": False, "error": f"无法解析函数: {addr_str}"}
+        return {"error": f"无法解析函数: {addr_str}"}
 
     func_name = _get_func_name_safe(func.start_ea)
     disasm = _generate_disassembly(func)
@@ -289,7 +304,7 @@ def _query_func_info():
 
     func = _resolve_func(addr_str)
     if func is None:
-        return {"success": False, "error": f"无法解析函数: {addr_str}"}
+        return {"error": f"无法解析函数: {addr_str}"}
 
     func_name = _get_func_name_safe(func.start_ea)
 
@@ -375,7 +390,7 @@ def _query_xrefs_to():
 
     ea = _resolve_addr(addr_str)
     if ea == ida_idaapi.BADADDR:
-        return {"success": False, "error": f"无法解析地址: {addr_str}"}
+        return {"error": f"无法解析地址: {addr_str}"}
 
     refs = []
     for xref in idautils.XrefsTo(ea, 0):
@@ -402,7 +417,7 @@ def _query_xrefs_from():
     if func is None:
         ea = _resolve_addr(addr_str)
         if ea == ida_idaapi.BADADDR:
-            return {"success": False, "error": f"无法解析地址: {addr_str}"}
+            return {"error": f"无法解析地址: {addr_str}"}
         refs = []
         for xref in idautils.XrefsFrom(ea, 0):
             to_func = _get_func_name_safe(xref.to)
@@ -602,24 +617,19 @@ def _main():
     query_type = env_str("IDA_QUERY", "")
     if not query_type:
         log("[!] 未指定查询类型（IDA_QUERY 为空）\n")
-        return {"success": False, "error": "IDA_QUERY 环境变量未设置", "data": None}
+        return {"success": False, "query": None, "data": None, "error": "IDA_QUERY 环境变量未设置"}
 
     handler = _QUERY_HANDLERS.get(query_type)
     if handler is None:
         available = ", ".join(sorted(_QUERY_HANDLERS.keys()))
         log(f"[!] 不支持的查询类型: {query_type}，可用类型: {available}\n")
-        return {
-            "success": False,
-            "error": f"不支持的查询类型: {query_type}",
-            "available_types": sorted(_QUERY_HANDLERS.keys()),
-            "data": None,
-        }
+        return {"success": False, "query": query_type, "data": None, "error": f"不支持的查询类型: {query_type}，可用: {available}"}
 
     log(f"[*] 查询类型: {query_type}\n")
     data = handler()
 
-    if isinstance(data, dict) and "success" in data and not data["success"]:
-        return data
+    if isinstance(data, dict) and "error" in data and "success" not in data:
+        return {"success": False, "query": query_type, "data": None, "error": data["error"]}
 
     return {"success": True, "query": query_type, "data": data, "error": None}
 
