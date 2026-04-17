@@ -196,9 +196,18 @@ if _IN_IDA:
         _ACTION_HANDLERS[name] = handler
 
     def _handle_rename(actx, dry_run):
+        func_name = ida_funcs.get_func_name(actx.func.start_ea)
         symbols = ai_utils.extract_all_symbols(actx.func, actx.cfunc, actx.source)
-        if ai_utils.count_symbols(symbols) == 0:
-            ai_utils.log("  [*] 无可重命名的符号，跳过重命名\n")
+        symbol_count = ai_utils.count_symbols(symbols)
+        ai_utils.log(
+            f"  [rename] {func_name}: "
+            f"可重命名符号 {symbol_count} 个"
+            f"（局部变量 {len(symbols['local_vars'])}, "
+            f"函数 {len(symbols['called_functions'])}, "
+            f"全局数据 {len(symbols['global_data'])}, "
+            f"结构体字段 {sum(len(v) for v in symbols['struct_fields'].values())}）\n"
+        )
+        if symbol_count == 0:
             return 0, 0
         renamer = ai_rename.AIRenamer(
             actx.func, actx.context, actx.cfunc, actx.source, symbols
@@ -209,6 +218,10 @@ if _IN_IDA:
         return s, f
 
     def _handle_comment(actx, dry_run):
+        func_name = ida_funcs.get_func_name(actx.func.start_ea)
+        ai_utils.log(
+            f"  [comment] {func_name}: 开始生成注释\n"
+        )
         commenter = ai_comment.AICommenter(
             actx.func, actx.context, actx.cfunc, actx.source
         )
@@ -531,7 +544,22 @@ else:
         if not os.path.isfile(log_path):
             return
 
-        patterns = [
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            raw_lines = f.readlines()
+
+        cleaned = []
+        for line in raw_lines:
+            stripped = re.sub(
+                r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ ", "", line
+            ).rstrip()
+            if stripped:
+                cleaned.append(stripped)
+
+        _ACTION_LABELS = {
+            "rename": "符号重命名",
+            "comment": "注释生成",
+        }
+        _RESULT_PATTERNS = [
             r"\[预览-",
             r"\[\+\] (函数|局部变量|全局数据|结构体字段)重命名",
             r"\[\+\] (汇编注释|函数摘要|行内注释)",
@@ -545,24 +573,83 @@ else:
             r"\[\*\] 理由:",
             r"\[\*\] AI 分析结果",
             r"\[\*\] 函数重命名:",
-            r"\[\*\] 无可重命名",
-            r"\[\*\] 提取到",
-            r"\[\*\] 正在调用 AI",
-            r"\[\*\] (发现|未发现).*被调用函数",
         ]
-        combined = "|".join(patterns)
+        _DETAIL_PATTERNS = [
+            r"^\s*\[(rename|comment)\]",
+            r"\[\*\] (发现|未发现).*被调用函数",
+            r"\[\*\] 继续遍历以查找",
+        ]
+        result_re = re.compile("|".join(_RESULT_PATTERNS))
+        detail_re = re.compile("|".join(_DETAIL_PATTERNS))
+        func_header_re = re.compile(
+            r"^\[\*\] =+ \[\d+\] .+ \(0x[0-9A-Fa-f]+"
+        )
+        action_marker_re = re.compile(
+            r"^\[\*\] 执行动作: (.+)$"
+        )
+        action_label_re = re.compile(
+            r"^\s*\[(rename|comment)\] (.+):"
+        )
+
+        sections = []
+        current_action = None
+        current_lines = []
+        current_func_header = None
+        seen_funcs = set()
+
+        def flush():
+            if current_lines:
+                sections.append({
+                    "action": current_action,
+                    "lines": current_lines[:],
+                })
+
+        for line in cleaned:
+            m_action = action_marker_re.match(line)
+            if m_action:
+                flush()
+                current_action = m_action.group(1)
+                current_lines = []
+                continue
+
+            if func_header_re.match(line):
+                current_func_header = line
+                seen_funcs = set()
+                continue
+
+            m_label = action_label_re.match(line)
+            if m_label:
+                func_id = m_label.group(2)
+                if func_id not in seen_funcs:
+                    seen_funcs.add(func_id)
+                    if current_func_header:
+                        current_lines.append(current_func_header)
+                        current_func_header = None
+                current_lines.append(line)
+                continue
+
+            if result_re.search(line) or detail_re.search(line):
+                if current_func_header and not seen_funcs:
+                    current_lines.append(current_func_header)
+                    seen_funcs.add("__header__")
+                    current_func_header = None
+                current_lines.append(line)
+
+        flush()
+
+        if not sections:
+            return
 
         print("\n===== 分析结果 =====", file=sys.stderr)
         prev = None
-        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                cleaned = re.sub(
-                    r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ ", "", line
-                )
-                stripped = cleaned.rstrip()
-                if re.search(combined, stripped) and stripped != prev:
-                    print(f"  {stripped}", file=sys.stderr)
-                    prev = stripped
+        for sec in sections:
+            label = _ACTION_LABELS.get(sec["action"], sec["action"])
+            print(f"\n----- {label} -----", file=sys.stderr)
+            prev = None
+            for line in sec["lines"]:
+                if line != prev:
+                    print(f"  {line}", file=sys.stderr)
+                    prev = line
 
     def main():
         parser = _build_parser()

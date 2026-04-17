@@ -225,6 +225,14 @@ def get_callees(func):
 
 def get_auto_named_callee_funcs(func):
     """获取函数调用的所有自动命名函数（sub_XXXXX），返回 func_t 列表。"""
+    return [
+        c for c in get_all_callee_funcs(func)
+        if is_auto_generated_name(ida_funcs.get_func_name(c.start_ea))
+    ]
+
+
+def get_all_callee_funcs(func):
+    """获取函数调用的所有函数（不限制命名方式），返回 func_t 列表。"""
     callees = []
     seen = set()
     for chunk in ida_funcs.func_tail_iterator_t(func):
@@ -238,9 +246,7 @@ def get_auto_named_callee_funcs(func):
                     and callee.start_ea not in seen
                 ):
                     seen.add(callee.start_ea)
-                    name = ida_funcs.get_func_name(callee.start_ea)
-                    if is_auto_generated_name(name):
-                        callees.append(callee)
+                    callees.append(callee)
             ea = ida_bytes.next_head(ea, chunk.end_ea)
             if ea == ida_idaapi.BADADDR:
                 break
@@ -489,6 +495,10 @@ def process_functions(pattern, processor, recursive=False,
 
     processor 签名: processor(func, depth, idx) -> (success_count, fail_count)
 
+    递归模式下，BFS 遍历所有被调用函数（不限命名方式）以发现更深的
+    自动命名函数，但仅对自动命名函数执行 AI 分析。
+    根层（depth==0）函数无论命名方式如何都会被分析。
+
     返回 (total_success, total_fail, total_functions)。
     """
     matched = match_functions(pattern)
@@ -509,34 +519,58 @@ def process_functions(pattern, processor, recursive=False,
             continue
         visited.add(func.start_ea)
 
-        total += 1
         func_name = ida_funcs.get_func_name(func.start_ea)
-        depth_label = f" (递归深度 {depth})" if depth > 0 else ""
-        log(
-            f"\n[*] ========== [{total}] "
-            f"{func_name} (0x{func.start_ea:08X}){depth_label} "
-            f"==========\n"
-        )
+        is_auto = is_auto_generated_name(func_name)
+        should_analyze = depth == 0 or is_auto
 
-        s, f_ = processor(func, depth, total)
-        total_success += s
-        total_fail += f_
+        if should_analyze:
+            total += 1
+            depth_label = f" (递归深度 {depth})" if depth > 0 else ""
+            log(
+                f"\n[*] ========== [{total}] "
+                f"{func_name} (0x{func.start_ea:08X}){depth_label} "
+                f"==========\n"
+            )
+
+            s, f_ = processor(func, depth, total)
+            total_success += s
+            total_fail += f_
 
         if recursive and depth < max_depth:
-            callee_funcs = get_auto_named_callee_funcs(func)
-            if callee_funcs:
-                log(
-                    f"[*] 发现 {len(callee_funcs)} 个自动命名的被调用函数"
-                    f"，加入分析队列 (深度 {depth + 1})\n"
+            all_callees = get_all_callee_funcs(func)
+            new_callees = [
+                c for c in all_callees if c.start_ea not in visited
+            ]
+            if new_callees:
+                auto_new = sum(
+                    1 for c in new_callees
+                    if is_auto_generated_name(
+                        ida_funcs.get_func_name(c.start_ea)
+                    )
                 )
-                for callee in callee_funcs:
-                    if callee.start_ea not in visited:
-                        queue.append((callee, depth + 1))
+                for callee in new_callees:
+                    queue.append((callee, depth + 1))
+                if should_analyze:
+                    if auto_new > 0:
+                        log(
+                            f"[*] 发现 {auto_new} 个自动命名 + "
+                            f"{len(new_callees) - auto_new} 个已命名的"
+                            f"被调用函数，加入遍历队列 "
+                            f"(深度 {depth + 1})\n"
+                        )
+                    else:
+                        log(
+                            f"[*] 发现 {len(new_callees)} 个已命名的"
+                            f"被调用函数，继续遍历以查找更深的"
+                            f"自动命名函数 (深度 {depth + 1})\n"
+                        )
             else:
-                log(
-                    f"[*] 未发现自动命名的被调用函数"
-                    f"，递归到此结束 (当前深度 {depth}/{max_depth})\n"
-                )
+                if should_analyze:
+                    log(
+                        f"[*] 未发现被调用函数"
+                        f"，递归到此结束 "
+                        f"(当前深度 {depth}/{max_depth})\n"
+                    )
 
     log(f"\n[+] ========== {command_label}完成 ==========\n")
     log(
