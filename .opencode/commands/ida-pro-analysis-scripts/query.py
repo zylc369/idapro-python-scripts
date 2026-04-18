@@ -53,6 +53,7 @@ import math
 import ida_bytes
 import ida_entry
 import ida_funcs
+import ida_ida
 import ida_idaapi
 import ida_lines
 import ida_loader
@@ -386,9 +387,30 @@ def _query_entry_points():
             })
             export_count += 1
         log(f"[+] 补充 {export_count} 个导出函数，共 {len(entries)} 个入口点\n")
-    else:
-        log(f"[+] 找到 {len(entries)} 个入口点\n")
-    return {"entries": entries, "file_type": file_type, "total": len(entries)}
+
+    proc = ida_ida.inf_get_procname()
+    arch_map = {
+        "metapc": "x86",
+        "ARM": "arm",
+        "ARM64": "arm64",
+        "aarch64": "arm64",
+        "MIPS": "mips",
+        "PPC": "ppc",
+    }
+    architecture = arch_map.get(proc, proc)
+    result = {"entries": entries, "file_type": file_type, "total": len(entries),
+              "architecture": architecture}
+    if architecture == "x86":
+        if ida_ida.inf_is_64bit():
+            result["bits"] = 64
+        elif ida_ida.inf_is_32bit_exactly():
+            result["bits"] = 32
+        else:
+            result["bits"] = 16
+    log(f"[+] 找到 {len(entries)} 个入口点 (架构: {architecture}"
+        + (f", {result.get('bits', '?')}bit" if architecture == "x86" else "")
+        + ")\n")
+    return result
 
 
 def _query_functions():

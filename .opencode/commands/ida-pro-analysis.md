@@ -165,6 +165,15 @@ print(d)
 
 ---
 
+## 逆向分析核心原则
+
+1. **找关键点，不逆向机制** — 目标是找到关键调用、关键值、关键跳转。保护/混淆只是障碍，不是目标
+2. **绕过优先于逆向** — 除非用户明确要求分析保护机制本身，否则寻找最短绕过路径（找 OEP、动态 dump、hook 关键点）
+3. **该吃苦时吃苦，找到规律就切换** — 寻找关键点的过程可能需要笨办法（逐个检查函数、手动追踪数据流），但一旦发现规律或模式，立即用聪明办法
+4. **模式识别优于从零分析** — 已知模式（UPX 段名、常见壳结构、密码学常量）直接利用，不重新发现
+
+---
+
 ## 执行流程
 
 ```
@@ -193,7 +202,7 @@ print(d)
 
 **触发条件**：`packer_detect` 返回 `packer_detected: true`，或 `segments` 返回 `packer_warning.detected: true`。
 
-检测到加壳时，使用 Read 工具读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/packer-handling.md` 获取完整处理流程（阶段 1-3：壳检测 → 已知壳自动脱壳 → 静态分析脱壳）。
+检测到加壳时，使用 Read 工具读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/packer-handling.md` 获取完整处理流程（阶段 1→2→2.5→3→3.5：壳检测 → 关键点绕过 → 静态/动态脱壳）。
 
 **关键规则**（无论是否读取详细策略都必须遵守）：
 - **禁止**：`functions`/`func_info`/`strings`/`xrefs_*`/`update.py`（加壳版本上结果无意义）
@@ -345,7 +354,7 @@ IDA_OPERATION=batch IDA_BATCH_FILE="$TASK_DIR/ops.json" IDA_OUTPUT="$TASK_DIR/re
 
 | IDA_QUERY | 说明 | 额外参数 |
 |-----------|------|---------|
-| `entry_points` | 枚举入口点（智能识别 exe/dll/so） | 无 |
+| `entry_points` | 枚举入口点（智能识别 exe/dll/so），返回 architecture 和 bits 字段 | 无 |
 | `functions` | 按模式匹配函数 | `IDA_PATTERN`（支持通配符，为空则返回全部） |
 | `decompile` | 反编译函数（C 伪代码，自动追踪 thunk） | `IDA_FUNC_ADDR`（函数名或十六进制地址） |
 | `disassemble` | 反汇编函数（自动追踪 thunk） | `IDA_FUNC_ADDR` |
