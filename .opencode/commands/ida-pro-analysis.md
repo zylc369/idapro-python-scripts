@@ -464,9 +464,17 @@ run_headless(_main)
   "status": "success|partial|failed",
   "steps_executed": <步骤数>,
   "ida_modifications": [<修改记录>],
-  "analysis_summary": "<分析结论摘要>"
+  "analysis_summary": "<分析结论摘要>",
+  "metrics": {
+    "idat_calls": <idat 调用总次数>,
+    "handwritten_scripts": <AI 手写 IDAPython 脚本次数>,
+    "retries": <重试次数>,
+    "elapsed_seconds": <从命令开始到结束的总耗时（估算）>
+  }
 }
 ```
+
+执行过程中用变量计数（idat 每调用一次加 1，手写脚本一次加 1，重试一次加 1），结束时写入 metrics。
 
 ---
 
