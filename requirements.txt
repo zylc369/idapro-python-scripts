@@ -3,3 +3,4 @@
 # These are NOT runtime dependencies — IDA Pro provides them at runtime
 # They exist solely so your IDE can provide autocomplete and type checking
 idapro
+frida-tools

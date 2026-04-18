@@ -865,8 +865,8 @@ main_0 函数通过 strcmp 比较用户输入与硬编码值来验证身份。
 | 资料 | 位置/链接 |
 |------|----------|
 | opencode 自定义命令文档 | https://opencode.ai/docs/zh-cn/commands/ |
-| IDAPython 示例索引 | `/Users/aserlili/Documents/Codes/ida-sdk/src/plugins/idapython/examples/index.md` |
-| IDAPython 示例源码 | `/Users/aserlili/Documents/Codes/ida-sdk/src/plugins/idapython/examples/` |
+| IDAPython 示例索引 | `vendor/ida-sdk/src/plugins/idapython/examples/index.md` |
+| IDAPython 示例源码 | `vendor/ida-sdk/src/plugins/idapython/examples/` |
 | IDAPython 参考文档 | https://python.docs.hex-rays.com/ |
 | 无头自动化指南 | `rules/headless-automation-guide.md` |
 | 脚本分类参考 | `rules/script-classification.md` |

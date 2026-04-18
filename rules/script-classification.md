@@ -1,6 +1,6 @@
 # 脚本分类标准
 
-以下分类标准提取自 IDAPython 官方示例仓库（`ida-sdk/src/plugins/idapython/examples/`）的目录组织方式。新脚本**必须**根据其核心功能放入对应子目录。
+以下分类标准提取自 IDAPython 官方示例仓库（`vendor/ida-sdk/src/plugins/idapython/examples/`）的目录组织方式。新脚本**必须**根据其核心功能放入对应子目录。
 
 ## 分类判定原则
 

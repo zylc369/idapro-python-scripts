@@ -16,6 +16,7 @@ docs/            # 文档与需求
 rules/           # 详细规则文档（按需加载）
 test/            # Python 测试 + shell 测试（test/shell/*.bats）
 utils/           # 公共工具函数
+vendor/          # 只读子模块（IDA SDK、示例代码等参考资源）
 requirements.txt # IDE 类型存根依赖（非运行时依赖）
 ```
 
@@ -72,8 +73,8 @@ IDA_FUNC_ADDR=main IDA_OUTPUT=/tmp/output.asm \
 
 ## 外部参考资源
 
-- **IDAPython 示例索引**：`/Users/aserlili/Documents/Codes/ida-sdk/src/plugins/idapython/examples/index.md`
-- **IDAPython 示例源码**：`/Users/aserlili/Documents/Codes/ida-sdk/src/plugins/idapython/examples/`
+- **IDAPython 示例索引**：`vendor/ida-sdk/src/plugins/idapython/examples/index.md`
+- **IDAPython 示例源码**：`vendor/ida-sdk/src/plugins/idapython/examples/`
 - **IDAPython 参考文档**：https://python.docs.hex-rays.com/
 
 ## 编码规范
@@ -149,7 +150,7 @@ ida_kernwin.msg(f"[!] 警告或错误: {reason}\n")           # 警告/失败
 
 ## 功能类别与参考示例
 
-编写新脚本时，根据功能类型参考 `ida-sdk/src/plugins/idapython/examples/` 下对应目录的示例。分类决策参阅 [`rules/script-classification.md`](rules/script-classification.md)。
+编写新脚本时，根据功能类型参考 `vendor/ida-sdk/src/plugins/idapython/examples/` 下对应目录的示例。分类决策参阅 [`rules/script-classification.md`](rules/script-classification.md)。
 
 反汇编 → `examples/disassembler/` · 反编译 → `examples/decompiler/` · UI → `examples/ui/` · 类型 → `examples/types/` · 调试器 → `examples/debugger/`
 

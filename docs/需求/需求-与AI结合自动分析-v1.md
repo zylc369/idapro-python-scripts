@@ -93,6 +93,6 @@ claude、opencode。
 
 ### 外部参考资源
 
-- **IDAPython 示例索引**：`/Users/aserlili/Documents/Codes/ida-sdk/src/plugins/idapython/examples/index.md`
-- **IDAPython 示例源码**：`/Users/aserlili/Documents/Codes/ida-sdk/src/plugins/idapython/examples/`
+- **IDAPython 示例索引**：`vendor/ida-sdk/src/plugins/idapython/examples/index.md`
+- **IDAPython 示例源码**：`vendor/ida-sdk/src/plugins/idapython/examples/`
 - **IDAPython 参考文档**：https://python.docs.hex-rays.com/

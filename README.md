@@ -12,7 +12,7 @@
 
 ## 编码规范
 
-遵循 [IDAPython 官方示例规范](file:///Users/aserlili/Documents/Codes/ida-sdk/src/plugins/idapython/examples/README.md)，要点如下：
+遵循 [IDAPython 官方示例规范](vendor/ida-sdk/src/plugins/idapython/examples/README.md)，要点如下：
 
 - **禁止使用 `idc.py`**：其部分操作语义模糊，优先使用各功能模块（如 `idautils`、`idabytes` 等）
 - **禁止使用 `idaapi`**：直接 import 具体模块，避免隐藏符号来源，保持代码按模块归属清晰
@@ -33,6 +33,6 @@
 
 ## 参考资源
 
-- **IDAPython 示例索引**：[index.md](file:///Users/aserlili/Documents/Codes/ida-sdk/src/plugins/idapython/examples/index.md)
-- **IDAPython 示例源码**：`/Users/aserlili/Documents/Codes/ida-sdk/src/plugins/idapython/examples`
+- **IDAPython 示例索引**：[index.md](vendor/ida-sdk/src/plugins/idapython/examples/index.md)
+- **IDAPython 示例源码**：`vendor/ida-sdk/src/plugins/idapython/examples`
 - **IDAPython 官方文档**：https://hex-rays.com/products/ida/support/idapython_docs/
