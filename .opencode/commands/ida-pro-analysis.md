@@ -174,6 +174,24 @@ mkdir -p "$TASK_DIR"
 | 累计耗时上限 | 15 分钟 |
 | 数据库锁 | 锁定 = 立即退出，不计入重试次数 |
 
+### 加壳/混淆二进制处理策略
+
+**何时检测**：首次分析新二进制时，在 `entry_points` 查询后立即执行 `packer_detect` 检查（或观察 `segments` 返回的 `packer_warning` 字段）。
+
+**检测到加壳后的处理流程**：
+
+1. **告知用户**：明确报告壳类型、置信度和检测依据
+2. **建议脱壳**：推荐先脱壳再分析（如 `upx -d <file>`），脱壳后重新加载到 IDA
+3. **用户坚持分析加壳版本时**：
+   - 仅提供有限的分析能力：`entry_points`、`segments`、`disassemble`（入口点附近）
+   - 提示分析结果可能不准确（IDA 无法正确识别加壳后的函数和字符串）
+
+**禁止操作**（检测到加壳时）：
+- 不要盲目执行 `functions`、`decompile`、`func_info`、`strings`、`xrefs_to/from`（结果无意义，浪费时间和上下文）
+- 不要在加壳二进制上执行 `update.py` 修改操作（重命名、注释等无意义）
+
+**判断依据**：`packer_detect` 返回 `packer_detected: true` 时触发此策略。
+
 ### 预检查（每次 idat 调用前必须执行）
 
 ```bash
@@ -285,8 +303,9 @@ IDA_OPERATION=batch IDA_BATCH_FILE="$TASK_DIR/ops.json" IDA_OUTPUT="$TASK_DIR/re
 | `strings` | 搜索字符串及引用位置 | `IDA_PATTERN`（子串匹配） |
 | `imports` | 所有导入函数 | 无 |
 | `exports` | 所有导出函数 | 无 |
-| `segments` | 所有段信息 | 无 |
+| `segments` | 所有段信息（含异常信号标注） | 无 |
 | `read_data` | 读取全局数据（string/bytes/pointer/auto） | `IDA_ADDR` + `IDA_READ_MODE` + `IDA_READ_SIZE` + `IDA_DEREF` |
+| `packer_detect` | 检测加壳/混淆二进制 | 无 |
 
 ### read_data 读取模式
 

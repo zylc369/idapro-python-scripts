@@ -6,18 +6,19 @@ description:
   通过环境变量 IDA_QUERY 指定查询类型，IDA_OUTPUT 指定输出文件路径。
 
   支持的查询类型（IDA_QUERY）:
-    entry_points — 枚举所有入口点（根据文件类型智能识别）
-    functions    — 按模式匹配函数列表
-    decompile    — 反编译指定函数（自动追踪 thunk 链到真实函数）
-    disassemble  — 反汇编指定函数（自动追踪 thunk 链）
-    func_info    — 查询单个函数的详细信息（自动追踪 thunk 链）
-    xrefs_to     — 查询指定地址/函数的交叉引用（谁引用了它）
-    xrefs_from   — 查询指定函数调用了哪些函数
-    strings      — 搜索字符串及其引用位置
-    imports      — 列出所有导入函数
-    exports      — 列出所有导出函数
-    segments     — 列出所有段信息
-    read_data    — 读取指定地址处的全局数据（string/bytes/pointer/auto）
+    entry_points  — 枚举所有入口点（根据文件类型智能识别）
+    functions     — 按模式匹配函数列表
+    decompile     — 反编译指定函数（自动追踪 thunk 链到真实函数）
+    disassemble   — 反汇编指定函数（自动追踪 thunk 链）
+    func_info     — 查询单个函数的详细信息（自动追踪 thunk 链）
+    xrefs_to      — 查询指定地址/函数的交叉引用（谁引用了它）
+    xrefs_from    — 查询指定函数调用了哪些函数
+    strings       — 搜索字符串及其引用位置
+    imports       — 列出所有导入函数
+    exports       — 列出所有导出函数
+    segments      — 列出所有段信息（含异常信号标注）
+    read_data     — 读取指定地址处的全局数据（string/bytes/pointer/auto）
+    packer_detect — 检测加壳/混淆二进制（多维信号分析）
 
   地址参数格式:
     IDA_FUNC_ADDR / IDA_ADDR 同时接受函数名（如 main、sub_401000）
@@ -47,6 +48,8 @@ from _utils import (
     resolve_thunk,
 )
 
+import math
+
 import ida_bytes
 import ida_entry
 import ida_funcs
@@ -68,6 +71,207 @@ except ImportError:
 MAX_MATCHES = 200
 MAX_REFS_DISPLAY = 50
 MAX_STRINGS_DISPLAY = 100
+
+_PACKER_SEGMENT_PATTERNS = {
+    "UPX": ["UPX", ".upx"],
+    "MPRESS": [".nsp0", ".nsp1", ".nsp2"],
+    "Themida": [".themida", ".winlice"],
+    "VMProtect": [".vmp0", ".vmp1"],
+    "ASPack": [".aspack"],
+    "PECompact": [".pec2"],
+    "Enigma": [".enigma1", ".enigma2"],
+}
+
+
+def _detect_segment_anomaly(name, seg, total_size):
+    """检测段的异常信号（加壳指示器）。"""
+    hints = []
+    name_upper = name.upper()
+    for packer, patterns in _PACKER_SEGMENT_PATTERNS.items():
+        for pat in patterns:
+            if name_upper == pat.upper() or name_upper.startswith(pat.upper()):
+                hints.append(f"known_packer_segment:{packer}")
+                break
+        if any(h.startswith("known_packer_segment") for h in hints):
+            break
+    seg_size = seg.size()
+    if total_size > 0 and seg_size > 0 and seg_size / total_size > 0.9:
+        hints.append("oversized_segment")
+    return hints
+
+
+def _estimate_entropy(ea, size):
+    """对指定区域采样估算 Shannon entropy。"""
+    sample_size = min(size, 1024)
+    if sample_size <= 0:
+        return 0.0
+    freq = [0] * 256
+    for i in range(sample_size):
+        b = ida_bytes.get_byte(ea + i)
+        freq[b] += 1
+    entropy = 0.0
+    for count in freq:
+        if count > 0:
+            p = count / sample_size
+            entropy -= p * math.log2(p)
+    return entropy
+
+
+def _query_packer_detect():
+    """检测加壳/混淆二进制。通过多维信号分析判断是否加壳。"""
+    log("[*] 正在检测加壳/混淆特征...\n")
+
+    signals = []
+    detected_packer = None
+    confidence = "none"
+
+    seg_qty = ida_segment.get_segm_qty()
+    log(f"[*] 段数量: {seg_qty}\n")
+
+    total_seg_size = 0
+    segment_names = []
+    for i in range(seg_qty):
+        seg = ida_segment.getnseg(i)
+        if seg is None:
+            continue
+        name = ida_segment.get_segm_name(seg)
+        segment_names.append(name)
+        total_seg_size += seg.size()
+
+    for name in segment_names:
+        name_upper = name.upper()
+        for packer, patterns in _PACKER_SEGMENT_PATTERNS.items():
+            for pat in patterns:
+                if name_upper == pat.upper() or name_upper.startswith(pat.upper()):
+                    signals.append({
+                        "type": "segment_name",
+                        "detail": f"段 {name} 存在",
+                        "weight": "high",
+                    })
+                    if detected_packer is None:
+                        detected_packer = packer
+                    log(f"[*] 检测到已知壳段名: {name} → {packer}\n")
+                    break
+
+    func_count = 0
+    for _ in idautils.Functions():
+        func_count += 1
+    log(f"[*] 函数数量: {func_count}\n")
+
+    if func_count <= 5:
+        eqty = ida_entry.get_entry_qty()
+        has_entry = eqty > 0
+        if has_entry:
+            weight = "high" if func_count <= 2 else "medium"
+            signals.append({
+                "type": "function_count",
+                "detail": f"仅 {func_count} 个函数（有入口点）",
+                "weight": weight,
+            })
+            log(f"[*] 异常信号: 函数数量过少 ({func_count})\n")
+
+    nimps = ida_nalt.get_import_module_qty()
+    imp_total = 0
+    for i in range(nimps):
+        def _count_cb(ea, name, ordinal):
+            nonlocal imp_total
+            imp_total += 1
+            return True
+        ida_nalt.enum_import_names(i, _count_cb)
+    log(f"[*] 导入函数数量: {imp_total}\n")
+
+    if imp_total == 0:
+        signals.append({
+            "type": "import_count",
+            "detail": "0 个导入函数",
+            "weight": "high",
+        })
+        log("[*] 异常信号: 无导入函数\n")
+    elif imp_total <= 3:
+        signals.append({
+            "type": "import_count",
+            "detail": f"仅 {imp_total} 个导入函数",
+            "weight": "medium",
+        })
+        log(f"[*] 异常信号: 导入函数过少 ({imp_total})\n")
+
+    high_entropy_segments = []
+    for i in range(seg_qty):
+        seg = ida_segment.getnseg(i)
+        if seg is None:
+            continue
+        seg_size = seg.size()
+        if seg_size < 64:
+            continue
+        entropy = _estimate_entropy(seg.start_ea, seg_size)
+        if entropy > 7.0:
+            name = ida_segment.get_segm_name(seg)
+            high_entropy_segments.append({"name": name, "entropy": round(entropy, 2)})
+            log(f"[*] 高熵段: {name} entropy={entropy:.2f}\n")
+
+    if high_entropy_segments:
+        signals.append({
+            "type": "high_entropy",
+            "detail": f"{len(high_entropy_segments)} 个段熵 > 7.0: {', '.join(s['name'] for s in high_entropy_segments)}",
+            "weight": "medium",
+        })
+
+    if seg_qty <= 2 and total_seg_size > 0:
+        for seg_obj_name in segment_names:
+            pass
+        code_ratio = 0
+        for i in range(seg_qty):
+            seg = ida_segment.getnseg(i)
+            if seg is not None and seg.perm & 1:
+                code_ratio += seg.size()
+        if total_seg_size > 0 and code_ratio / total_seg_size > 0.95:
+            signals.append({
+                "type": "segment_layout",
+                "detail": f"仅 {seg_qty} 个段，代码段占比 {code_ratio / total_seg_size:.0%}",
+                "weight": "medium",
+            })
+
+    if detected_packer:
+        confidence = "high"
+    else:
+        high_signals = sum(1 for s in signals if s["weight"] == "high")
+        medium_signals = sum(1 for s in signals if s["weight"] == "medium")
+        if high_signals >= 2:
+            detected_packer = "unknown"
+            confidence = "high"
+        elif high_signals >= 1 and medium_signals >= 1:
+            detected_packer = "unknown"
+            confidence = "medium"
+        elif medium_signals >= 2:
+            detected_packer = "unknown"
+            confidence = "low"
+
+    packer_detected = confidence in ("high", "medium")
+    recommendation = ""
+    if packer_detected:
+        if detected_packer and detected_packer != "unknown":
+            recommendation = f"检测到 {detected_packer} 壳（置信度: {confidence}），建议先脱壳后分析。可尝试 {detected_packer.lower()} -d <file> 脱壳后重新加载到 IDA。"
+        else:
+            recommendation = f"检测到疑似加壳/混淆（置信度: {confidence}），建议先脱壳后分析。常见工具: upx -d、die（Detect It Easy）等。"
+        log(f"[!] 壳检测结果: {detected_packer or '疑似'}，置信度 {confidence}\n")
+    else:
+        log("[+] 未检测到加壳特征\n")
+
+    entry_count = ida_entry.get_entry_qty()
+
+    return {
+        "packer_detected": packer_detected,
+        "confidence": confidence if packer_detected else "none",
+        "packer_name": detected_packer if packer_detected else None,
+        "signals": signals,
+        "recommendation": recommendation,
+        "stats": {
+            "segment_count": seg_qty,
+            "function_count": func_count,
+            "import_count": imp_total,
+            "entry_points": entry_count,
+        },
+    }
 
 
 def _resolve_func(addr_str):
@@ -563,21 +767,41 @@ def _query_exports():
 
 
 def _query_segments():
-    """列出所有段信息。"""
+    """列出所有段信息，含异常信号标注。"""
     log("[*] 正在查询段信息...\n")
 
     segments = []
-    seg_qty = ida_segment.get_qty()
+    seg_qty = ida_segment.get_segm_qty()
+    log(f"[*] 段数量: {seg_qty}\n")
+
+    total_size = 0
+    seg_objects = []
     for i in range(seg_qty):
         seg = ida_segment.getnseg(i)
         if seg is None:
             continue
+        total_size += seg.size()
+        seg_objects.append(seg)
+
+    detected_packer = None
+    packer_confidence = "none"
+
+    for seg in seg_objects:
         name = ida_segment.get_segm_name(seg)
         seg_type = ""
         try:
             seg_type = ida_segment.segm_class(seg)
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"[!] 获取段类失败: {name} — {e}\n")
+
+        anomaly_hints = _detect_segment_anomaly(name, seg, total_size)
+
+        for hint in anomaly_hints:
+            if hint.startswith("known_packer_segment:"):
+                detected_packer = hint.split(":", 1)[1]
+                packer_confidence = "high"
+                log(f"[!] 检测到已知壳段: {name} → {detected_packer}\n")
+
         segments.append({
             "name": name,
             "start": hex_addr(seg.start_ea),
@@ -585,10 +809,23 @@ def _query_segments():
             "size": seg.size(),
             "type": seg_type,
             "perm": _seg_perm_str(seg.perm),
+            "anomaly_hints": anomaly_hints,
         })
 
+    result = {"segments": segments, "total": len(segments)}
+
+    if detected_packer:
+        result["packer_warning"] = {
+            "detected": True,
+            "packer_name": detected_packer,
+            "confidence": packer_confidence,
+        }
+        log(f"[!] 壳检测警告: {detected_packer}（置信度: {packer_confidence}）\n")
+    else:
+        result["packer_warning"] = {"detected": False, "packer_name": None, "confidence": "none"}
+
     log(f"[+] 找到 {len(segments)} 个段\n")
-    return {"segments": segments, "total": len(segments)}
+    return result
 
 
 def _seg_perm_str(perm):
@@ -660,6 +897,7 @@ _QUERY_HANDLERS = {
     "exports": _query_exports,
     "segments": _query_segments,
     "read_data": _query_read_data,
+    "packer_detect": _query_packer_detect,
 }
 
 
