@@ -123,9 +123,11 @@ print(open(reg).read().strip() if os.path.isfile(reg) else '{\"scripts\":[]}')
 
 ---
 
-## 工作目录约定
+## 任务目录约定
 
-每次命令执行时，在 `~/bw-ida-pro-analysis/workspace/` 下创建以时间戳命名的子目录，所有中间文件均存放在此目录中。
+**禁止使用 `workdir` 参数。禁止在「项目根目录」或用户项目目录下创建任何文件。** 所有中间文件必须写入 `~/bw-ida-pro-analysis/workspace/`。
+
+**任务目录（TASK_DIR）**：每次命令执行时在 `~/bw-ida-pro-analysis/workspace/` 下创建以时间戳命名的子目录，所有中间文件均存放在此目录中。
 
 ```bash
 SCRIPTS_DIR="<上方脚本目录的值>"
@@ -434,7 +436,13 @@ run_headless(_main)
 ## 置信度说明
 - 确定: （来自 IDA 数据库的精确信息）
 - 推测: （AI 推理，标注置信度）
+
+## 执行统计
+- idat 调用: X 次 | 手写脚本: X 个 | 重试: X 次 | 耗时: Xm Xs
+- 任务目录: ~/bw-ida-pro-analysis/workspace/<task_id>/
 ```
+
+**执行统计必须显示**，从执行过程中累计的变量（`idat_calls`、`handwritten_scripts`、`retries`、`elapsed`）取值。
 
 ---
 
@@ -443,7 +451,7 @@ run_headless(_main)
 **上下文保持**：
 - 记住当前会话中的 IDA 数据库文件路径，后续问题无需重复提供
 - 前一次查询结果仍在上下文中，可直接引用
-- 工作目录沿用首次创建的 `~/bw-ida-pro-analysis/workspace/<task_id>/` 子目录
+- 任务目录沿用首次创建的 `~/bw-ida-pro-analysis/workspace/<task_id>/` 子目录
 
 **处理原则**：
 1. 新问题针对同一文件 → 跳过路径解析，但仍执行预检查（锁检测）
@@ -454,7 +462,7 @@ run_headless(_main)
 
 ## 任务存档
 
-命令执行结束时，在工作目录写入 `summary.json`：
+命令执行结束时，在任务目录写入 `summary.json`：
 
 ```json
 {
