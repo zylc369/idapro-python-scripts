@@ -8,15 +8,16 @@ description:
   支持的查询类型（IDA_QUERY）:
     entry_points — 枚举所有入口点（根据文件类型智能识别）
     functions    — 按模式匹配函数列表
-    decompile    — 反编译指定函数（返回 C 伪代码）
-    disassemble  — 反汇编指定函数
-    func_info    — 查询单个函数的详细信息
+    decompile    — 反编译指定函数（自动追踪 thunk 链到真实函数）
+    disassemble  — 反汇编指定函数（自动追踪 thunk 链）
+    func_info    — 查询单个函数的详细信息（自动追踪 thunk 链）
     xrefs_to     — 查询指定地址/函数的交叉引用（谁引用了它）
     xrefs_from   — 查询指定函数调用了哪些函数
     strings      — 搜索字符串及其引用位置
     imports      — 列出所有导入函数
     exports      — 列出所有导出函数
     segments     — 列出所有段信息
+    read_data    — 读取指定地址处的全局数据（string/bytes/pointer/auto）
 
   地址参数格式:
     IDA_FUNC_ADDR / IDA_ADDR 同时接受函数名（如 main、sub_401000）
@@ -34,7 +35,17 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _base import env_str, env_int, log, run_headless
+from _base import env_str, env_int, env_bool, log, run_headless
+from _utils import (
+    get_func_name_safe,
+    hex_addr,
+    read_bytes_at,
+    read_data_auto,
+    read_pointer,
+    read_string_at,
+    resolve_addr,
+    resolve_thunk,
+)
 
 import ida_bytes
 import ida_entry
@@ -60,49 +71,14 @@ MAX_STRINGS_DISPLAY = 100
 
 
 def _resolve_func(addr_str):
-    """将函数名或十六进制地址解析为 func_t 对象。"""
-    if not addr_str:
-        return None
-    try:
-        ea = int(addr_str, 16)
-        if ea < 0 or ea == ida_idaapi.BADADDR:
-            ea = ida_idaapi.BADADDR
-    except ValueError:
-        ea = ida_name.get_name_ea(ida_idaapi.BADADDR, addr_str)
+    """将函数名或十六进制地址解析为 func_t 对象（含 thunk 自动追踪）。"""
+    ea = resolve_addr(addr_str)
     if ea == ida_idaapi.BADADDR:
-        log(f"[!] 无法解析地址: {addr_str}\n")
-        return None
+        return None, []
     func = ida_funcs.get_func(ea)
     if func is None:
-        log(f"[!] 地址 0x{ea:X} 不属于任何函数\n")
-    return func
-
-
-def _resolve_addr(addr_str):
-    """将函数名或十六进制地址解析为具体地址（不要求在函数内）。"""
-    if not addr_str:
-        return ida_idaapi.BADADDR
-    try:
-        ea = int(addr_str, 16)
-        if 0 <= ea < ida_idaapi.BADADDR:
-            return ea
-    except ValueError:
-        pass
-    ea = ida_name.get_name_ea(ida_idaapi.BADADDR, addr_str)
-    if ea == ida_idaapi.BADADDR:
-        log(f"[!] 无法解析地址: {addr_str}\n")
-    return ea
-
-
-def _hex(ea):
-    """将地址格式化为 0x 前缀十六进制字符串。"""
-    return f"0x{ea:X}"
-
-
-def _get_func_name_safe(ea):
-    """安全获取函数名，失败返回空字符串。"""
-    name = ida_funcs.get_func_name(ea)
-    return name if name else ""
+        log(f"[!] 地址 {hex_addr(ea)} 不属于任何函数\n")
+    return func, []
 
 
 def _get_file_type():
@@ -125,6 +101,25 @@ def _get_file_type():
         return "unknown"
 
 
+def _resolve_func_with_thunk(addr_str):
+    """解析函数地址并自动追踪 thunk 链。
+
+    返回:
+        (func, thunk_chain)
+        func: 真实函数的 func_t 对象，None 表示失败
+        thunk_chain: [{"name": str, "addr": str}] — 中间 thunk 列表
+    """
+    ea = resolve_addr(addr_str)
+    if ea == ida_idaapi.BADADDR:
+        return None, []
+
+    chain, real_ea = resolve_thunk(ea)
+    func = ida_funcs.get_func(real_ea)
+    if func is None:
+        log(f"[!] 地址 {hex_addr(real_ea)} 不属于任何函数\n")
+    return func, chain
+
+
 def _query_entry_points():
     """枚举所有入口点，根据文件类型智能识别入口。"""
     log("[*] 正在查询入口点...\n")
@@ -142,7 +137,7 @@ def _query_entry_points():
         seen.add(ea)
         name = ida_entry.get_entry_name(ordinal)
         if not name:
-            name = _get_func_name_safe(ea)
+            name = get_func_name_safe(ea)
         entry_type = "entry"
         if name and name.startswith("."):
             entry_type = "init_array"
@@ -160,7 +155,7 @@ def _query_entry_points():
         func = ida_funcs.get_func(ea)
         entries.append({
             "name": name,
-            "addr": _hex(ea),
+            "addr": hex_addr(ea),
             "type": entry_type,
             "ordinal": ordinal,
             "size": func.size() if func else 0,
@@ -172,7 +167,7 @@ def _query_entry_points():
         for ea in idautils.Functions():
             if ea in seen:
                 continue
-            name = _get_func_name_safe(ea)
+            name = get_func_name_safe(ea)
             is_export = ida_bytes.is_mapped(ea) and name and not name.startswith("sub_")
             if not is_export:
                 continue
@@ -180,7 +175,7 @@ def _query_entry_points():
             func = ida_funcs.get_func(ea)
             entries.append({
                 "name": name,
-                "addr": _hex(ea),
+                "addr": hex_addr(ea),
                 "type": "export",
                 "ordinal": -1,
                 "size": func.size() if func else 0,
@@ -200,13 +195,13 @@ def _query_functions():
     functions = []
     count = 0
     for ea in idautils.Functions():
-        name = _get_func_name_safe(ea)
+        name = get_func_name_safe(ea)
         if pattern and not fnmatch.fnmatch(name, pattern):
             continue
         func = ida_funcs.get_func(ea)
         functions.append({
             "name": name,
-            "addr": _hex(ea),
+            "addr": hex_addr(ea),
             "size": func.size() if func else 0,
         })
         count += 1
@@ -219,15 +214,15 @@ def _query_functions():
 
 
 def _query_decompile():
-    """反编译指定函数，返回 C 伪代码。"""
+    """反编译指定函数，自动追踪 thunk 链到真实函数。"""
     addr_str = env_str("IDA_FUNC_ADDR", "")
     log(f"[*] 正在反编译函数: {addr_str}\n")
 
-    func = _resolve_func(addr_str)
+    func, thunk_chain = _resolve_func_with_thunk(addr_str)
     if func is None:
         return {"error": f"无法解析函数: {addr_str}"}
 
-    func_name = _get_func_name_safe(func.start_ea)
+    func_name = get_func_name_safe(func.start_ea)
     source_type = "disassembly"
     source = ""
 
@@ -250,13 +245,16 @@ def _query_decompile():
         source = _generate_disassembly(func)
         log(f"[+] 反汇编成功: {func_name} ({len(source.splitlines())} 行)\n")
 
-    return {
+    result = {
         "func_name": func_name,
-        "addr": _hex(func.start_ea),
+        "addr": hex_addr(func.start_ea),
         "source": source,
         "source_type": source_type,
         "size": func.size(),
     }
+    if thunk_chain:
+        result["thunk_chain"] = thunk_chain
+    return result
 
 
 def _generate_disassembly(func):
@@ -265,11 +263,11 @@ def _generate_disassembly(func):
     for chunk in ida_funcs.func_tail_iterator_t(func):
         is_main = chunk.start_ea == func.start_ea
         if not is_main:
-            lines.append(f"; --- 尾块: {_hex(chunk.start_ea)} - {_hex(chunk.end_ea)} ---")
+            lines.append(f"; --- 尾块: {hex_addr(chunk.start_ea)} - {hex_addr(chunk.end_ea)} ---")
         ea = chunk.start_ea
         while ea < chunk.end_ea and ea != ida_idaapi.BADADDR:
             disasm = ida_lines.generate_disasm_line(ea, ida_lines.GENDSM_REMOVE_TAGS)
-            lines.append(f"{_hex(ea)}    {disasm}")
+            lines.append(f"{hex_addr(ea)}    {disasm}")
             ea = ida_bytes.next_head(ea, chunk.end_ea)
             if ea == ida_idaapi.BADADDR:
                 break
@@ -277,42 +275,45 @@ def _generate_disassembly(func):
 
 
 def _query_disassemble():
-    """反汇编指定函数。"""
+    """反汇编指定函数，自动追踪 thunk 链到真实函数。"""
     addr_str = env_str("IDA_FUNC_ADDR", "")
     log(f"[*] 正在反汇编函数: {addr_str}\n")
 
-    func = _resolve_func(addr_str)
+    func, thunk_chain = _resolve_func_with_thunk(addr_str)
     if func is None:
         return {"error": f"无法解析函数: {addr_str}"}
 
-    func_name = _get_func_name_safe(func.start_ea)
+    func_name = get_func_name_safe(func.start_ea)
     disasm = _generate_disassembly(func)
     log(f"[+] 反汇编成功: {func_name} ({len(disasm.splitlines())} 行)\n")
 
-    return {
+    result = {
         "func_name": func_name,
-        "addr": _hex(func.start_ea),
+        "addr": hex_addr(func.start_ea),
         "disassembly": disasm,
         "size": func.size(),
     }
+    if thunk_chain:
+        result["thunk_chain"] = thunk_chain
+    return result
 
 
 def _query_func_info():
-    """查询单个函数的详细信息。"""
+    """查询单个函数的详细信息，自动追踪 thunk 链到真实函数。"""
     addr_str = env_str("IDA_FUNC_ADDR", "")
     log(f"[*] 正在查询函数信息: {addr_str}\n")
 
-    func = _resolve_func(addr_str)
+    func, thunk_chain = _resolve_func_with_thunk(addr_str)
     if func is None:
         return {"error": f"无法解析函数: {addr_str}"}
 
-    func_name = _get_func_name_safe(func.start_ea)
+    func_name = get_func_name_safe(func.start_ea)
 
     callers = []
     xb = ida_xref.xrefblk_t()
     for ref in xb.crefs_to(func.start_ea):
-        caller_name = _get_func_name_safe(ref)
-        callers.append({"addr": _hex(ref), "func": caller_name})
+        caller_name = get_func_name_safe(ref)
+        callers.append({"addr": hex_addr(ref), "func": caller_name})
         if len(callers) >= MAX_REFS_DISPLAY:
             break
 
@@ -325,8 +326,8 @@ def _query_func_info():
                 callee = ida_funcs.get_func(ref)
                 if callee and callee.start_ea != func.start_ea and callee.start_ea not in seen_callees:
                     seen_callees.add(callee.start_ea)
-                    callee_name = _get_func_name_safe(callee.start_ea)
-                    callees.append({"addr": _hex(callee.start_ea), "name": callee_name})
+                    callee_name = get_func_name_safe(callee.start_ea)
+                    callees.append({"addr": hex_addr(callee.start_ea), "name": callee_name})
                     if len(callees) >= MAX_REFS_DISPLAY:
                         break
             ea = ida_bytes.next_head(ea, chunk.end_ea)
@@ -344,7 +345,7 @@ def _query_func_info():
                 seen_str.add(ref)
                 s = ida_bytes.get_strlit_contents(ref, -1, ida_nalt.STRTYPE_C)
                 if s:
-                    strings.append({"value": s.decode("utf-8", errors="replace"), "addr": _hex(ref)})
+                    strings.append({"value": s.decode("utf-8", errors="replace"), "addr": hex_addr(ref)})
                     if len(strings) >= MAX_STRINGS_DISPLAY:
                         break
             ea = ida_bytes.next_head(ea, chunk.end_ea)
@@ -370,11 +371,11 @@ def _query_func_info():
     if func.flags & ida_funcs.FUNC_NORET:
         flags.append("noreturn")
 
-    log(f"[+] 函数信息: {func_name} @ {_hex(func.start_ea)}\n")
-    return {
+    log(f"[+] 函数信息: {func_name} @ {hex_addr(func.start_ea)}\n")
+    result = {
         "name": func_name,
-        "addr": _hex(func.start_ea),
-        "end_addr": _hex(func.end_ea),
+        "addr": hex_addr(func.start_ea),
+        "end_addr": hex_addr(func.end_ea),
         "size": func.size(),
         "flags": flags,
         "prototype": prototype,
@@ -382,6 +383,9 @@ def _query_func_info():
         "callees": callees,
         "strings": strings,
     }
+    if thunk_chain:
+        result["thunk_chain"] = thunk_chain
+    return result
 
 
 def _query_xrefs_to():
@@ -389,16 +393,16 @@ def _query_xrefs_to():
     addr_str = env_str("IDA_ADDR", "") or env_str("IDA_FUNC_ADDR", "")
     log(f"[*] 正在查询交叉引用（to）: {addr_str}\n")
 
-    ea = _resolve_addr(addr_str)
+    ea = resolve_addr(addr_str)
     if ea == ida_idaapi.BADADDR:
         return {"error": f"无法解析地址: {addr_str}"}
 
     refs = []
     for xref in idautils.XrefsTo(ea, 0):
-        func_name = _get_func_name_safe(xref.frm)
+        func_name = get_func_name_safe(xref.frm)
         xref_type = _xref_type_str(xref.type)
         refs.append({
-            "from": _hex(xref.frm),
+            "from": hex_addr(xref.frm),
             "from_func": func_name,
             "type": xref_type,
         })
@@ -406,7 +410,7 @@ def _query_xrefs_to():
             break
 
     log(f"[+] 找到 {len(refs)} 个交叉引用\n")
-    return {"target": _hex(ea), "target_name": _get_func_name_safe(ea), "refs": refs, "total": len(refs)}
+    return {"target": hex_addr(ea), "target_name": get_func_name_safe(ea), "refs": refs, "total": len(refs)}
 
 
 def _query_xrefs_from():
@@ -414,18 +418,18 @@ def _query_xrefs_from():
     addr_str = env_str("IDA_FUNC_ADDR", "")
     log(f"[*] 正在查询交叉引用（from）: {addr_str}\n")
 
-    func = _resolve_func(addr_str)
+    func, _ = _resolve_func(addr_str)
     if func is None:
-        ea = _resolve_addr(addr_str)
+        ea = resolve_addr(addr_str)
         if ea == ida_idaapi.BADADDR:
             return {"error": f"无法解析地址: {addr_str}"}
         refs = []
         for xref in idautils.XrefsFrom(ea, 0):
-            to_func = _get_func_name_safe(xref.to)
-            refs.append({"to": _hex(xref.to), "to_func": to_func, "type": _xref_type_str(xref.type)})
+            to_func = get_func_name_safe(xref.to)
+            refs.append({"to": hex_addr(xref.to), "to_func": to_func, "type": _xref_type_str(xref.type)})
             if len(refs) >= MAX_REFS_DISPLAY:
                 break
-        return {"source": _hex(ea), "source_name": _get_func_name_safe(ea), "refs": refs, "total": len(refs)}
+        return {"source": hex_addr(ea), "source_name": get_func_name_safe(ea), "refs": refs, "total": len(refs)}
 
     refs = []
     seen = set()
@@ -433,13 +437,13 @@ def _query_xrefs_from():
         ea = chunk.start_ea
         while ea < chunk.end_ea and ea != ida_idaapi.BADADDR:
             for xref in idautils.XrefsFrom(ea, 0):
-                to_func = _get_func_name_safe(xref.to)
+                to_func = get_func_name_safe(xref.to)
                 key = (xref.to, xref.type)
                 if key not in seen:
                     seen.add(key)
                     refs.append({
-                        "from": _hex(ea),
-                        "to": _hex(xref.to),
+                        "from": hex_addr(ea),
+                        "to": hex_addr(xref.to),
                         "to_func": to_func,
                         "type": _xref_type_str(xref.type),
                     })
@@ -451,8 +455,8 @@ def _query_xrefs_from():
 
     log(f"[+] 找到 {len(refs)} 个引用\n")
     return {
-        "source": _hex(func.start_ea),
-        "source_name": _get_func_name_safe(func.start_ea),
+        "source": hex_addr(func.start_ea),
+        "source_name": get_func_name_safe(func.start_ea),
         "refs": refs,
         "total": len(refs),
     }
@@ -489,13 +493,13 @@ def _query_strings():
         ea = s.ea
         xrefs = []
         for xref in idautils.XrefsTo(ea, 0):
-            func_name = _get_func_name_safe(xref.frm)
-            xrefs.append({"from": _hex(xref.frm), "func": func_name})
+            func_name = get_func_name_safe(xref.frm)
+            xrefs.append({"from": hex_addr(xref.frm), "func": func_name})
             if len(xrefs) >= 10:
                 break
         results.append({
             "value": value,
-            "addr": _hex(ea),
+            "addr": hex_addr(ea),
             "length": s.length,
             "xrefs": xrefs,
         })
@@ -521,7 +525,7 @@ def _query_imports():
         def _imp_cb(ea, name, ordinal):
             functions.append({
                 "name": name if name else f"ord_{ordinal}",
-                "addr": _hex(ea),
+                "addr": hex_addr(ea),
                 "ordinal": ordinal,
             })
             return True
@@ -547,10 +551,10 @@ def _query_exports():
             continue
         name = ida_entry.get_entry_name(ordinal)
         if not name:
-            name = _get_func_name_safe(ea)
+            name = get_func_name_safe(ea)
         exports.append({
             "name": name,
-            "addr": _hex(ea),
+            "addr": hex_addr(ea),
             "ordinal": ordinal,
         })
 
@@ -576,8 +580,8 @@ def _query_segments():
             pass
         segments.append({
             "name": name,
-            "start": _hex(seg.start_ea),
-            "end": _hex(seg.end_ea),
+            "start": hex_addr(seg.start_ea),
+            "end": hex_addr(seg.end_ea),
             "size": seg.size(),
             "type": seg_type,
             "perm": _seg_perm_str(seg.perm),
@@ -599,6 +603,50 @@ def _seg_perm_str(perm):
     return s if s else "none"
 
 
+def _query_read_data():
+    """读取指定地址处的全局数据。"""
+    addr_str = env_str("IDA_ADDR", "")
+    mode = env_str("IDA_READ_MODE", "auto")
+    size = env_int("IDA_READ_SIZE", 64)
+    do_deref = env_bool("IDA_DEREF")
+
+    log(f"[*] 正在读取数据: {addr_str}，模式: {mode}\n")
+
+    ea = resolve_addr(addr_str)
+    if ea == ida_idaapi.BADADDR:
+        return {"error": f"无法解析地址: {addr_str}"}
+
+    if mode == "string":
+        result = read_string_at(ea)
+        if result is None:
+            return {"error": f"地址 {hex_addr(ea)} 处无可读字符串"}
+        result["type"] = "string"
+        return result
+
+    if mode == "bytes":
+        result = read_bytes_at(ea, size)
+        result["type"] = "bytes"
+        return result
+
+    if mode == "pointer":
+        ptr_info = read_pointer(ea)
+        result = {"type": "pointer", "addr": ptr_info["addr"], "pointer_value": ptr_info["pointer_value"]}
+        if do_deref:
+            try:
+                ptr_val = int(ptr_info["pointer_value"], 16)
+            except ValueError:
+                ptr_val = 0
+            deref = read_data_auto(ptr_val)
+            result["dereferenced"] = deref
+        else:
+            result["dereferenced"] = None
+        return result
+
+    result = read_data_auto(ea, size_hint=size)
+    log(f"[+] 数据读取完成: 类型={result.get('type', 'unknown')}，地址={hex_addr(ea)}\n")
+    return result
+
+
 _QUERY_HANDLERS = {
     "entry_points": _query_entry_points,
     "functions": _query_functions,
@@ -611,6 +659,7 @@ _QUERY_HANDLERS = {
     "imports": _query_imports,
     "exports": _query_exports,
     "segments": _query_segments,
+    "read_data": _query_read_data,
 }
 
 

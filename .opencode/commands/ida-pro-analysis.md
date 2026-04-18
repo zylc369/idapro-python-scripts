@@ -269,19 +269,42 @@ IDA_OPERATION=batch IDA_BATCH_FILE="$TASK_DIR/ops.json" IDA_OUTPUT="$TASK_DIR/re
 
 ### query.py 查询类型
 
+**注意**：`decompile`、`disassemble`、`func_info` 会自动追踪 thunk 链到真实函数，结果中包含 `thunk_chain` 字段记录中间路径。
+
 | IDA_QUERY | 说明 | 额外参数 |
 |-----------|------|---------|
 | `entry_points` | 枚举入口点（智能识别 exe/dll/so） | 无 |
 | `functions` | 按模式匹配函数 | `IDA_PATTERN`（支持通配符，为空则返回全部） |
-| `decompile` | 反编译函数（C 伪代码） | `IDA_FUNC_ADDR`（函数名或十六进制地址） |
-| `disassemble` | 反汇编函数 | `IDA_FUNC_ADDR` |
-| `func_info` | 函数详细信息（调用者/被调用者/字符串/签名） | `IDA_FUNC_ADDR` |
+| `decompile` | 反编译函数（C 伪代码，自动追踪 thunk） | `IDA_FUNC_ADDR`（函数名或十六进制地址） |
+| `disassemble` | 反汇编函数（自动追踪 thunk） | `IDA_FUNC_ADDR` |
+| `func_info` | 函数详细信息（自动追踪 thunk） | `IDA_FUNC_ADDR` |
 | `xrefs_to` | 交叉引用（谁引用了它） | `IDA_ADDR` 或 `IDA_FUNC_ADDR` |
 | `xrefs_from` | 交叉引用（它引用了谁） | `IDA_FUNC_ADDR` |
 | `strings` | 搜索字符串及引用位置 | `IDA_PATTERN`（子串匹配） |
 | `imports` | 所有导入函数 | 无 |
 | `exports` | 所有导出函数 | 无 |
 | `segments` | 所有段信息 | 无 |
+| `read_data` | 读取全局数据（string/bytes/pointer/auto） | `IDA_ADDR` + `IDA_READ_MODE` + `IDA_READ_SIZE` + `IDA_DEREF` |
+
+### read_data 读取模式
+
+| `IDA_READ_MODE` | 说明 | 额外参数 |
+|-----------------|------|---------|
+| `auto`（默认） | 自动判断数据类型并读取 | `IDA_READ_SIZE`（字节数，默认 64） |
+| `string` | 读取 null-terminated 字符串 | 无 |
+| `bytes` | 读取原始字节 | `IDA_READ_SIZE`（字节数，默认 64） |
+| `pointer` | 读取指针值 | `IDA_DEREF=1` 解引用指针 |
+
+```bash
+# 示例：读取全局变量（自动模式）
+IDA_QUERY=read_data IDA_ADDR=Str2 IDA_OUTPUT="$TASK_DIR/result.json" \
+  "<IDA_PATH>/idat" -A -S"$SCRIPTS_DIR/query.py" -L"$TASK_DIR/idat.log" "<目标文件>"
+
+# 示例：指针模式 + 解引用
+IDA_QUERY=read_data IDA_ADDR=0x14013F008 IDA_READ_MODE=pointer IDA_DEREF=1 \
+  IDA_OUTPUT="$TASK_DIR/result.json" \
+  "<IDA_PATH>/idat" -A -S"$SCRIPTS_DIR/query.py" -L"$TASK_DIR/idat.log" "<目标文件>"
+```
 
 ### update.py 操作类型
 

@@ -30,6 +30,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _base import env_str, env_bool, log, run_headless
+from _utils import hex_addr, resolve_addr
 
 import ida_bytes
 import ida_funcs
@@ -42,27 +43,6 @@ try:
     _HAS_DECOMPILER = True
 except ImportError:
     _HAS_DECOMPILER = False
-
-
-def _resolve_addr(addr_str):
-    """将函数名或十六进制地址解析为地址。"""
-    if not addr_str:
-        return ida_idaapi.BADADDR
-    try:
-        ea = int(addr_str, 16)
-        if 0 <= ea < ida_idaapi.BADADDR:
-            return ea
-    except ValueError:
-        pass
-    ea = ida_name.get_name_ea(ida_idaapi.BADADDR, addr_str)
-    if ea == ida_idaapi.BADADDR:
-        log(f"[!] 无法解析地址: {addr_str}\n")
-    return ea
-
-
-def _hex(ea):
-    """将地址格式化为 0x 前缀十六进制字符串。"""
-    return f"0x{ea:X}"
 
 
 def _save_database():
@@ -91,8 +71,8 @@ def _op_rename(old_name, new_name, dry_run):
 
     ok = ida_name.set_name(ea, new_name, ida_name.SN_NOWARN)
     if ok:
-        log(f"[+] 重命名成功: {old_name} → {new_name} @ {_hex(ea)}\n")
-        return {"status": "success", "old_name": old_name, "new_name": new_name, "addr": _hex(ea)}
+        log(f"[+] 重命名成功: {old_name} → {new_name} @ {hex_addr(ea)}\n")
+        return {"status": "success", "old_name": old_name, "new_name": new_name, "addr": hex_addr(ea)}
     else:
         log(f"[!] 重命名失败: {old_name} → {new_name}（可能名称不合法或冲突）\n")
         return {"status": "error", "old_name": old_name, "new_name": new_name, "error": "set_name 返回 False"}
@@ -102,27 +82,27 @@ def _op_set_func_comment(func_addr_str, comment, dry_run):
     """设置函数注释。"""
     log(f"[*] 设置函数注释: {func_addr_str} ← \"{comment}\"\n")
 
-    ea = _resolve_addr(func_addr_str)
+    ea = resolve_addr(func_addr_str)
     if ea == ida_idaapi.BADADDR:
         return {"status": "error", "func_addr": func_addr_str, "error": f"无法解析地址: {func_addr_str}"}
 
     func = ida_funcs.get_func(ea)
     if func is None:
-        log(f"[!] 地址 {_hex(ea)} 不属于任何函数\n")
-        return {"status": "error", "func_addr": func_addr_str, "error": f"地址 {_hex(ea)} 不属于任何函数"}
+        log(f"[!] 地址 {hex_addr(ea)} 不属于任何函数\n")
+        return {"status": "error", "func_addr": func_addr_str, "error": f"地址 {hex_addr(ea)} 不属于任何函数"}
 
     if dry_run:
-        log(f"[*] [dry-run] 将设置函数注释 @ {_hex(func.start_ea)}: \"{comment}\"\n")
-        return {"status": "dry_run", "func_addr": _hex(func.start_ea), "comment": comment}
+        log(f"[*] [dry-run] 将设置函数注释 @ {hex_addr(func.start_ea)}: \"{comment}\"\n")
+        return {"status": "dry_run", "func_addr": hex_addr(func.start_ea), "comment": comment}
 
     results = []
 
     ok = ida_bytes.set_cmt(func.start_ea, comment, 0)
     if ok:
-        log(f"[+] 反汇编注释已设置 @ {_hex(func.start_ea)}\n")
-        results.append(f"反汇编注释 @ {_hex(func.start_ea)}")
+        log(f"[+] 反汇编注释已设置 @ {hex_addr(func.start_ea)}\n")
+        results.append(f"反汇编注释 @ {hex_addr(func.start_ea)}")
     else:
-        log(f"[!] 反汇编注释设置失败 @ {_hex(func.start_ea)}\n")
+        log(f"[!] 反汇编注释设置失败 @ {hex_addr(func.start_ea)}\n")
 
     if _HAS_DECOMPILER:
         try:
@@ -136,35 +116,35 @@ def _op_set_func_comment(func_addr_str, comment, dry_run):
                     tl.itp = ida_hexrays.ITP_BLOCK1
                     cfunc.set_user_cmt(tl, comment)
                     cfunc.save_user_cmts()
-                    log(f"[+] 反编译器注释已设置 @ {_hex(func.start_ea)}\n")
-                    results.append(f"反编译器注释 @ {_hex(func.start_ea)}")
+                    log(f"[+] 反编译器注释已设置 @ {hex_addr(func.start_ea)}\n")
+                    results.append(f"反编译器注释 @ {hex_addr(func.start_ea)}")
                 else:
                     log(f"[!] 反编译失败，跳过反编译器注释\n")
         except Exception as e:
             log(f"[!] 反编译器注释设置异常: {e}\n")
 
-    return {"status": "success", "func_addr": _hex(func.start_ea), "comment": comment, "details": results}
+    return {"status": "success", "func_addr": hex_addr(func.start_ea), "comment": comment, "details": results}
 
 
 def _op_set_line_comment(addr_str, comment, dry_run):
     """设置行内注释。"""
     log(f"[*] 设置行内注释: {addr_str} ← \"{comment}\"\n")
 
-    ea = _resolve_addr(addr_str)
+    ea = resolve_addr(addr_str)
     if ea == ida_idaapi.BADADDR:
         return {"status": "error", "addr": addr_str, "error": f"无法解析地址: {addr_str}"}
 
     if dry_run:
-        log(f"[*] [dry-run] 将设置行内注释 @ {_hex(ea)}: \"{comment}\"\n")
-        return {"status": "dry_run", "addr": _hex(ea), "comment": comment}
+        log(f"[*] [dry-run] 将设置行内注释 @ {hex_addr(ea)}: \"{comment}\"\n")
+        return {"status": "dry_run", "addr": hex_addr(ea), "comment": comment}
 
     ok = ida_bytes.set_cmt(ea, comment, 0)
     if ok:
-        log(f"[+] 行内注释已设置 @ {_hex(ea)}\n")
-        return {"status": "success", "addr": _hex(ea), "comment": comment}
+        log(f"[+] 行内注释已设置 @ {hex_addr(ea)}\n")
+        return {"status": "success", "addr": hex_addr(ea), "comment": comment}
     else:
-        log(f"[!] 行内注释设置失败 @ {_hex(ea)}\n")
-        return {"status": "error", "addr": _hex(ea), "error": "set_cmt 返回 False"}
+        log(f"[!] 行内注释设置失败 @ {hex_addr(ea)}\n")
+        return {"status": "error", "addr": hex_addr(ea), "error": "set_cmt 返回 False"}
 
 
 def _op_batch(batch_file, dry_run):
