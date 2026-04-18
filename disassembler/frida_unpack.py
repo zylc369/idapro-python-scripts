@@ -50,16 +50,29 @@ var g_lastWriteTime = 0;
 var g_dumped = false;
 var g_stableTimer = null;
 
-// PE 解析
+// PE 解析（支持 32-bit 和 64-bit）
 function parsePE(base) {
     var e_lfanew = Memory.readU32(base.add(0x3C));
     var coff = base.add(e_lfanew + 4);
     var numSections = Memory.readU16(coff.add(2));
     var optSize = Memory.readU16(coff.add(16));
     var opt = coff.add(20);
-    var entryRVA = Memory.readU32(opt.add(16));
-    var imageBase = Memory.readU32(opt.add(28));
-    var sizeOfImage = Memory.readU32(opt.add(56));
+
+    var peMagic = Memory.readU16(opt);
+    var is64 = (peMagic === 0x20B);
+
+    var entryRVA, imageBase, sizeOfImage, sizeOfHeaders;
+    if (is64) {
+        entryRVA = Memory.readU32(opt.add(16));
+        imageBase = Memory.readU64(opt.add(24)).toNumber();
+        sizeOfImage = Memory.readU32(opt.add(56));
+        sizeOfHeaders = Memory.readU32(opt.add(60));
+    } else {
+        entryRVA = Memory.readU32(opt.add(16));
+        imageBase = Memory.readU32(opt.add(28));
+        sizeOfImage = Memory.readU32(opt.add(56));
+        sizeOfHeaders = Memory.readU32(opt.add(60));
+    }
 
     var sections = [];
     var sectOff = opt.add(optSize);
@@ -85,7 +98,9 @@ function parsePE(base) {
         imageBase: imageBase,
         entryRVA: entryRVA,
         sizeOfImage: sizeOfImage,
+        sizeOfHeaders: sizeOfHeaders,
         numSections: numSections,
+        is64: is64,
         sections: sections
     };
 }
@@ -238,7 +253,8 @@ rpc.exports = {
 
         send({
             type: "pe_info",
-            msg: "[*] PE 信息: ImageBase=0x" + g_peInfo.imageBase.toString(16) +
+            msg: "[*] PE 信息: " + (g_peInfo.is64 ? "PE32+(64-bit)" : "PE32(32-bit)") +
+                 " ImageBase=0x" + g_peInfo.imageBase.toString(16) +
                  " EntryPoint=0x" + (g_peInfo.imageBase + g_peInfo.entryRVA).toString(16) +
                  " Sections=" + g_peInfo.numSections
         });

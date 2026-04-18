@@ -199,6 +199,18 @@ print(d)
 - **禁止**：`functions`/`func_info`/`strings`/`xrefs_*`/`update.py`（加壳版本上结果无意义）
 - **允许**：`decompile`/`disassemble`/`read_data`/`segments`（仅用于分析解壳 stub 和数据布局）
 
+**解壳后加载规则**（脱壳成功后必须遵守）：
+将解壳产物加载到 IDA：
+  "$IDAT" -A -S"$SCRIPTS_DIR/query.py" -L"$TASK_DIR/load.log" "$TASK_DIR/<脱壳产物文件名>"
+然后用 query.py 的全部分析能力（decompile/strings/xrefs 等）进行分析。
+禁止在解壳产物上用 capstone/手动反汇编代替 idat — idat 的反编译器更准确。
+
+**动态分析触发**（需要运行时验证/hook 时）：
+  读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/dynamic-analysis.md`
+
+**密码学算法触发**（检测到 MD5/RSA/RC4/Base64 等特征时）：
+  读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/crypto-validation-patterns.md`
+
 ### 预检查（每次 idat 调用前必须执行）
 
 ```bash
