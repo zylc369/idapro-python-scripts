@@ -469,7 +469,7 @@ run_headless(_main)
     "idat_calls": <idat 调用总次数>,
     "handwritten_scripts": <AI 手写 IDAPython 脚本次数>,
     "retries": <重试次数>,
-    "elapsed_seconds": <从命令开始到结束的总耗时（估算）>
+    "elapsed": "<耗时，如 5m30s、1h2m、45s>"
   }
 }
 ```
