@@ -142,7 +142,8 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 1. **先规划再执行** — 禁止无方案直接开始分析
 2. **场景驱动** — 根据 `scene.scene_tags` 决定加载哪些知识库
 3. **知识库按需加载** — 只读取场景标签对应的文档，不全部加载
-4. **向用户输出方案** — 简要说明分析计划和预期步骤
+4. **必须输出方案** — 使用 `analysis-planning.md` 定义的格式向用户输出完整方案（场景分类、计划步骤、预计耗时），禁止跳过
+5. **方案优先** — 未输出方案前禁止执行任何 idat 分析调用（仅 Python 预检查脚本和阶段 A 的 initial_analysis.py 除外）
 
 ### 阶段 C：执行与监控
 
@@ -195,9 +196,9 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 |-----------|------|---------|
 | `entry_points` | 枚举入口点 | 无 |
 | `functions` | 按模式匹配函数 | `IDA_PATTERN` |
-| `decompile` | 反编译函数 | `IDA_FUNC_ADDR` |
-| `disassemble` | 反汇编函数 | `IDA_FUNC_ADDR` |
-| `func_info` | 函数详情 | `IDA_FUNC_ADDR` |
+| `decompile` | 反编译函数 | `IDA_FUNC_ADDR` `IDA_FORCE_CREATE` |
+| `disassemble` | 反汇编函数 | `IDA_FUNC_ADDR` `IDA_FORCE_CREATE` |
+| `func_info` | 函数详情 | `IDA_FUNC_ADDR` `IDA_FORCE_CREATE` |
 | `xrefs_to` | 谁引用了它 | `IDA_ADDR` 或 `IDA_FUNC_ADDR` |
 | `xrefs_from` | 它引用了谁 | `IDA_FUNC_ADDR` |
 | `strings` | 搜索字符串 | `IDA_PATTERN` |

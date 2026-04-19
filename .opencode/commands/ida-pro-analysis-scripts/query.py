@@ -51,6 +51,7 @@ from _utils import (
     seg_perm_str,
 )
 
+import ida_auto
 import ida_bytes
 import ida_entry
 import ida_funcs
@@ -281,22 +282,37 @@ def _get_file_type():
 
 
 def _resolve_func_with_thunk(addr_str):
-    """解析函数地址并自动追踪 thunk 链。
+    """解析函数地址并自动追踪 thunk 链。支持 IDA_FORCE_CREATE 自动创建未识别函数。
 
     返回:
-        (func, thunk_chain)
+        (func, thunk_chain, force_created)
         func: 真实函数的 func_t 对象，None 表示失败
         thunk_chain: [{"name": str, "addr": str}] — 中间 thunk 列表
+        force_created: bool — 是否通过 force_create 创建了函数
     """
     ea = resolve_addr(addr_str)
     if ea == ida_idaapi.BADADDR:
-        return None, []
+        return None, [], False
 
     chain, real_ea = resolve_thunk(ea)
     func = ida_funcs.get_func(real_ea)
-    if func is None:
-        log(f"[!] 地址 {hex_addr(real_ea)} 不属于任何函数\n")
-    return func, chain
+    if func is None and real_ea != ida_idaapi.BADADDR:
+        if env_bool("IDA_FORCE_CREATE"):
+            log(f"[*] 地址 {hex_addr(real_ea)} 不在任何函数内，IDA_FORCE_CREATE=1，正在尝试创建函数...\n")
+            ok = ida_funcs.add_func(real_ea)
+            if ok:
+                ida_auto.auto_wait()
+                func = ida_funcs.get_func(real_ea)
+                if func:
+                    log(f"[+] 函数创建成功: {get_func_name_safe(func.start_ea)} "
+                        f"({hex_addr(func.start_ea)} - {hex_addr(func.end_ea)}, {func.size()} 字节)\n")
+                    return func, chain, True
+                log(f"[!] 函数创建失败: {hex_addr(real_ea)}，get_func 仍返回 None\n")
+            else:
+                log(f"[!] 函数创建失败: {hex_addr(real_ea)}，该地址处可能不是有效的函数入口\n")
+        else:
+            log(f"[!] 地址 {hex_addr(real_ea)} 不属于任何函数。设置 IDA_FORCE_CREATE=1 可自动创建\n")
+    return func, chain, False
 
 
 def _query_entry_points():
@@ -418,7 +434,7 @@ def _query_decompile():
     addr_str = env_str("IDA_FUNC_ADDR", "")
     log(f"[*] 正在反编译函数: {addr_str}\n")
 
-    func, thunk_chain = _resolve_func_with_thunk(addr_str)
+    func, thunk_chain, force_created = _resolve_func_with_thunk(addr_str)
     if func is None:
         return {"error": f"无法解析函数: {addr_str}"}
 
@@ -454,6 +470,8 @@ def _query_decompile():
     }
     if thunk_chain:
         result["thunk_chain"] = thunk_chain
+    if force_created:
+        result["force_created"] = True
     return result
 
 
@@ -479,7 +497,7 @@ def _query_disassemble():
     addr_str = env_str("IDA_FUNC_ADDR", "")
     log(f"[*] 正在反汇编函数: {addr_str}\n")
 
-    func, thunk_chain = _resolve_func_with_thunk(addr_str)
+    func, thunk_chain, force_created = _resolve_func_with_thunk(addr_str)
     if func is None:
         return {"error": f"无法解析函数: {addr_str}"}
 
@@ -495,6 +513,8 @@ def _query_disassemble():
     }
     if thunk_chain:
         result["thunk_chain"] = thunk_chain
+    if force_created:
+        result["force_created"] = True
     return result
 
 
@@ -503,7 +523,7 @@ def _query_func_info():
     addr_str = env_str("IDA_FUNC_ADDR", "")
     log(f"[*] 正在查询函数信息: {addr_str}\n")
 
-    func, thunk_chain = _resolve_func_with_thunk(addr_str)
+    func, thunk_chain, force_created = _resolve_func_with_thunk(addr_str)
     if func is None:
         return {"error": f"无法解析函数: {addr_str}"}
 
@@ -585,6 +605,8 @@ def _query_func_info():
     }
     if thunk_chain:
         result["thunk_chain"] = thunk_chain
+    if force_created:
+        result["force_created"] = True
     return result
 
 

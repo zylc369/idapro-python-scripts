@@ -85,6 +85,27 @@ IDA_FUNC_ADDR=<地址> IDA_OUTPUT="$TASK_DIR/result.json" \
   "$IDAT" -A -S"$SCRIPTS_DIR/scripts/<脚本名>.py" -L"$TASK_DIR/idat.log" "<目标文件>"
 ```
 
+## debug_dump 调用模板
+
+```bash
+# IDA 调试器 dump（运行到 OEP，dump 内存重建 PE）
+IDA_OEP_ADDR=0x401000 IDA_PE_OUTPUT="$TASK_DIR/unpacked.exe" IDA_OUTPUT="$TASK_DIR/result.json" \
+  "$IDAT" -A -S"$SCRIPTS_DIR/scripts/debug_dump.py" -L"$TASK_DIR/debug.log" "<目标文件>"
+
+# 不设 IDA_PE_OUTPUT 时自动从 IDA_OUTPUT 推导（去 .json 加 .pe）
+IDA_OEP_ADDR=0x401000 IDA_OUTPUT="$TASK_DIR/result.json" \
+  "$IDAT" -A -S"$SCRIPTS_DIR/scripts/debug_dump.py" -L"$TASK_DIR/debug.log" "<目标文件>"
+# 上面的命令会输出 PE 到 $TASK_DIR/result.pe
+```
+
+## force_create 反编译
+
+```bash
+# 反编译未识别函数（脱壳后常见：IDA 未自动识别函数）
+IDA_QUERY=decompile IDA_FUNC_ADDR=0x4047CB IDA_FORCE_CREATE=1 IDA_OUTPUT="$TASK_DIR/result.json" \
+  "$IDAT" -A -S"$SCRIPTS_DIR/query.py" -L"$TASK_DIR/idat.log" "<目标文件>"
+```
+
 ## Batch JSON 格式
 
 ```json

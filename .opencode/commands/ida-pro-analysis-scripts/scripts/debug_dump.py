@@ -6,12 +6,13 @@ description:
   适用于任何壳（UPX/ASPack/自定义壳），只要壳不检测调试器。
 
   使用方式（idat headless）：
-    IDA_OEP_ADDR=0x401000 IDA_OUTPUT=/tmp/unpacked.exe \
+    IDA_OEP_ADDR=0x401000 IDA_PE_OUTPUT=/tmp/unpacked.exe IDA_OUTPUT=/tmp/result.json \
       idat -A -S"scripts/debug_dump.py" -L/tmp/debug.log target.i64
 
   环境变量：
     IDA_OEP_ADDR: OEP 地址（十六进制，必填）
-    IDA_OUTPUT: 输出文件路径（必填）
+    IDA_PE_OUTPUT: PE dump 输出文件路径（可选，缺省从 IDA_OUTPUT 推导）
+    IDA_OUTPUT: JSON 结果输出路径（必填，由 run_headless 使用）
 
 level: intermediate
 """
@@ -21,7 +22,7 @@ import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from _base import env_int, env_str, log, run_headless
+from _base import env_str, log, run_headless
 
 import ida_bytes
 import ida_dbg
@@ -55,17 +56,128 @@ def _parse_oep_addr(oep_str):
             return ida_idaapi.BADADDR
 
 
-def _dump_segments(oep_addr):
-    log("[*] 开始 dump 内存段...\n")
+def _check_mz(addr):
+    magic = ida_bytes.get_bytes(addr, 2)
+    return magic is not None and magic == b"MZ"
+
+
+def _detect_image_base():
+    """在 refresh_debugger_memory() 之后调用，自动检测 image base。
+
+    检测顺序:
+      1. ida_ida.inf_get_baseaddr() — 非零直接返回
+      2. 标准加载地址检查（32-bit: 0x400000, 64-bit: 0x140000000）— 检查 MZ 签名
+      3. IDA 段数据库降级 — seg = get_first_seg(); if seg: return seg.start_ea
+
+    返回:
+      int — image base 地址，BADADDR 表示检测失败
+    """
+    base = ida_ida.inf_get_baseaddr()
+    if base != 0:
+        log(f"[+] IDA 返回 image base: 0x{base:X}\n")
+        return base
+
+    log("[*] IDA 返回 image base 为 0，尝试自动检测...\n")
+
+    if ida_ida.inf_is_64bit():
+        candidates = [0x140000000, 0x400000]
+    else:
+        candidates = [0x400000, 0x1000000]
+
+    for addr in candidates:
+        if _check_mz(addr):
+            log(f"[+] 在标准地址检测到 MZ 签名: 0x{addr:X}\n")
+            return addr
+
     seg = ida_segment.get_first_seg()
+    if seg is not None:
+        log(f"[+] 降级检测: 使用 IDA 段起始地址 0x{seg.start_ea:X}\n")
+        return seg.start_ea
+
+    log("[!] 无法检测 image base\n")
+    return ida_idaapi.BADADDR
+
+
+def _dump_segments_from_pe(image_base):
+    """从 PE section table 直接读取段数据。
+
+    不依赖 IDA 段数据库。内部自行解析 DOS header → COFF header → section table。
+
+    参数:
+        image_base: image base 地址（必须有效，MZ 签名可读）
+
+    返回:
+        [(start_ea, bytes)] — 段数据列表，空列表表示失败
+    """
+    log(f"[*] 从 PE header 读取段数据，image_base=0x{image_base:X}\n")
+
+    dos_header = ida_bytes.get_bytes(image_base, 64)
+    if dos_header is None or len(dos_header) < 64 or dos_header[0:2] != b"MZ":
+        log("[!] PE header 读取失败: 无效 DOS header\n")
+        return []
+
+    e_lfanew = struct.unpack_from("<I", dos_header, 0x3C)[0]
+    nt_sig = ida_bytes.get_bytes(image_base + e_lfanew, 4)
+    if nt_sig is None or nt_sig != b"PE\x00\x00":
+        log("[!] PE header 读取失败: 无效 PE 签名\n")
+        return []
+
+    file_header_offset = e_lfanew + 4
+    file_header = ida_bytes.get_bytes(image_base + file_header_offset, 20)
+    if file_header is None or len(file_header) < 20:
+        log("[!] PE header 读取失败: 无法读取 COFF header\n")
+        return []
+
+    num_sections = struct.unpack_from("<H", file_header, 2)[0]
+    opt_header_size = struct.unpack_from("<H", file_header, 16)[0]
+
+    section_table_rva = file_header_offset + 20 + opt_header_size
+    section_table_data = ida_bytes.get_bytes(image_base + section_table_rva, num_sections * 40)
+    if section_table_data is None or len(section_table_data) < num_sections * 40:
+        log("[!] PE header 读取失败: 无法读取段表\n")
+        return []
+
     seg_data = []
-    while seg.start_ea != ida_idaapi.BADADDR:
+    for i in range(num_sections):
+        sec_offset = i * 40
+        vsize = struct.unpack_from("<I", section_table_data, sec_offset + 8)[0]
+        va = struct.unpack_from("<I", section_table_data, sec_offset + 12)[0]
+
+        if vsize == 0:
+            continue
+
+        seg_start = image_base + va
+        log(f"[*] 正在 dump PE 段 {i}: 0x{seg_start:X} ({vsize} 字节)\n")
+        data = ida_bytes.get_bytes(seg_start, vsize)
+        if data is None:
+            log(f"[!] 读取 PE 段 {i} 失败: 0x{seg_start:X}\n")
+            continue
+        seg_data.append((seg_start, data))
+
+    log(f"[+] 从 PE header 读取完成，共 {len(seg_data)} 个段\n")
+    return seg_data
+
+
+def _dump_segments_ida():
+    """降级: 使用 IDA 段数据库遍历读取段数据（含 None 检查）。
+
+    返回:
+        [(start_ea, bytes)] — 段数据列表，空列表表示失败
+    """
+    log("[*] 降级: 使用 IDA 段数据库遍历段\n")
+    seg = ida_segment.get_first_seg()
+    if seg is None:
+        log("[!] IDA 段数据库为空（调试器模式下常见）\n")
+        return []
+
+    seg_data = []
+    while seg is not None and seg.start_ea != ida_idaapi.BADADDR:
         size = seg.end_ea - seg.start_ea
         if size <= 0:
             log(f"[!] 跳过无效段: 0x{seg.start_ea:X} (大小={size})\n")
             seg = ida_segment.get_next_seg(seg.end_ea)
             continue
-        log(f"[*] 正在 dump 段: 0x{seg.start_ea:X} - 0x{seg.end_ea:X} ({size} 字节)\n")
+        log(f"[*] 正在 dump IDA 段: 0x{seg.start_ea:X} - 0x{seg.end_ea:X} ({size} 字节)\n")
         data = ida_bytes.get_bytes(seg.start_ea, size)
         if data is None:
             log(f"[!] 读取段失败: 0x{seg.start_ea:X}\n")
@@ -73,8 +185,28 @@ def _dump_segments(oep_addr):
             continue
         seg_data.append((seg.start_ea, data))
         seg = ida_segment.get_next_seg(seg.end_ea)
-    log(f"[+] dump 完成，共 {len(seg_data)} 个段\n")
+    log(f"[+] IDA 段遍历完成，共 {len(seg_data)} 个段\n")
     return seg_data
+
+
+def _resolve_pe_output():
+    """确定 PE 输出文件路径。
+
+    从 IDA_PE_OUTPUT 环境变量读取，未设置时从 IDA_OUTPUT 推导。
+    IDA_OUTPUT 和 IDA_PE_OUTPUT 均为空时返回空字符串。
+
+    返回:
+        str — PE 输出路径，空字符串表示失败
+    """
+    pe_output = env_str("IDA_PE_OUTPUT", "")
+    if pe_output:
+        return pe_output
+    json_output = env_str("IDA_OUTPUT", "")
+    if not json_output:
+        return ""
+    if json_output.endswith(".json"):
+        return json_output[:-5] + ".pe"
+    return json_output + ".pe"
 
 
 def _rebuild_pe(seg_data, image_base, oep_addr, output_path):
@@ -178,11 +310,10 @@ def _rebuild_pe(seg_data, image_base, oep_addr, output_path):
 
 
 class DumpHook(ida_dbg.DBG_Hooks):
-    def __init__(self, oep_addr, output_path, image_base):
+    def __init__(self, oep_addr, pe_output_path):
         ida_dbg.DBG_Hooks.__init__(self)
         self.oep_addr = oep_addr
-        self.output_path = output_path
-        self.image_base = image_base
+        self.pe_output_path = pe_output_path
         self.result = {"success": False, "error": None, "data": None}
 
     def dbg_run_to(self, pid, tid=0, ea=0):
@@ -192,23 +323,35 @@ class DumpHook(ida_dbg.DBG_Hooks):
         log(f"[*] 断点命中: PC=0x{pc:X}，目标 OEP=0x{self.oep_addr:X}\n")
 
         if pc != self.oep_addr:
-            log(f"[!] PC 不等于 OEP，继续运行\n")
+            log("[!] PC 不等于 OEP，继续运行\n")
             ida_dbg.request_continue_process()
             ida_dbg.run_requests()
             return
 
-        seg_data = _dump_segments(self.oep_addr)
+        image_base = _detect_image_base()
+        if image_base == ida_idaapi.BADADDR:
+            self.result["error"] = "无法检测 image base"
+            ida_dbg.request_exit_process()
+            ida_dbg.run_requests()
+            return
+
+        log(f"[+] Image Base: 0x{image_base:X}\n")
+
+        seg_data = _dump_segments_from_pe(image_base)
+        if not seg_data:
+            seg_data = _dump_segments_ida()
         if not seg_data:
             self.result["error"] = "dump 内存段失败"
             ida_dbg.request_exit_process()
             ida_dbg.run_requests()
             return
 
-        success = _rebuild_pe(seg_data, self.image_base, self.oep_addr, self.output_path)
+        success = _rebuild_pe(seg_data, image_base, self.oep_addr, self.pe_output_path)
         self.result["success"] = success
         self.result["data"] = {
-            "output_path": self.output_path,
+            "pe_output_path": self.pe_output_path,
             "oep_addr": hex(self.oep_addr),
+            "image_base": hex(image_base),
             "segments_dumped": len(seg_data),
         }
         if not success:
@@ -224,24 +367,23 @@ class DumpHook(ida_dbg.DBG_Hooks):
 
 def _main():
     oep_str = env_str("IDA_OEP_ADDR", "")
-    output_path = env_str("IDA_OUTPUT", "")
+    pe_output_path = _resolve_pe_output()
 
     if not oep_str:
         return {"success": False, "error": "未设置 IDA_OEP_ADDR 环境变量", "data": None}
-    if not output_path:
-        return {"success": False, "error": "未设置 IDA_OUTPUT 环境变量", "data": None}
+    if not pe_output_path:
+        return {"success": False, "error": "IDA_OUTPUT 和 IDA_PE_OUTPUT 均未设置", "data": None}
 
     oep_addr = _parse_oep_addr(oep_str)
     if oep_addr == ida_idaapi.BADADDR:
         return {"success": False, "error": f"无效的 OEP 地址: {oep_str}", "data": None}
 
-    image_base = ida_ida.inf_get_baseaddr()
-    log(f"[*] OEP: 0x{oep_addr:X}，Image Base: 0x{image_base:X}\n")
-    log(f"[*] 输出路径: {output_path}\n")
+    log(f"[*] OEP: 0x{oep_addr:X}\n")
+    log(f"[*] PE 输出路径: {pe_output_path}\n")
 
     _load_debugger()
 
-    hook = DumpHook(oep_addr, output_path, image_base)
+    hook = DumpHook(oep_addr, pe_output_path)
     hook.hook()
 
     log(f"[*] 启动调试器，运行到 OEP: 0x{oep_addr:X}\n")
