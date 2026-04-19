@@ -84,8 +84,14 @@
 
 定位 OEP 后，使用动态方法 dump 解壳后的内存：
 
-1. **优先使用 frida_unpack.py**（阶段 3.5 已有，仅支持 PE 格式）
-2. 如果 Frida 不可用（未安装 / 目标非 PE 格式如 ELF/Mach-O / 反调试 / 无法运行），回退到阶段 3（静态分析）
+1. **首选 IDA 调试器 dump**：使用 `scripts/debug_dump.py`
+   ```bash
+   IDA_OEP_ADDR=<OEP地址> IDA_OUTPUT="$TASK_DIR/<文件名>_unpacked" \
+     "$IDAT" -A -S"$SCRIPTS_DIR/scripts/debug_dump.py" \
+     -L"$TASK_DIR/debug_dump.log" "<目标文件>.i64"
+   ```
+2. **IDA 调试器失败**（反调试 / 无法启动 / 超时）→ 尝试 Frida（`disassembler/frida_unpack.py`）
+3. **Frida 也失败**（未安装 / 非 PE 格式 / 反 Frida）→ 回退到阶段 3（静态分析）
 
 ## 阶段 3：静态分析脱壳（后备方案：动态方法失败时）
 
@@ -174,9 +180,13 @@ if __name__ == "__main__":
   │     ├── 成功 → 脱壳后后续流程
   │     └── 失败 → 阶段 2.5
   ├── 未知壳 → 阶段 2.5：关键点绕过
-  │     ├── 找到 OEP → 动态 dump（阶段 3.5）
-  │     │     ├── 成功 → 脱壳后后续流程
-  │     │     └── 失败（反调试/无法运行）→ 阶段 3
+  │     ├── 找到 OEP → 动态 dump
+  │     │     ├── 阶段 3.5a: IDA 调试器 dump（首选）
+  │     │     │     ├── 成功 → 脱壳后后续流程
+  │     │     │     └── 失败（反调试/无法启动）→ 阶段 3.5b
+  │     │     ├── 阶段 3.5b: Frida dump（后备）
+  │     │     │     ├── 成功 → 脱壳后后续流程
+  │     │     │     └── 失败 → 阶段 3
   │     └── 找不到 OEP → 阶段 3：静态分析脱壳
   └── 阶段 3 失败 2 次 → 告知用户限制
 ```
@@ -187,32 +197,38 @@ if __name__ == "__main__":
 3. 禁止在阶段 3 上花费超过 30 分钟（即使重试次数未达上限）
 4. 禁止在同一个失败方向上重试超过 2 次
 
-## 阶段 3.5：动态脱壳（Frida 进程 dump）
+## 阶段 3.5a：IDA 调试器 dump（首选）
 
-当静态脱壳失败时，使用 Frida 启动目标进程，等待代码解壳后 dump 内存。
+使用 IDA 内置调试器运行到 OEP 并 dump 内存。详见 `dynamic-analysis.md` 中"脱壳场景：debug_dump.py"。
 
-### 使用 frida_unpack.py
+**优势**：零额外依赖；dump 后数据在 IDA 内；不被反 Frida 检测
 
-项目内置通用 Frida PE 脱壳脚本：`disassembler/frida_unpack.py`
+**使用 debug_dump.py**：
+```bash
+IDA_OEP_ADDR=<OEP地址> IDA_OUTPUT="$TASK_DIR/<文件名>_unpacked" \
+  "$IDAT" -A -S"$SCRIPTS_DIR/scripts/debug_dump.py" \
+  -L"$TASK_DIR/debug_dump.log" "<目标文件>.i64"
+```
 
+**验证输出**：
+- 输出文件存在且非空
+- `file` 命令显示合法可执行文件格式
+
+**注意**：输出的 PE 不含 IAT 重建，仅用于 IDA 加载分析。
+
+## 阶段 3.5b：Frida 进程 dump（后备）
+
+IDA 调试器失败时使用 Frida。详见 `dynamic-analysis-frida.md`。
+
+项目内置 Frida PE 脱壳脚本：`disassembler/frida_unpack.py`
 ```bash
 python disassembler/frida_unpack.py <目标二进制> -o "$TASK_DIR/<文件名>_unpacked" -w 30
 ```
 
-脚本会自动：spawn 进程 → resume → 监控代码段写入 → 检测写入稳定后 dump → 重建 PE 文件。
-
 ### 前置条件
 
-- 需要 frida：`pip install frida frida-tools`
-- 如果 frida 未安装，脚本会提示安装命令并退出。此时回退到静态脱壳并告知用户限制
-- 支持 32-bit 和 64-bit PE（自动检测 PE32/PE32+ 格式）
-- 当前仅支持 EXE（DLL 需宿主进程，不在自动处理范围内）
-
-### 验证输出
-
-- `file "$TASK_DIR/<文件名>_unpacked"` 检查是否为合法可执行文件
-- 输出文件应比原始文件不同（通常更大或段内容变化）
-- 如果输出 `.bin` 文件（PE 重建不完整），可以尝试直接用 idat 加载 `.bin` 文件
+- IDA 调试器：无额外依赖（IDA 自带）
+- Frida：`pip install frida frida-tools`（仅在使用 3.5b 时需要）
 
 ## 常见解壳模式参考
 

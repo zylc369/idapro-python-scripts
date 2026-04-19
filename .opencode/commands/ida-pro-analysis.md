@@ -214,8 +214,11 @@ print(d)
 然后用 query.py 的全部分析能力（decompile/strings/xrefs 等）进行分析。
 禁止在解壳产物上用 capstone/手动反汇编代替 idat — idat 的反编译器更准确。
 
-**动态分析触发**（需要运行时验证/hook 时）：
-  读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/dynamic-analysis.md`
+**动态分析触发**（需要运行时验证/调试时）：
+  读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/dynamic-analysis.md`（含 IDA 调试器首选 + Frida 后备）
+
+**IDA 调试器脱壳触发**（定位到 OEP 后需要 dump 内存时）：
+  使用沉淀脚本 `scripts/debug_dump.py`（通过 `IDA_OEP_ADDR` + `IDA_OUTPUT` 环境变量调用）
 
 **密码学算法触发**（检测到 MD5/RSA/RC4/Base64 等特征时）：
   读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/crypto-validation-patterns.md`

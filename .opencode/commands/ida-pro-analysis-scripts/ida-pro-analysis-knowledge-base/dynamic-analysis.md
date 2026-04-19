@@ -1,170 +1,200 @@
-# 动态分析策略（Frida）
+# 动态分析策略
 
-> 本文档由 `ida-pro-analysis-evolve` 生成。AI 编排器在需要动态分析时通过 Read 工具按需加载。
+> AI 编排器在需要动态分析时通过 Read 工具按需加载。
 
 ## 触发条件
 
-以下场景需要动态分析（Frida），而非纯静态分析：
-
-1. **算法验证**：静态分析推导出算法后，需要用实际输入/输出对比验证
-2. **动态脱壳**：静态脱壳失败，需要 dump 解壳后的内存（详见 `packer-handling.md` 阶段 3.5）
+1. **动态脱壳**：阶段 2.5 定位到 OEP 后，需要 dump 解壳后的内存
+2. **算法验证**：静态分析推导出算法后，需要用实际输入/输出对比验证
 3. **运行时数据追踪**：需要追踪特定函数的参数、返回值、内存状态
-4. **GUI 程序自动化**：需要向 GUI 控件输入数据并读取结果
+4. **GUI 程序交互**：需要向 GUI 控件输入数据并读取结果
+
+## 方案选择
+
+| 方案 | 优先级 | 适用场景 | 前置条件 |
+|------|--------|---------|---------|
+| IDA 内置调试器 | **首选** | 本地可执行文件、脱壳、断点追踪、算法验证 | 无（IDA 自带） |
+| Frida | 后备 | IDA 调试器失败（强反调试）、需要注入远程进程 | pip install frida |
+
+**优先使用 IDA 内置调试器**。仅当 IDA 调试器不可用或失败时，才切换到 Frida：
+- 读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/dynamic-analysis-frida.md`
 
 ---
 
-## Frida 版本适配（Frida 16 → 17）
+## IDA 内置调试器
 
-Frida 17 对 API 做了破坏性变更。下表列出关键差异：
+### 核心优势
 
-| 操作 | Frida 16 | Frida 17 |
-|------|----------|----------|
-| 读 1 字节 | `Memory.readU8(ptr(0xaddr))` | `ptr(0xaddr).readU8()` |
-| 读 N 字节 | `Memory.readByteArray(ptr, n)` | `ptr.readByteArray(n)` |
-| 写字符串 | `Memory.writeUtf8String(ptr, s)` | `ptr.writeUtf8String(s)` |
-| 分配字符串 | `Memory.allocUtf8String(s)` | 不变 |
-| 获取导出函数 | `Module.getExportByName("dll", "func")` | `Process.getModuleByName("dll").getExportByName("func")` |
-| NativeFunction | `new NativeFunction(addr, ret, args)` | 不变 |
+- 零额外依赖（IDA 自带调试器模块）
+- dump 后数据直接在 IDA 内，无需重新加载
+- 使用标准 OS 调试 API（Windows: Win32 Debug API, Linux: ptrace），不被反 Frida 检测
+- 可在 idat headless 模式下运行（`idat -A -S<script>`）
 
-**适配策略**：检测 `Frida.version` 字符串，或直接使用 Frida 17 风格（2024+ 的主流版本）。
+### 事件驱动调试模型（强制）
 
----
-
-## 加壳程序动态分析模式
-
-### 核心流程
-
-```
-spawn(挂起) → attach → create_script → resume → 轮询解壳 → dump/hook
-```
-
-### 关键发现
-
-**spawn 后代码仍是加密的！** 必须 resume 后等待解壳完成。
-
-### 检测解壳完成
-
-轮询入口点地址的字节，直到变为合法指令：
-
-```javascript
-// 检测 0x401610（举例）是否已解壳
-// 0x55 = push ebp，x86 函数常见首字节
-var b = ptr(0x401610).readU8();
-if (b === 0x55) {
-    // 解壳完成
-}
-```
-
-或使用 `disassembler/frida_unpack.py` 的内置监控机制（自动检测代码段写入并等待稳定）。
-
----
-
-## GUI 程序处理模式（仅 Windows）
-
-> 以下 Win32 API 自动化模式仅适用于 Windows 平台。Linux/macOS 需使用 X11/Wayland 自动化（不在本文档范围内）。
-
-### 设置编辑框内容
-
-**禁止**直接写内存缓冲区（如 `ptr(0x417180).writeUtf8String(name)`）——因为 GUI 程序通过 `GetDlgItemTextA` 从控件读取，不是从固定地址读取。
-
-**正确做法**：用 `SetDlgItemTextA` 写入控件：
-
-```javascript
-var user32 = Process.getModuleByName("user32.dll");
-var SetDlgItemTextA = new NativeFunction(
-    user32.getExportByName("SetDlgItemTextA"),
-    "int", ["pointer", "int", "pointer"]
-);
-var textPtr = Memory.allocUtf8String("my_input");
-SetDlgItemTextA(hwnd, controlId, textPtr);
-```
-
-### 触发按钮点击
-
-**禁止** `SendMessageA(btn, BM_CLICK, 0, 0)` ——同步调用，如果按钮处理函数弹出 MessageBox，会阻塞 JS 线程。
-
-**正确做法**：用 `PostMessageA` 发送 `WM_COMMAND`：
-
-```javascript
-var PostMessageA = new NativeFunction(
-    user32.getExportByName("PostMessageA"),
-    "int", ["pointer", "uint", "pointer", "pointer"]
-);
-var WM_COMMAND = 0x0111;
-var btnId = 0x3EB;  // 按钮控件 ID
-var btn = GetDlgItem(hwnd, btnId);
-PostMessageA(hwnd, WM_COMMAND, ptr(btnId), btn);
-```
-
-### 读取结果
-
-按钮点击后，程序可能弹出 MessageBox 显示结果。用 `EnumWindows` 遍历所有窗口，找到 `#32770`（Dialog）类的窗口，读取标题：
-
-```javascript
-var EnumWindows = new NativeFunction(
-    user32.getExportByName("EnumWindows"),
-    "int", ["pointer", "pointer"]
-);
-var GetWindowTextA = new NativeFunction(
-    user32.getExportByName("GetWindowTextA"),
-    "int", ["pointer", "pointer", "int"]
-);
-var GetClassNameA = new NativeFunction(
-    user32.getExportByName("GetClassNameA"),
-    "int", ["pointer", "pointer", "int"]
-);
-```
-
----
-
-## NativeFunction 调用限制
-
-### 加壳/SEH 程序中的崩溃风险
-
-在加壳或使用 SEH（结构化异常处理）的程序中，`NativeFunction` 直接调用函数可能崩溃：
-- 原因：Frida JIT 机制与程序自身的 SEH handler 冲突
-- 症状：`script has been destroyed` 或进程崩溃
-
-### 替代方案
-
-1. **Hook + 输入模拟**：用 `Interceptor.attach` hook 目标函数，通过 GUI 自动化触发（而非直接调用）
-2. **纯 Python 本地验证**：在 Python 中重新实现算法（MD5/RC4/RSA 等），不依赖进程内调用
-3. **Unicorn 模拟**：在 Unicorn CPU 模拟器中执行（适合简单函数，不适合复杂壳）
-
----
-
-## 进程清理模板
-
-每次 Frida 脚本执行必须有严格超时和清理：
+IDA 调试器使用**事件驱动模型**，而非轮询。核心模式：
 
 ```python
-import frida, time, os
+import ida_dbg
+import ida_ida
+import ida_segment
+import ida_bytes
 
-pid = frida.spawn(target)
-session = frida.attach(pid)
-script = session.create_script(js_code)
-script.load()
-frida.resume(pid)
+class MyHook(ida_dbg.DBG_Hooks):
+    def dbg_run_to(self, pid, tid=0, ea=0):
+        ida_dbg.refresh_debugger_memory()
+        pc = ida_dbg.get_reg_val("EIP")  # 或 "RIP"（64-bit）
+        # ... 处理断点命中 ...
+        ida_dbg.request_exit_process()
+        ida_dbg.run_requests()
 
-try:
-    # 等待结果，带超时
-    time.sleep(max_wait)
-except Exception:
-    pass
-finally:
-    # 无论成功失败都清理
-    try:
-        session.detach()
-    except Exception:
-        pass
-    # GUI 程序弹出模态对话框时进程不会自行退出，必须 kill
-    if os.name == "nt":
-        os.system(f"taskkill /PID {pid} /F >nul 2>&1")
-    else:
-        os.system(f"kill -9 {pid} 2>/dev/null")
+    def dbg_process_exit(self, pid, tid, ea, code):
+        # 进程退出回调
+        return 0
+
+def _load_debugger():
+    if ida_ida.inf_get_filetype() == ida_ida.f_PE:
+        ida_dbg.load_debugger("win32", 0)
+    elif ida_ida.inf_get_filetype() == ida_ida.f_ELF:
+        ida_dbg.load_debugger("linux", 0)
+    elif ida_ida.inf_get_filetype() == ida_ida.f_MACHO:
+        ida_dbg.load_debugger("mac", 0)
+
+_load_debugger()
+hook = MyHook()
+hook.hook()
+ida_dbg.run_to(target_addr)
+
+while ida_dbg.get_process_state() != 0:
+    ida_dbg.wait_for_next_event(1, 0)
+
+hook.unhook()
 ```
 
-**关键原则**：
-- 超时后必须 kill 进程（GUI 程序不会自行退出）
-- `session.detach()` 必须在 finally 中
-- 跨平台 kill 命令：Windows `taskkill`，Unix `kill -9`
+**关键点**：
+- **必须调用 `ida_dbg.load_debugger()`**：根据文件类型加载对应调试器插件（win32/linux/mac）
+- **使用 `DBG_Hooks` 回调**：不在外部轮询，在回调中处理事件
+- **使用 `ida_dbg.run_to(addr)`**：运行到指定地址（设置临时断点并启动）
+- **headless 事件循环**：`ida_dbg.wait_for_next_event(1, 0)` 驱动事件，直到 `get_process_state() == 0`
+- **在回调中用 `request_*` + `run_requests()`**：如 `request_exit_process()` + `run_requests()`
+
+### 核心 IDAPython 调试 API
+
+| API | 用途 |
+|-----|------|
+| `ida_dbg.load_debugger(plugin, opts)` | 加载调试器插件（"win32"/"linux"/"mac"） |
+| `ida_dbg.run_to(ea)` | 运行到指定地址（启动进程 + 临时断点） |
+| `ida_dbg.add_bpt(ea)` | 添加断点 |
+| `ida_dbg.del_bpt(ea)` | 删除断点 |
+| `ida_dbg.get_reg_val(name)` | 读寄存器（EIP/RIP/EAX/RAX 等） |
+| `ida_dbg.set_reg_val(name, val)` | 写寄存器 |
+| `ida_dbg.is_debugger_on()` | 调试器是否激活 |
+| `ida_dbg.get_process_state()` | 进程状态（0 = 未运行） |
+| `ida_dbg.refresh_debugger_memory()` | 刷新内存视图（断点命中后必须调用） |
+| `ida_dbg.wait_for_next_event(wf, timeout)` | headless 事件循环驱动 |
+| `ida_dbg.DBG_Hooks` | 事件回调基类 |
+| `ida_dbg.request_continue_process()` | 请求继续运行（需配 `run_requests()`） |
+| `ida_dbg.request_step_into()` | 请求单步进入（需配 `run_requests()`） |
+| `ida_dbg.request_step_over()` | 请求单步跳过（需配 `run_requests()`） |
+| `ida_dbg.request_exit_process()` | 请求终止进程（需配 `run_requests()`） |
+| `ida_dbg.run_requests()` | 执行已排队的请求 |
+
+配合 `ida_bytes.get_bytes(ea, size)` 在断点命中时读取任意内存。
+
+### 脱壳场景：debug_dump.py
+
+项目内置 IDA 调试器脱壳脚本：`$SCRIPTS_DIR/scripts/debug_dump.py`
+
+**使用方式**：
+```bash
+IDA_OEP_ADDR=0x401000 IDA_OUTPUT="$TASK_DIR/unpacked.exe" \
+  "$IDAT" -A -S"$SCRIPTS_DIR/scripts/debug_dump.py" \
+  -L"$TASK_DIR/debug_dump.log" "<目标文件>.i64"
+```
+
+**脚本功能**：
+1. 根据文件类型自动加载调试器插件（`ida_dbg.load_debugger()`）
+2. 读取 `IDA_OEP_ADDR` 环境变量获取 OEP 地址
+3. 注册 `DBG_Hooks` 回调，在 `dbg_run_to` 中处理断点命中
+4. `run_to(OEP)` 启动调试并运行到 OEP
+5. 断点命中后 dump 所有段内存
+6. 从 dump 数据重建 PE 文件（修正段表、入口点；**不含 IAT 重建**，仅用于 IDA 加载）
+7. 写入 `IDA_OUTPUT` 指定路径
+8. 终止调试进程并退出
+
+**环境变量**：
+
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `IDA_OEP_ADDR` | 是 | OEP 地址（十六进制，如 `0x401000`） |
+| `IDA_OUTPUT` | 是 | 输出文件路径 |
+| `IDA_DEBUG_TIMEOUT` | 否 | 等待断点超时（秒），默认 60 |
+
+**注意**：输出的 PE 文件仅用于 IDA 加载分析，不含 IAT 重建。如需完整可执行文件，需额外使用 Import Reconstructor 工具。
+
+### 断点追踪场景
+
+在已加载的 IDA 数据库中（非脱壳），通过 IDAPython 脚本设断点追踪：
+
+1. **追踪函数参数**：在目标函数入口设断点，命中后读取参数寄存器（ECX/RCX、EDX/RDX 等）
+2. **追踪返回值**：在函数出口设断点（`ret` 指令处），读取 EAX/RAX
+3. **追踪内存写入**：在关键地址设硬件断点（`ida_dbg.add_bpt(ea, 0, ida_dbg.BPT_WRITE)`）
+
+通用追踪脚本模板（事件驱动）：
+```python
+import ida_dbg
+import ida_bytes
+import ida_ida
+
+def _load_debugger():
+    if ida_ida.inf_get_filetype() == ida_ida.f_PE:
+        ida_dbg.load_debugger("win32", 0)
+    elif ida_ida.inf_get_filetype() == ida_ida.f_ELF:
+        ida_dbg.load_debugger("linux", 0)
+    elif ida_ida.inf_get_filetype() == ida_ida.f_MACHO:
+        ida_dbg.load_debugger("mac", 0)
+
+class TraceHook(ida_dbg.DBG_Hooks):
+    def __init__(self):
+        ida_dbg.DBG_Hooks.__init__(self)
+
+    def dbg_bpt(self, tid, ea):
+        ida_dbg.refresh_debugger_memory()
+        reg_val = ida_dbg.get_reg_val("EAX")
+        mem_data = ida_bytes.get_bytes(addr, size)
+        # ... 处理数据 ...
+        ida_dbg.request_continue_process()
+        ida_dbg.run_requests()
+        return 0
+
+    def dbg_process_exit(self, pid, tid, ea, code):
+        return 0
+
+_load_debugger()
+ida_dbg.add_bpt(target_addr)
+
+hook = TraceHook()
+hook.hook()
+ida_dbg.run_to(target_addr)
+
+while ida_dbg.get_process_state() != 0:
+    ida_dbg.wait_for_next_event(1, 0)
+
+hook.unhook()
+```
+
+### GUI 程序交互（仅 Windows）
+
+IDA 调试器启动程序后，GUI 窗口正常显示。分析者可：
+1. 手动在 GUI 中输入数据（程序在断点处暂停时无法交互，需要 resume 后操作）
+2. 通过 IDAPython 脚本调用 Win32 API 自动化：
+   - `SetDlgItemTextA` 设置编辑框内容
+   - `PostMessageA(WM_COMMAND)` 触发按钮点击
+3. 设断点在目标函数，让程序运行到断点后读取状态
+
+### 限制
+
+- **反调试检测**：部分壳使用 `IsDebuggerPresent`、`NtQueryInformationProcess` 等检测调试器。遇到时切换到 Frida
+- **仅限本地**：IDA 调试器只能调试本机进程
+- **平台绑定**：Windows 调试器只能调试 Windows 程序，Linux 只能调试 Linux 程序
+- **headless 事件循环**：必须用 `ida_dbg.wait_for_next_event()` 驱动，不能省略
