@@ -1,6 +1,6 @@
 # 脚本生成与沉淀规则
 
-> 本文档由 `ida-pro-analysis-evolve` 从主 prompt 提取。AI 编排器在需要生成新脚本时通过 Read 工具按需加载。
+> AI 编排器在需要生成新脚本时通过 Read 工具按需加载。
 
 ## 何时生成新脚本
 
@@ -24,7 +24,7 @@ level: intermediate
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from _base import env_str, log, run_headless
 
 import ida_funcs
@@ -39,6 +39,8 @@ def _main():
 
 run_headless(_main)
 ```
+
+> **注意**：沉淀脚本保存在 `scripts/` 子目录，`sys.path.insert` 必须使用 `os.path.dirname(os.path.dirname(...))` 上溯两层到 `_base.py` 所在目录。
 
 ## 沉淀流程
 

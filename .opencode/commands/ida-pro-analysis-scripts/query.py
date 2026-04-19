@@ -38,6 +38,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _base import env_str, env_int, env_bool, log, run_headless
 from _utils import (
+    _PACKER_SEGMENT_PATTERNS,
+    estimate_entropy,
     get_func_name_safe,
     hex_addr,
     read_bytes_at,
@@ -46,13 +48,14 @@ from _utils import (
     read_string_at,
     resolve_addr,
     resolve_thunk,
+    seg_perm_str,
 )
 
-import math
-
+import ida_auto
 import ida_bytes
 import ida_entry
 import ida_funcs
+import ida_ida
 import ida_idaapi
 import ida_lines
 import ida_loader
@@ -72,16 +75,6 @@ MAX_MATCHES = 200
 MAX_REFS_DISPLAY = 50
 MAX_STRINGS_DISPLAY = 100
 
-_PACKER_SEGMENT_PATTERNS = {
-    "UPX": ["UPX", ".upx"],
-    "MPRESS": [".nsp0", ".nsp1", ".nsp2"],
-    "Themida": [".themida", ".winlice"],
-    "VMProtect": [".vmp0", ".vmp1"],
-    "ASPack": [".aspack"],
-    "PECompact": [".pec2"],
-    "Enigma": [".enigma1", ".enigma2"],
-}
-
 
 def _detect_segment_anomaly(name, seg, total_size):
     """检测段的异常信号（加壳指示器）。"""
@@ -98,23 +91,6 @@ def _detect_segment_anomaly(name, seg, total_size):
     if total_size > 0 and seg_size > 0 and seg_size / total_size > 0.9:
         hints.append("oversized_segment")
     return hints
-
-
-def _estimate_entropy(ea, size):
-    """对指定区域采样估算 Shannon entropy。"""
-    sample_size = min(size, 1024)
-    if sample_size <= 0:
-        return 0.0
-    freq = [0] * 256
-    for i in range(sample_size):
-        b = ida_bytes.get_byte(ea + i)
-        freq[b] += 1
-    entropy = 0.0
-    for count in freq:
-        if count > 0:
-            p = count / sample_size
-            entropy -= p * math.log2(p)
-    return entropy
 
 
 def _query_packer_detect():
@@ -203,7 +179,7 @@ def _query_packer_detect():
         seg_size = seg.size()
         if seg_size < 64:
             continue
-        entropy = _estimate_entropy(seg.start_ea, seg_size)
+        entropy = estimate_entropy(seg.start_ea, seg_size)
         if entropy > 7.0:
             name = ida_segment.get_segm_name(seg)
             high_entropy_segments.append({"name": name, "entropy": round(entropy, 2)})
@@ -306,22 +282,37 @@ def _get_file_type():
 
 
 def _resolve_func_with_thunk(addr_str):
-    """解析函数地址并自动追踪 thunk 链。
+    """解析函数地址并自动追踪 thunk 链。支持 IDA_FORCE_CREATE 自动创建未识别函数。
 
     返回:
-        (func, thunk_chain)
+        (func, thunk_chain, force_created)
         func: 真实函数的 func_t 对象，None 表示失败
         thunk_chain: [{"name": str, "addr": str}] — 中间 thunk 列表
+        force_created: bool — 是否通过 force_create 创建了函数
     """
     ea = resolve_addr(addr_str)
     if ea == ida_idaapi.BADADDR:
-        return None, []
+        return None, [], False
 
     chain, real_ea = resolve_thunk(ea)
     func = ida_funcs.get_func(real_ea)
-    if func is None:
-        log(f"[!] 地址 {hex_addr(real_ea)} 不属于任何函数\n")
-    return func, chain
+    if func is None and real_ea != ida_idaapi.BADADDR:
+        if env_bool("IDA_FORCE_CREATE"):
+            log(f"[*] 地址 {hex_addr(real_ea)} 不在任何函数内，IDA_FORCE_CREATE=1，正在尝试创建函数...\n")
+            ok = ida_funcs.add_func(real_ea)
+            if ok:
+                ida_auto.auto_wait()
+                func = ida_funcs.get_func(real_ea)
+                if func:
+                    log(f"[+] 函数创建成功: {get_func_name_safe(func.start_ea)} "
+                        f"({hex_addr(func.start_ea)} - {hex_addr(func.end_ea)}, {func.size()} 字节)\n")
+                    return func, chain, True
+                log(f"[!] 函数创建失败: {hex_addr(real_ea)}，get_func 仍返回 None\n")
+            else:
+                log(f"[!] 函数创建失败: {hex_addr(real_ea)}，该地址处可能不是有效的函数入口\n")
+        else:
+            log(f"[!] 地址 {hex_addr(real_ea)} 不属于任何函数。设置 IDA_FORCE_CREATE=1 可自动创建\n")
+    return func, chain, False
 
 
 def _query_entry_points():
@@ -386,9 +377,30 @@ def _query_entry_points():
             })
             export_count += 1
         log(f"[+] 补充 {export_count} 个导出函数，共 {len(entries)} 个入口点\n")
-    else:
-        log(f"[+] 找到 {len(entries)} 个入口点\n")
-    return {"entries": entries, "file_type": file_type, "total": len(entries)}
+
+    proc = ida_ida.inf_get_procname()
+    arch_map = {
+        "metapc": "x86",
+        "ARM": "arm",
+        "ARM64": "arm64",
+        "aarch64": "arm64",
+        "MIPS": "mips",
+        "PPC": "ppc",
+    }
+    architecture = arch_map.get(proc, proc)
+    result = {"entries": entries, "file_type": file_type, "total": len(entries),
+              "architecture": architecture}
+    if architecture == "x86":
+        if ida_ida.inf_is_64bit():
+            result["bits"] = 64
+        elif ida_ida.inf_is_32bit_exactly():
+            result["bits"] = 32
+        else:
+            result["bits"] = 16
+    log(f"[+] 找到 {len(entries)} 个入口点 (架构: {architecture}"
+        + (f", {result.get('bits', '?')}bit" if architecture == "x86" else "")
+        + ")\n")
+    return result
 
 
 def _query_functions():
@@ -422,7 +434,7 @@ def _query_decompile():
     addr_str = env_str("IDA_FUNC_ADDR", "")
     log(f"[*] 正在反编译函数: {addr_str}\n")
 
-    func, thunk_chain = _resolve_func_with_thunk(addr_str)
+    func, thunk_chain, force_created = _resolve_func_with_thunk(addr_str)
     if func is None:
         return {"error": f"无法解析函数: {addr_str}"}
 
@@ -458,6 +470,8 @@ def _query_decompile():
     }
     if thunk_chain:
         result["thunk_chain"] = thunk_chain
+    if force_created:
+        result["force_created"] = True
     return result
 
 
@@ -483,7 +497,7 @@ def _query_disassemble():
     addr_str = env_str("IDA_FUNC_ADDR", "")
     log(f"[*] 正在反汇编函数: {addr_str}\n")
 
-    func, thunk_chain = _resolve_func_with_thunk(addr_str)
+    func, thunk_chain, force_created = _resolve_func_with_thunk(addr_str)
     if func is None:
         return {"error": f"无法解析函数: {addr_str}"}
 
@@ -499,6 +513,8 @@ def _query_disassemble():
     }
     if thunk_chain:
         result["thunk_chain"] = thunk_chain
+    if force_created:
+        result["force_created"] = True
     return result
 
 
@@ -507,7 +523,7 @@ def _query_func_info():
     addr_str = env_str("IDA_FUNC_ADDR", "")
     log(f"[*] 正在查询函数信息: {addr_str}\n")
 
-    func, thunk_chain = _resolve_func_with_thunk(addr_str)
+    func, thunk_chain, force_created = _resolve_func_with_thunk(addr_str)
     if func is None:
         return {"error": f"无法解析函数: {addr_str}"}
 
@@ -589,6 +605,8 @@ def _query_func_info():
     }
     if thunk_chain:
         result["thunk_chain"] = thunk_chain
+    if force_created:
+        result["force_created"] = True
     return result
 
 
@@ -808,7 +826,7 @@ def _query_segments():
             "end": hex_addr(seg.end_ea),
             "size": seg.size(),
             "type": seg_type,
-            "perm": _seg_perm_str(seg.perm),
+            "perm": seg_perm_str(seg.perm),
             "anomaly_hints": anomaly_hints,
         })
 
@@ -826,18 +844,6 @@ def _query_segments():
 
     log(f"[+] 找到 {len(segments)} 个段\n")
     return result
-
-
-def _seg_perm_str(perm):
-    """将段权限位转为可读字符串。"""
-    s = ""
-    if perm & 1:
-        s += "x"
-    if perm & 2:
-        s += "w"
-    if perm & 4:
-        s += "r"
-    return s if s else "none"
 
 
 def _query_read_data():
