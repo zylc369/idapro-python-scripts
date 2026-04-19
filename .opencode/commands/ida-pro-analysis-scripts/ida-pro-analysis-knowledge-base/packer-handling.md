@@ -4,13 +4,21 @@
 
 ## 触发条件
 
-`packer_detect` 返回 `packer_detected: true`，或 `segments` 返回 `packer_warning.detected: true`。
+`initial_analysis.py` 返回 `packer_detect.packer_detected: true`，或 `segments.list` 中某段的 `anomaly_hints` 包含 `known_packer_segment:*`。
 
 以下流程**仅在检测到加壳时激活**，非加壳场景不走此分支。
 
+## ⚠ 强制执行纪律
+
+1. **定位到 OEP 后立即 dump**，禁止逆向解压/解密算法，除非 dump 连续失败 2 次
+2. **用户指令"不用三方脱壳工具"≠"必须静态分析"** — IDA 调试器 dump 是 IDA 内置能力，不算三方工具
+3. **静态分析（阶段 3）是最后手段** — 仅在"二进制无法运行"或"IDA 调试器 + Frida 均失败"时使用
+4. **阶段 3 上限 30 分钟**，超过后告知用户限制
+5. 同一方向失败 2 次即切换，不在失败方向上浪费第 3 次尝试
+
 ## 阶段 1：壳检测
 
-首次分析新二进制时，在 `entry_points` 查询后立即调用 `packer_detect`。
+由 `initial_analysis.py` 自动完成。结果在 `packer_detect` 字段中。
 
 ## 阶段 2：已知壳自动脱壳
 
@@ -27,11 +35,18 @@
 
 **核心思路**：壳的本质是"运行时还原代码"。不需要理解壳如何还原，只需要找到还原完成的那一刻，dump 内存即可。
 
-### 策略 2.5.1：定位 OEP（原始入口点）
+### 策略 2.5.1：定位 OEP（原始入口点）— 操作步骤
 
-解壳 stub 结束时必然跳转到 OEP。通过分析 stub 尾部找到跳转指令，计算 OEP 地址。
+**步骤**（必须按顺序执行）：
 
-从 `entry_points` 获取 `architecture` 字段，根据架构选择对应的 OEP 模式表：
+1. **确认 stub 范围**：从 `initial_analysis` 结果获取入口点地址和 segments 信息。stub 通常在第一个可执行段的起始位置
+2. **读取 stub 尾部**：用 `read_data`（bytes 模式）读取 stub 最后 256-512 字节
+   ```bash
+   IDA_QUERY=read_data IDA_ADDR=<入口点地址> IDA_READ_MODE=bytes IDA_READ_SIZE=512 \
+     IDA_OUTPUT="$TASK_DIR/stub_tail.json" \
+     "$IDAT" -A -S"$SCRIPTS_DIR/query.py" -L"$TASK_DIR/read.log" "<目标文件>"
+   ```
+3. **搜索 OEP 模式**：根据 `initial_analysis` 返回的 `architecture` 选择对应的字节模式表
 
 #### x86 (32-bit)
 
@@ -51,27 +66,24 @@
 | `pop rXX; ... ; jmp rXX` | `5E`/`5F` + ... + `FF E6`/`FF E7` | 恢复寄存器后间接跳转 |
 | `lea rax, [rip+off]; jmp rax` | `48 8D 05 xx xx xx xx FF E0` | RIP-relative 跳转 |
 
-**OEP 计算方法**：同 x86 的 `jmp rel32`（E9 指令），RIP-relative 的 `lea` 计算类似。
-
 #### ARM64 (AArch64)
 
 | 模式 | 指令 | 说明 |
 |------|------|------|
-| 恢复寄存器 + `ret` | `ldp x29, x30, [sp], #N; ret` | 从栈恢复 FP/LR 后返回，LR 即 OEP |
-| 恢复寄存器 + `br` | `ldr x0, [sp, #off]; br x0` | 从栈加载 OEP 到寄存器后间接跳转 |
-| `adr` + `br` | `adr x0, #off; br x0` | 短距离 PC-relative 跳转（±1MB） |
-| `adrp` + `add` + `br` | `adrp x0, #page; add x0, x0, #off; br x0` | 长距离 PC-relative 跳转（±4GB），比 `adr` 更常见 |
+| 恢复寄存器 + `ret` | `ldp x29, x30, [sp], #N; ret` | LR 即 OEP |
+| 恢复寄存器 + `br` | `ldr x0, [sp, #off]; br x0` | 从栈加载 OEP |
+| `adrp` + `add` + `br` | `adrp x0, #page; add x0, x0, #off; br x0` | 长距离 PC-relative |
 
-#### 通用定位技巧
+4. **验证 OEP 合理性**：
+   - OEP 应在可执行段内（通常在代码段的起始区域）
+   - OEP 不应在壳的解压数据段内
+   - 如果 OEP 处的前几字节看起来像函数序言（如 `push ebp` / `sub esp`），则更可信
 
-1. **从 entry_points 获取 stub 起始地址和 architecture 字段**，根据架构选择对应的 OEP 模式表
-2. 用 `read_data`（bytes 模式，`IDA_READ_SIZE` 设为 256~512）读取 stub 尾部（最后 256-512 字节）
-3. **搜索特征字节序列**（上表中的模式）
-4. **验证 OEP 合理性**：OEP 应在可执行段内（通常在代码段的起始区域），不应在壳的解压数据段内。如果所有候选 OEP 均不合理，视为"找不到 OEP"，进入阶段 3
+5. **定位到 OEP → 立即 dump**（禁止进一步分析 stub 算法）
 
 ### 策略 2.5.2：搜索目标特征字符串
 
-目标程序的功能性字符串（如 crackme 的"Failed"、"Enter your name"、错误提示）在解壳后必然出现在内存中。
+目标程序的功能性字符串（如 crackme 的"Failed"、"Enter your name"）在解壳后必然出现在内存中。
 
 **步骤**：
 1. 从用户描述中提取目标程序的特征信息（UI 文本、错误消息、API 调用）
@@ -88,16 +100,14 @@
 2. **IDA 调试器失败**（反调试 / 无法启动 / 超时）→ 尝试 Frida（阶段 3.5b）
 3. **Frida 也失败**（未安装 / 非 PE 格式 / 反 Frida）→ 回退到阶段 3（静态分析）
 
-## 阶段 3：静态分析脱壳（后备方案：动态方法失败时）
+## 阶段 3：静态分析脱壳（最后手段）
 
-当阶段 2.5 的关键点绕过和阶段 3.5a/3.5b 的动态 dump 均失败时（反调试壳、嵌入式固件、无法运行），回退到静态分析。
-
-仅在以下场景使用此阶段：
+**仅在以下场景使用**：
 - 二进制无法运行（嵌入式固件、缺失依赖）
-- 壳有强反调试（检测 Frida / 调试器后拒绝解壳）
+- 壳有强反调试（检测 Frida / 调试器后拒绝解壳），且 IDA 调试器和 Frida 都失败
 - 用户明确要求分析壳的实现算法
 
-⚠ 此阶段耗时较长，容易消耗大量 context。仅在确实无法绕过时使用。
+⚠ **上限 30 分钟**。超过后告知用户限制。
 
 ### 步骤 3.1：分析解壳 stub
 
@@ -116,7 +126,7 @@
 
 ### 步骤 3.3：生成脱壳机
 
-基于步骤 3.1-3.2 的分析结果，生成独立 Python 脱壳机脚本（不依赖 IDAPython，可在任意环境运行）：
+基于步骤 3.1-3.2 的分析结果，生成独立 Python 脱壳机脚本（不依赖 IDAPython）：
 
 ```python
 #!/usr/bin/env python3
@@ -139,9 +149,6 @@ def unpack(input_path, output_path):
         data = bytearray(f.read())
 
     # === 解壳算法（根据静态分析结果填写） ===
-    # 示例: XOR 解密
-    # for i in range(start_offset, end_offset):
-    #     data[i] ^= key
 
     with open(output_path, "wb") as f:
         f.write(data)
@@ -155,17 +162,12 @@ if __name__ == "__main__":
 
 ### 步骤 3.4：执行与验证
 
-执行 `python3 "$TASK_DIR/unpacker.py" "<原始二进制文件>" "$TASK_DIR/<文件名>_unpacked"`，然后 `file` 和 `ls -la` 验证输出。
-
-验证标准：
+执行 `python3 "$TASK_DIR/unpacker.py" "<原始二进制文件>" "$TASK_DIR/<文件名>_unpacked"`，然后验证：
 - 输出文件存在且非空
 - `file` 命令显示合法可执行文件格式
-- 文件大小应与原始加壳文件不同（通常更大）
+- 文件大小与原始加壳文件不同
 
-**如果脱壳失败**（输出文件损坏或格式不对）：
-- 分析失败原因（算法理解错误？偏移计算错误？）
-- 尝试修正脱壳机脚本后重试（最多 2 次）
-- 2 次仍失败 → 切换到动态 dump（阶段 3.5a/3.5b）
+**如果脱壳失败**：分析失败原因，修正脱壳机脚本后重试（最多 1 次），仍失败 → 告知用户限制。
 
 ## 脱壳策略决策树
 
@@ -178,50 +180,41 @@ if __name__ == "__main__":
   │     ├── 找到 OEP → 动态 dump
   │     │     ├── 阶段 3.5a: IDA 调试器 dump（首选）
   │     │     │     ├── 成功 → 脱壳后后续流程
-  │     │     │     └── 失败（反调试/无法启动）→ 阶段 3.5b
+  │     │     │     └── 失败 → 阶段 3.5b
   │     │     ├── 阶段 3.5b: Frida dump（后备）
   │     │     │     ├── 成功 → 脱壳后后续流程
   │     │     │     └── 失败 → 阶段 3
   │     └── 找不到 OEP → 阶段 3：静态分析脱壳
-  └── 阶段 3 失败 2 次 → 告知用户限制
+  └── 阶段 3 失败 → 告知用户限制
 ```
 
 **规则**：
-1. 优先使用关键点绕过（阶段 2.5）而非静态逆向解壳算法（阶段 3）
-2. 阶段 3 仅在以下场景使用：动态方法失败（反调试、无法运行）、二进制不能运行（嵌入式固件）、用户明确要求分析壳的实现
-3. 禁止在阶段 3 上花费超过 90 分钟（即使重试次数未达上限）
-4. 禁止在同一个失败方向上重试超过 2 次
+1. 优先使用关键点绕过（阶段 2.5）而非静态逆向（阶段 3）
+2. 禁止在阶段 3 上花费超过 30 分钟
+3. 同一方向最多失败 2 次即切换
 
 ## 阶段 3.5a：IDA 调试器 dump（首选）
 
 **前置条件**：无额外依赖（IDA 自带）
 
-使用 IDA 内置调试器运行到 OEP 并 dump 内存。详见 `dynamic-analysis.md` 中"脱壳场景：debug_dump.py"。
-
-**优势**：零额外依赖；dump 后数据在 IDA 内；不被反 Frida 检测
-
-**使用 debug_dump.py**：
+使用沉淀脚本 `scripts/debug_dump.py`：
 ```bash
 IDA_OEP_ADDR=<OEP地址> IDA_OUTPUT="$TASK_DIR/<文件名>_unpacked" \
   "$IDAT" -A -S"$SCRIPTS_DIR/scripts/debug_dump.py" \
   -L"$TASK_DIR/debug_dump.log" "<目标文件>.i64"
 ```
 
-**验证输出**：
-- 输出文件存在且非空
-- `file` 命令显示合法可执行文件格式
+**验证输出**：输出文件存在且非空，`file` 命令显示合法格式。
 
-**注意**：输出的 PE 不含 IAT 重建，仅用于 IDA 加载分析。
+**注意**：输出 PE 不含 IAT 重建，仅用于 IDA 加载分析。
 
 ## 阶段 3.5b：Frida 进程 dump（后备）
 
-**前置条件**：`pip install frida frida-tools`
-
 IDA 调试器失败时使用 Frida。详见 `dynamic-analysis-frida.md`。
 
-项目内置 Frida PE 脱壳脚本：`disassembler/frida_unpack.py`
+项目内置 Frida PE 脱壳脚本：`$SCRIPTS_DIR/../../../disassembler/frida_unpack.py`（相对于脚本目录上溯到项目根目录）
 ```bash
-python disassembler/frida_unpack.py <目标二进制> -o "$TASK_DIR/<文件名>_unpacked" -w 30
+python3 "$SCRIPTS_DIR/../../../disassembler/frida_unpack.py" <目标二进制> -o "$TASK_DIR/<文件名>_unpacked" -w 30
 ```
 
 ## 常见解壳模式参考
@@ -238,15 +231,18 @@ python disassembler/frida_unpack.py <目标二进制> -o "$TASK_DIR/<文件名>_
 
 ## 脱壳后后续流程
 
-脱壳成功后（无论阶段 2/2.5/3/3.5a/3.5b），将解壳产物加载到 IDA 自动分析：
+脱壳成功后（无论阶段 2/2.5/3/3.5a/3.5b）：
 
-1. 用 idat 加载解壳产物：
+1. 用 idat 加载解壳产物并自动分析：
    ```bash
-   "$IDAT" -A -S"$SCRIPTS_DIR/query.py" -L"$TASK_DIR/load.log" "$TASK_DIR/<脱壳产物文件名>"
+   IDA_OUTPUT="$TASK_DIR/unpacked_initial.json" \
+     "$IDAT" -A -S"$SCRIPTS_DIR/scripts/initial_analysis.py" \
+     -L"$TASK_DIR/load.log" "$TASK_DIR/<脱壳产物文件名>"
    ```
-2. 加载成功后，用 `query.py` 的全部分析能力（`decompile`/`strings`/`xrefs`/`functions` 等）分析解壳后的二进制
-3. 后续分析流程与非加壳二进制相同
-4. 脱壳机/dump 脚本保留在 `$TASK_DIR/`，用户可复用
+   **注意**：此处用 `initial_analysis.py` 而非 `query.py`，以便一次性获取解壳后的完整信息
+2. 读取输出 JSON，获取解壳后的场景分类
+3. 根据新的 scene_tags 进入对应的分析方案（`analysis-planning.md`）
+4. 脱壳机/dump 脚本保留在 `$TASK_DIR/`
 
 ## 禁止操作（加壳版本上）
 
@@ -261,3 +257,4 @@ python disassembler/frida_unpack.py <目标二进制> -o "$TASK_DIR/<文件名>_
 | `disassemble`（解壳 stub） | **允许** | 反编译不可读时的回退 |
 | `read_data`（加壳数据区） | **允许** | 验证对算法的理解 |
 | `segments` | **允许** | 确定数据布局 |
+| `initial_analysis.py` | **允许** | 一键获取全部基础信息（含上述允许的查询） |
