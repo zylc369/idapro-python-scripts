@@ -202,7 +202,7 @@ print(d)
 
 **触发条件**：`packer_detect` 返回 `packer_detected: true`，或 `segments` 返回 `packer_warning.detected: true`。
 
-检测到加壳时，使用 Read 工具读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/packer-handling.md` 获取完整处理流程（阶段 1→2→2.5→3→3.5：壳检测 → 关键点绕过 → 静态/动态脱壳）。
+检测到加壳时，使用 Read 工具读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/packer-handling.md` 获取完整处理流程（阶段 1→2→2.5→3→3.5a/3.5b：壳检测 → 关键点绕过 → 静态/动态脱壳）。
 
 **关键规则**（无论是否读取详细策略都必须遵守）：
 - **禁止**：`functions`/`func_info`/`strings`/`xrefs_*`/`update.py`（加壳版本上结果无意义）
@@ -214,11 +214,15 @@ print(d)
 然后用 query.py 的全部分析能力（decompile/strings/xrefs 等）进行分析。
 禁止在解壳产物上用 capstone/手动反汇编代替 idat — idat 的反编译器更准确。
 
-**动态分析触发**（需要运行时验证/调试时）：
-  读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/dynamic-analysis.md`（含 IDA 调试器首选 + Frida 后备）
-
 **IDA 调试器脱壳触发**（定位到 OEP 后需要 dump 内存时）：
   使用沉淀脚本 `scripts/debug_dump.py`（通过 `IDA_OEP_ADDR` + `IDA_OUTPUT` 环境变量调用）
+
+### 知识库按需加载
+
+以下场景触发知识库加载，不限于加壳二进制：
+
+**动态分析触发**（需要运行时验证/调试时）：
+  读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/dynamic-analysis.md`（含 IDA 调试器首选 + Frida 后备）
 
 **密码学算法触发**（检测到 MD5/RSA/RC4/Base64 等特征时）：
   读取 `$SCRIPTS_DIR/ida-pro-analysis-knowledge-base/crypto-validation-patterns.md`

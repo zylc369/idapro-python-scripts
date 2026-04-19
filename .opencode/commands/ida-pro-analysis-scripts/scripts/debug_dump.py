@@ -12,7 +12,6 @@ description:
   环境变量：
     IDA_OEP_ADDR: OEP 地址（十六进制，必填）
     IDA_OUTPUT: 输出文件路径（必填）
-    IDA_DEBUG_TIMEOUT: 等待断点超时秒数（默认 60）
 
 level: intermediate
 """
@@ -24,7 +23,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from _base import env_int, env_str, log, run_headless
 
-import ida_auto
 import ida_bytes
 import ida_dbg
 import ida_ida
@@ -227,7 +225,6 @@ class DumpHook(ida_dbg.DBG_Hooks):
 def _main():
     oep_str = env_str("IDA_OEP_ADDR", "")
     output_path = env_str("IDA_OUTPUT", "")
-    timeout = env_int("IDA_DEBUG_TIMEOUT", 60)
 
     if not oep_str:
         return {"success": False, "error": "未设置 IDA_OEP_ADDR 环境变量", "data": None}

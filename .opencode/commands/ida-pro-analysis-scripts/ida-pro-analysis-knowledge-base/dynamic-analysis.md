@@ -128,7 +128,6 @@ IDA_OEP_ADDR=0x401000 IDA_OUTPUT="$TASK_DIR/unpacked.exe" \
 |------|------|------|
 | `IDA_OEP_ADDR` | 是 | OEP 地址（十六进制，如 `0x401000`） |
 | `IDA_OUTPUT` | 是 | 输出文件路径 |
-| `IDA_DEBUG_TIMEOUT` | 否 | 等待断点超时（秒），默认 60 |
 
 **注意**：输出的 PE 文件仅用于 IDA 加载分析，不含 IAT 重建。如需完整可执行文件，需额外使用 Import Reconstructor 工具。
 

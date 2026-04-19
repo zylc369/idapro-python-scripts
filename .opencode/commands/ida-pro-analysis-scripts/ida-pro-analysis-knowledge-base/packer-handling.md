@@ -1,6 +1,6 @@
 # 加壳/混淆二进制处理策略
 
-> 本文档由 `ida-pro-analysis-evolve` 从主 prompt 提取。AI 编排器在检测到加壳时通过 Read 工具按需加载。
+> AI 编排器在检测到加壳时通过 Read 工具按需加载。
 
 ## 触发条件
 
@@ -82,20 +82,15 @@
 
 ### 策略 2.5.3：动态 dump
 
-定位 OEP 后，使用动态方法 dump 解壳后的内存：
+定位 OEP 后，使用动态方法 dump 解壳后的内存（详见阶段 3.5a/3.5b）：
 
-1. **首选 IDA 调试器 dump**：使用 `scripts/debug_dump.py`
-   ```bash
-   IDA_OEP_ADDR=<OEP地址> IDA_OUTPUT="$TASK_DIR/<文件名>_unpacked" \
-     "$IDAT" -A -S"$SCRIPTS_DIR/scripts/debug_dump.py" \
-     -L"$TASK_DIR/debug_dump.log" "<目标文件>.i64"
-   ```
-2. **IDA 调试器失败**（反调试 / 无法启动 / 超时）→ 尝试 Frida（`disassembler/frida_unpack.py`）
+1. **首选 IDA 调试器 dump**（阶段 3.5a）
+2. **IDA 调试器失败**（反调试 / 无法启动 / 超时）→ 尝试 Frida（阶段 3.5b）
 3. **Frida 也失败**（未安装 / 非 PE 格式 / 反 Frida）→ 回退到阶段 3（静态分析）
 
 ## 阶段 3：静态分析脱壳（后备方案：动态方法失败时）
 
-当阶段 2.5 的关键点绕过和阶段 3.5 的动态 dump 均失败时（反调试壳、嵌入式固件、无法运行），回退到静态分析。
+当阶段 2.5 的关键点绕过和阶段 3.5a/3.5b 的动态 dump 均失败时（反调试壳、嵌入式固件、无法运行），回退到静态分析。
 
 仅在以下场景使用此阶段：
 - 二进制无法运行（嵌入式固件、缺失依赖）
@@ -170,7 +165,7 @@ if __name__ == "__main__":
 **如果脱壳失败**（输出文件损坏或格式不对）：
 - 分析失败原因（算法理解错误？偏移计算错误？）
 - 尝试修正脱壳机脚本后重试（最多 2 次）
-- 2 次仍失败 → 切换到阶段 3.5（动态脱壳）
+- 2 次仍失败 → 切换到动态 dump（阶段 3.5a/3.5b）
 
 ## 脱壳策略决策树
 
@@ -199,6 +194,8 @@ if __name__ == "__main__":
 
 ## 阶段 3.5a：IDA 调试器 dump（首选）
 
+**前置条件**：无额外依赖（IDA 自带）
+
 使用 IDA 内置调试器运行到 OEP 并 dump 内存。详见 `dynamic-analysis.md` 中"脱壳场景：debug_dump.py"。
 
 **优势**：零额外依赖；dump 后数据在 IDA 内；不被反 Frida 检测
@@ -218,17 +215,14 @@ IDA_OEP_ADDR=<OEP地址> IDA_OUTPUT="$TASK_DIR/<文件名>_unpacked" \
 
 ## 阶段 3.5b：Frida 进程 dump（后备）
 
+**前置条件**：`pip install frida frida-tools`
+
 IDA 调试器失败时使用 Frida。详见 `dynamic-analysis-frida.md`。
 
 项目内置 Frida PE 脱壳脚本：`disassembler/frida_unpack.py`
 ```bash
 python disassembler/frida_unpack.py <目标二进制> -o "$TASK_DIR/<文件名>_unpacked" -w 30
 ```
-
-### 前置条件
-
-- IDA 调试器：无额外依赖（IDA 自带）
-- Frida：`pip install frida frida-tools`（仅在使用 3.5b 时需要）
 
 ## 常见解壳模式参考
 
@@ -244,7 +238,7 @@ python disassembler/frida_unpack.py <目标二进制> -o "$TASK_DIR/<文件名>_
 
 ## 脱壳后后续流程
 
-脱壳成功后（无论阶段 2/2.5/3/3.5），将解壳产物加载到 IDA 自动分析：
+脱壳成功后（无论阶段 2/2.5/3/3.5a/3.5b），将解壳产物加载到 IDA 自动分析：
 
 1. 用 idat 加载解壳产物：
    ```bash
