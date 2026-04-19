@@ -11,6 +11,9 @@ description:
   6. resolve_addr(addr_str) — 统一地址解析（函数名或十六进制地址）
   7. hex_addr(ea) — 格式化地址为 "0x..." 字符串
   8. get_func_name_safe(ea) — 安全获取函数名
+  9. seg_perm_str(perm) — 段权限位转可读字符串
+  10. estimate_entropy(ea, size) — Shannon 熵估算
+  11. _PACKER_SEGMENT_PATTERNS — 已知壳段名模式字典
 
   依赖关系: _base.py → _utils.py → query.py / update.py / scripts/*.py
   本模块仅依赖 _base.py 的 log 函数和 IDAPython 模块，不依赖 query.py 或 update.py。
@@ -18,6 +21,7 @@ description:
 level: intermediate
 """
 
+import math
 import os
 import sys
 
@@ -54,6 +58,46 @@ def resolve_addr(addr_str):
 def hex_addr(ea):
     """格式化地址为 "0x..." 字符串。"""
     return f"0x{ea:X}"
+
+
+def seg_perm_str(perm):
+    """将段权限位转为可读字符串。"""
+    s = ""
+    if perm & 1:
+        s += "x"
+    if perm & 2:
+        s += "w"
+    if perm & 4:
+        s += "r"
+    return s if s else "none"
+
+
+def estimate_entropy(ea, size):
+    """对指定区域采样估算 Shannon entropy。"""
+    sample_size = min(size, 1024)
+    if sample_size <= 0:
+        return 0.0
+    freq = [0] * 256
+    for i in range(sample_size):
+        b = ida_bytes.get_byte(ea + i)
+        freq[b] += 1
+    entropy = 0.0
+    for count in freq:
+        if count > 0:
+            p = count / sample_size
+            entropy -= p * math.log2(p)
+    return entropy
+
+
+_PACKER_SEGMENT_PATTERNS = {
+    "UPX": ["UPX", ".upx"],
+    "MPRESS": [".nsp0", ".nsp1", ".nsp2"],
+    "Themida": [".themida", ".winlice"],
+    "VMProtect": [".vmp0", ".vmp1"],
+    "ASPack": [".aspack"],
+    "PECompact": [".pec2"],
+    "Enigma": [".enigma1", ".enigma2"],
+}
 
 
 def get_func_name_safe(ea):

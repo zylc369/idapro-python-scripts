@@ -24,6 +24,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from _base import env_int, env_str, log, run_headless
+from _utils import (
+    _PACKER_SEGMENT_PATTERNS,
+    estimate_entropy,
+    hex_addr,
+    seg_perm_str,
+)
 
 import ida_bytes
 import ida_entry
@@ -33,32 +39,6 @@ import ida_loader
 import ida_nalt
 import ida_segment
 import idautils
-
-
-_PACKER_SEGMENT_PATTERNS = {
-    "UPX": ["UPX", ".upx"],
-    "MPRESS": [".nsp0", ".nsp1", ".nsp2"],
-    "Themida": [".themida", ".winlice"],
-    "VMProtect": [".vmp0", ".vmp1"],
-    "ASPack": [".aspack"],
-    "PECompact": [".pec2"],
-    "Enigma": [".enigma1", ".enigma2"],
-}
-
-
-def _seg_perm_str(perm):
-    s = ""
-    if perm & 1:
-        s += "x"
-    if perm & 2:
-        s += "w"
-    if perm & 4:
-        s += "r"
-    return s
-
-
-def _hex_addr(ea):
-    return f"0x{ea:X}"
 
 
 def _collect_segments():
@@ -98,10 +78,10 @@ def _collect_segments():
 
         seg_list.append({
             "name": name,
-            "start": _hex_addr(seg.start_ea),
-            "end": _hex_addr(seg.end_ea),
+            "start": hex_addr(seg.start_ea),
+            "end": hex_addr(seg.end_ea),
             "size": size,
-            "perm": _seg_perm(seg.perm),
+            "perm": seg_perm_str(seg.perm),
             "anomaly_hints": anomaly_hints,
         })
 
@@ -178,7 +158,7 @@ def _collect_entry_points():
 
         entries.append({
             "name": name,
-            "addr": _hex_addr(addr),
+            "addr": hex_addr(addr),
             "type": etype,
             "ordinal": ordinal,
         })
@@ -203,7 +183,7 @@ def _collect_imports():
         def _import_cb(ea, name, ordinal):
             nonlocal total_functions
             actual_name = name if name else f"ord_{ordinal}"
-            funcs.append({"name": actual_name, "addr": _hex_addr(ea), "ordinal": ordinal})
+            funcs.append({"name": actual_name, "addr": hex_addr(ea), "ordinal": ordinal})
             import_names_set.add(actual_name)
             total_functions += 1
             return True
@@ -230,34 +210,18 @@ def _collect_strings(pattern="", max_count=200):
         for xref in idautils.XrefsTo(ea, 0):
             func = ida_funcs.get_func(xref.frm)
             func_name = ida_funcs.get_func_name(xref.frm) if func else ""
-            xrefs.append({"from": _hex_addr(xref.frm), "func": func_name})
+            xrefs.append({"from": hex_addr(xref.frm), "func": func_name})
             if len(xrefs) >= 10:
                 break
         strings_list.append({
             "value": value,
-            "addr": _hex_addr(ea),
+            "addr": hex_addr(ea),
             "length": len(value),
             "xrefs": xrefs,
         })
 
     log(f"[+] 字符串收集完成: {len(strings_list)} 个\n")
     return strings_list
-
-
-def _estimate_entropy(ea, size):
-    if size <= 0 or size > 1048576:
-        return 0.0
-    sample_size = min(size, 1024)
-    freq = [0] * 256
-    for i in range(sample_size):
-        b = ida_bytes.get_byte(ea + i)
-        freq[b] += 1
-    entropy = 0.0
-    for count in freq:
-        if count > 0:
-            p = count / sample_size
-            entropy -= p * math.log2(p)
-    return entropy
 
 
 def _detect_packer(segments, packer_name_from_seg, entry_points, import_count):
@@ -302,7 +266,7 @@ def _detect_packer(segments, packer_name_from_seg, entry_points, import_count):
     for seg in segments:
         if seg["size"] >= 64:
             ea = int(seg["start"], 16)
-            entropy = _estimate_entropy(ea, seg["size"])
+            entropy = estimate_entropy(ea, seg["size"])
             if entropy > 7.0:
                 signals.append({
                     "type": "high_entropy",

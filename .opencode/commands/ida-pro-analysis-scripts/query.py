@@ -38,6 +38,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _base import env_str, env_int, env_bool, log, run_headless
 from _utils import (
+    _PACKER_SEGMENT_PATTERNS,
+    estimate_entropy,
     get_func_name_safe,
     hex_addr,
     read_bytes_at,
@@ -46,9 +48,8 @@ from _utils import (
     read_string_at,
     resolve_addr,
     resolve_thunk,
+    seg_perm_str,
 )
-
-import math
 
 import ida_bytes
 import ida_entry
@@ -73,16 +74,6 @@ MAX_MATCHES = 200
 MAX_REFS_DISPLAY = 50
 MAX_STRINGS_DISPLAY = 100
 
-_PACKER_SEGMENT_PATTERNS = {
-    "UPX": ["UPX", ".upx"],
-    "MPRESS": [".nsp0", ".nsp1", ".nsp2"],
-    "Themida": [".themida", ".winlice"],
-    "VMProtect": [".vmp0", ".vmp1"],
-    "ASPack": [".aspack"],
-    "PECompact": [".pec2"],
-    "Enigma": [".enigma1", ".enigma2"],
-}
-
 
 def _detect_segment_anomaly(name, seg, total_size):
     """检测段的异常信号（加壳指示器）。"""
@@ -99,23 +90,6 @@ def _detect_segment_anomaly(name, seg, total_size):
     if total_size > 0 and seg_size > 0 and seg_size / total_size > 0.9:
         hints.append("oversized_segment")
     return hints
-
-
-def _estimate_entropy(ea, size):
-    """对指定区域采样估算 Shannon entropy。"""
-    sample_size = min(size, 1024)
-    if sample_size <= 0:
-        return 0.0
-    freq = [0] * 256
-    for i in range(sample_size):
-        b = ida_bytes.get_byte(ea + i)
-        freq[b] += 1
-    entropy = 0.0
-    for count in freq:
-        if count > 0:
-            p = count / sample_size
-            entropy -= p * math.log2(p)
-    return entropy
 
 
 def _query_packer_detect():
@@ -204,7 +178,7 @@ def _query_packer_detect():
         seg_size = seg.size()
         if seg_size < 64:
             continue
-        entropy = _estimate_entropy(seg.start_ea, seg_size)
+        entropy = estimate_entropy(seg.start_ea, seg_size)
         if entropy > 7.0:
             name = ida_segment.get_segm_name(seg)
             high_entropy_segments.append({"name": name, "entropy": round(entropy, 2)})
@@ -830,7 +804,7 @@ def _query_segments():
             "end": hex_addr(seg.end_ea),
             "size": seg.size(),
             "type": seg_type,
-            "perm": _seg_perm_str(seg.perm),
+            "perm": seg_perm_str(seg.perm),
             "anomaly_hints": anomaly_hints,
         })
 
@@ -848,18 +822,6 @@ def _query_segments():
 
     log(f"[+] 找到 {len(segments)} 个段\n")
     return result
-
-
-def _seg_perm_str(perm):
-    """将段权限位转为可读字符串。"""
-    s = ""
-    if perm & 1:
-        s += "x"
-    if perm & 2:
-        s += "w"
-    if perm & 4:
-        s += "r"
-    return s if s else "none"
 
 
 def _query_read_data():
