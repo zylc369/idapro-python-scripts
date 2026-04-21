@@ -84,7 +84,7 @@ Shows Congratulations
 The patched binary shows "Congratulations!" — this means the issue is in either the checksum check or the ECDSA verify. The Base32 decode, SM4, GF_inv, and BF CBC are all correct.
 ```
 
-**ida-pro-analysis**命令中，有描述对话框的能力吧？为什么AI无法操作GUI？是不是命中下面 **问题：更好的分析、逆向是不是要有单独的agent或者OpenCode Hook？** 节中我的猜测？
+**ida-pro-analysis**命令中，有描述如何操作对话框吧？为什么需要人来做这个事情，AI无法操作GUI？是不是命中下面 **问题：更好的分析、逆向是不是要有单独的agent或者OpenCode Hook？** 节中我的猜测？
 
 ### 问题：通过 patch 排除干扰项是好方法，但是这个方法出现的太晚了！
 什么情况下要选择什么解法最优、较优，AI要根据上下文有自己的判断，这就是智能决策。当然，之所以这么晚，恐怕和你多次给我错误结果，AI没办法了才选择这个技术。我觉得这个技术和验证结果是否正确的验证方案是有关联的，通过不同手段缩小问题排查范围，patch是手段之一。
@@ -128,6 +128,26 @@ The patched binary shows "Congratulations!" — this means the issue is in eithe
 卡住问题我也不是第一次提了，之前遇到比较多的是由于GUI问题导致的卡住。我认为卡住的问题也可以套用到**决策的智能性**，一个方案执行一直卡住，是不是方案本身有问题，即使一个方案本身有问题但一直卡住，我觉得要确认一下到底是否正在执行、一段时间内是否收到了LLM的响应，如果都没有，那么需要中断，然后反思方案，再次恢复执行，这可能要添加一个后台角色，这里面很重要的一点是要避免误杀。
 
 如果你觉得自定义agent能够解决卡住的问题，那么和**问题：更好的分析、逆向是不是要有单独的agent？**节一起考虑。
+
+## 问题：C++环境
+你在运行过程中，我看到这样的描述打印出来：
+```
+No CryptoPP or C++ compiler available.
+
+Let me try yet another approach. Since the binary itself contains the CryptoPP code, I can extract the ECDSA verify function from the binary and call it directly using ctypes by loading the binary into a process and calling the function
+```
+
+- 当前系统中这个目录下有C/C++编译器吧`C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\bin`？你为什么没有找到，是因为某些环境变量没有配置导致的吗？
+- 我已经安装了VS BuilderTools是否还有必要安装 MinGW-w64 ，它和claude、opencode配合的难道会更好？
+
+## 问题：逆向分析环境的搭建
+是不是有必要安装你需要用到的逆向分析软件，帮你能够方便的使用它们，例如：
+- Unicorn
+- Capstone
+- ctypes + CreateRemoteThread
+- vs builder tools 或 MinGW-w64
+
+> vs builder tools 或 MinGW-w64，都安装，还是安装其中一个？都按照的原因是什么？只安装一个的原因是什么？
 
 ## 其他疑问
 - 在运行过程中，我发现你编辑、运行`keygen_final.py`，这倒是没啥问题，直到我看到**问题还在——swap 后 XOR P 的顺序还是反了。直接照 C 参考实现写**，我的疑惑你在做 C 转 Python 代码吗？如果是，那么完全是脱裤子放屁多此一举。如果是有必要性，那么请你告诉我。
