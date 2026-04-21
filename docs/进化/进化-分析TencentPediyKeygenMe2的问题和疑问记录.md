@@ -149,6 +149,11 @@ Let me try yet another approach. Since the binary itself contains the CryptoPP c
 
 > vs builder tools 或 MinGW-w64，都安装，还是安装其中一个？都按照的原因是什么？只安装一个的原因是什么？
 
+要求：
+1. 你根据你的经验分析是否有必要。
+2. 你根据你的经验补充是否还需要其他工具。
+3. 环境的搭建必须可以移植，因为我会在不同的设备上运行**ida-pro-analysis**命令。
+
 ## 其他疑问
 - 在运行过程中，我发现你编辑、运行`keygen_final.py`，这倒是没啥问题，直到我看到**问题还在——swap 后 XOR P 的顺序还是反了。直接照 C 参考实现写**，我的疑惑你在做 C 转 Python 代码吗？如果是，那么完全是脱裤子放屁多此一举。如果是有必要性，那么请你告诉我。
 
