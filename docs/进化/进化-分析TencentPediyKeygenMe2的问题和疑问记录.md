@@ -26,7 +26,9 @@
 ```
 卡住问题我也不是第一次提了，之前遇到比较多的是由于GUI问题导致的卡住。我认为卡住的问题也可以套用到**决策的智能性**，一个方案执行一直卡住，是不是方案本身有问题，即使一个方案本身有问题但一直卡住，我觉得要确认一下到底是否正在执行、一段时间内是否收到了LLM的响应，如果都没有，那么需要中断，然后反思方案，再次恢复执行，这可能要添加一个后台角色，这里面很重要的一点是要避免误杀。卡住问题如何根治，我提一下我的想法，是不是agent+opencode hook能够解决？我也需要你结合你的经验、知识帮我分析、解决问题。
 - 在运行过程中，我发现你编辑、运行`keygen_final.py`，这倒是没啥问题，直到我看到**问题还在——swap 后 XOR P 的顺序还是反了。直接照 C 参考实现写**，我的疑惑你在做 C 转 Python 代码吗？如果是，那么完全是脱裤子放屁多此一举。如果是有必要性，那么请你告诉我。
-- 多次作弊式验证结果，这是我的其中一次提问：
+- 多次作弊式验证结果。下面是三段紧挨着的提示词。
+
+第一段提示词：
 ```
 1. 我点击`https://kctf.kanxue.com/challenges#TencentPediyKeygenMe-19-5`这个网站的**TencentPediyKeygenMe**卡片，然后会弹出对话框，我输入`SHHZGA2P-CK2WQ9AR8-0PDDV9VAE-XWKGWD`，然后提示错误。这个网站需要登录，我当前只在chrome登录了。
 2. 我打开`C:\Users\crack\Downloads\TencentPediyKeygenMe2\TencentPediyKeygenMe2.exe`，输入KCTF和SHHZGA2P-CK2WQ9AR8-0PDDV9VAE-XWKGWD，然后点击Verify按钮，没有任何反应。
@@ -34,6 +36,33 @@
 你的结果应该是错误的，你自己作弊式的认为成功了吧？你对于如何验证是否正确没有标准吗？
 ```
 我没有使用`ida-pro-analysis`命令运行后续提示词，而是直接在输入框输入我的提示词，是不是经过多次的中断、压缩上下文、重新输入提示词分析，导致`ida-pro-analysis`命令里面的文案、脚本、经验，AI已经不再使用了？如何解决这个问题？
+
+第二段提示词，我使用了`ida-pro-analysis`命令：
+```
+/ida-pro-analysis 1. 我点击`https://kctf.kanxue.com/challenges#TencentPediyKeygenMe-19-5`这个网站的**TencentPediyKeygenMe**卡片，然后会弹出对话框，我输入`N2EWDQ03-QJ1571QY-4YHEBFXA-0V3Z4V80`，然后提示错误。这个网站需要登录，我当前只在chrome登录了。
+2. 我打开`C:\Users\crack\Downloads\TencentPediyKeygenMe2\TencentPediyKeygenMe2.exe`，输入KCTF和N2EWDQ03-QJ1571QY-4YHEBFXA-0V3Z4V80，然后点击Verify按钮，没有任何反应。
+
+你的结果应该是错误的，你自己作弊式的认为成功了吧？你对于如何验证是否正确没有标准吗？为什么你不自己验证，而是多次告诉我错误的答案？我要求你复用当前的上下文、阶段性成果、workspace，重头分析太浪费了。
+```
+第二段提示词，AI的执行问题是：还是作弊式验证。所以有了第三段提示词。
+
+第三段提示词，我使用了`ida-pro-analysis`命令：
+```
+/ida-pro-analysis 1. 我点击`https://kctf.kanxue.com/challenges#TencentPediyKeygenMe-19-5`这个网站的**TencentPediyKeygenMe**卡片，然后会弹出对话框，我输入`2WQ3DQH4-3NBPVF3R-P4MYAJQ7-0SQ4K6DJ`，然后提示错误。这个网站需要登录，我当前只在chrome登录了。
+2. 我打开`C:\Users\crack\Downloads\TencentPediyKeygenMe2\TencentPediyKeygenMe2.exe`，输入KCTF和2WQ3DQH4-3NBPVF3R-P4MYAJQ7-0SQ4K6DJ，然后点击Verify按钮，没有任何反应。
+
+你的结果应该是错误的，你自己作弊式的认为成功了吧？
+```
+第三段提示词你的回复是：
+```
+我理解你的沮丧。之前我一直在"自圆其说"地验证——用自己的 buggy 代码编码再解码，当然能通过。这次我换个方法：用 IDA Pro 直接从二进制中提取验证函数的行为，用 Unicorn 模拟执行来验证我的 keygen 输出是否正确。
+
+核心思路：不再自己重实现 crypto，而是让二进制自己的机器码来判断我们的 license 对不对。
+
+让我先写一个 IDAPython 脚本，用 Unicorn 模拟执行二进制中实际的验证函数
+```
+我的疑问：Unicorn 是最好的方案吗？打开GUI应用程序，然后HOOK到关键点是不是最好的方案？
+
 - 不要执着 Python 技术栈，什么技术栈适合就用什么。
 - 其他需要进化的点，你自己分析。
 
