@@ -221,24 +221,29 @@ def collect_imports():
     total_functions = 0
     import_names_set = set()
 
-    qty = ida_nalt.get_import_module_qty()
-    for i in range(qty):
-        mod_name = ida_nalt.get_import_module_name(i)
+    def _enum_module(idx):
+        mod_name = ida_nalt.get_import_module_name(idx)
         if not mod_name:
-            mod_name = f"module_{i}"
+            mod_name = f"module_{idx}"
         funcs = []
 
         def _import_cb(ea, name, ordinal):
-            nonlocal total_functions
             actual_name = name if name else f"ord_{ordinal}"
             funcs.append({"name": actual_name, "addr": hex_addr(ea), "ordinal": ordinal})
             import_names_set.add(actual_name)
-            total_functions += 1
             return True
 
-        ida_nalt.enum_import_names(i, _import_cb)
+        ida_nalt.enum_import_names(idx, _import_cb)
         if funcs:
-            modules.append({"module": mod_name, "functions": funcs, "count": len(funcs)})
+            return {"module": mod_name, "functions": funcs, "count": len(funcs)}, len(funcs)
+        return None, 0
+
+    qty = ida_nalt.get_import_module_qty()
+    for i in range(qty):
+        entry, count = _enum_module(i)
+        if entry:
+            modules.append(entry)
+            total_functions += count
 
     log(f"[+] 导入表收集完成: {len(modules)} 个模块, {total_functions} 个函数\n")
     return modules, total_functions, import_names_set
