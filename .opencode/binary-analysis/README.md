@@ -1,24 +1,35 @@
-# IDA Pro AI 智能分析命令 — 工具脚本
+# BinaryAnalysis 工具脚本
 
-本目录包含 `/ida-pro-analysis` 命令配套的 IDAPython 工具脚本，专为 opencode AI 编排场景设计。
+本目录包含 BinaryAnalysis Agent 配套的 IDAPython 工具脚本，专为 AI 编排逆向分析设计。
 
 ## 数据与代码分离
 
 | 类别 | 位置 | 说明 |
 |------|------|------|
-| **代码**（本目录） | `.opencode/commands/ida-pro-analysis-scripts/` | 版本控制，git 管理 |
+| **代码**（本目录） | `.opencode/binary-analysis/` | 版本控制，git 管理 |
 | **数据** | `~/bw-ida-pro-analysis/` | 运行时产物，不提交 |
 
 ```
-# 代码（git 仓库）
-.opencode/commands/ida-pro-analysis-scripts/
+.opencode/binary-analysis/
 ├── _base.py         # 公共基础设施（日志、环境变量、headless 入口、JSON 输出）
 ├── _utils.py        # 共享业务工具（thunk 追踪、数据读取、地址解析）
 ├── query.py         # 查询操作（12 种查询类型）
 ├── update.py        # 更新操作（4 种操作类型）
 ├── README.md        # 本文件
-└── scripts/         # 沉淀脚本库（AI 生成的经验证脚本）
-    └── registry.json # 脚本注册表
+├── scripts/         # 沉淀脚本 + 纯 Python 工具脚本
+│   ├── registry.json    # 沉淀脚本注册表（仅 idat 脚本）
+│   ├── initial_analysis.py  # 初始分析流水线
+│   ├── debug_dump.py        # 调试器 dump 脚本
+│   ├── detect_env.py        # 环境检测（纯 Python，不走 idat）
+│   └── gui_verify.py        # GUI 自动化验证（纯 Python，不走 idat）
+├── knowledge-base/  # 知识库（按需加载，减少上下文占用）
+│   ├── analysis-planning.md
+│   ├── crypto-validation-patterns.md
+│   ├── technology-selection.md
+│   ├── ecdlp-solving.md
+│   └── ...
+├── environment-setup.md   # 环境搭建指南
+└── context-persistence.md # 上下文持久化方案文档
 ```
 
 ## 调用方式

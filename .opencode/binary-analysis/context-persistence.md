@@ -9,7 +9,7 @@ OpenCode 的 `/ida-pro-analysis` 命令仅在用户显式调用时注入完整 p
 
 ## 当前方案：规则摘要
 
-在 `ida-pro-analysis.md` 的输出格式中增加"规则摘要"：
+在 `agents/binary-analysis.md` 的输出格式中增加"规则摘要"：
 - 每次输出分析结果时附加简短摘要（~5行）
 - 摘要包含：验证标准、环境状态、技术选型提醒
 - 确保即使上下文被压缩，关键规则仍存在于最近的对话中
@@ -25,7 +25,7 @@ OpenCode 的 `/ida-pro-analysis` 命令仅在用户显式调用时注入完整 p
 ### 方案 A: OpenCode Hook 机制
 
 如果 OpenCode 支持在每轮对话开始时自动执行钩子：
-- 自动注入 `ida-pro-analysis.md` 的关键规则
+- 自动注入 `agents/binary-analysis.md` 的关键规则
 - 不需要用户每次使用 `/ida-pro-analysis` 前缀
 
 **评估**: 需要查看 OpenCode 文档确认是否支持。

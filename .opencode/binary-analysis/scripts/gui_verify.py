@@ -130,13 +130,12 @@ def _set_text(hwnd, text):
     time.sleep(0.1)
 
 
-def _click_button(hwnd):
-    PostMessageA(hwnd, WM_COMMAND, (BN_CLICKED << 16) | GetWindowWord(hwnd, 2), 0)
+def _click_button(parent_hwnd, button_hwnd):
+    ctrl_id = user32.GetWindowLongA(button_hwnd, -12)  # GWLP_ID
+    if ctrl_id == 0:
+        ctrl_id = user32.GetDlgCtrlID(button_hwnd)
+    PostMessageA(parent_hwnd, WM_COMMAND, (BN_CLICKED << 16) | ctrl_id, button_hwnd)
     time.sleep(0.2)
-
-
-def GetWindowWord(hwnd, index):
-    return user32.GetWindowWord(hwnd, index)
 
 
 def run_verify(exe_path, username, license_code, edit1_id, edit2_id, button_id, timeout):
@@ -178,7 +177,7 @@ def run_verify(exe_path, username, license_code, edit1_id, edit2_id, button_id, 
         _set_text(edit2, license_code)
 
         print("[*] 点击验证按钮...")
-        _click_button(button)
+        _click_button(main_wnd, button)
 
         print(f"[*] 等待结果对话框（超时 {timeout}s）...")
         result_text = _find_messagebox(pid, timeout=timeout)

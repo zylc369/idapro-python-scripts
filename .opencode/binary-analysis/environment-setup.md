@@ -2,6 +2,25 @@
 
 > 逆向分析工具链安装指南，按平台分类。
 
+## capstone vs IDA Pro — 为什么要装 capstone？
+
+IDA Pro 自带反汇编引擎，但 **capstone 是独立的反汇编框架**，用于 Unicorn 模拟执行：
+- Unicorn 依赖 capstone 进行指令解码
+- capstone 可在 Python 进程中独立使用（不需要 IDA 运行时）
+- 用途：算法验证（Unicorn 模拟原函数）、CTF 快速脚本、脱离 IDA 的自动化分析
+
+总结：IDA Pro 用于交互式分析，capstone + Unicorn 用于自动化验证。两者互补，不冲突。
+
+## 编译器选择：VS Build Tools vs MinGW
+
+**只安装 VS Build Tools 即可**，理由：
+- Windows 逆向目标多为 MSVC 编译，VS Build Tools 的 CRT/SEH 与目标一致
+- MinGW 的 CRT 与 MSVC 不兼容，链接可能出问题
+- `__umul128` 等 intrinsics 只有 MSVC 有（MinGW 用 `__int128`，也可用但不如 intrinsics 直观）
+- IDA Pro 自带 Python 也是 MSVC 编译的，与 VS Build Tools 生态一致
+
+如果确实需要 MinGW（如交叉编译 Linux 目标），可以额外安装，但不是必需的。
+
 ## 必需工具
 
 | 工具 | 用途 | 必需性 |

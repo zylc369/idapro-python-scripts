@@ -31,6 +31,18 @@
 Python Pollard's rho ~0.8M 步/s/core，C ~50M 步/s/core，差距 60x。
 64-bit 曲线需要 ~2^32 步，Python 需要 ~90 分钟，C 需要 ~1.5 分钟。
 
+### `__umul128` vs `uint128_t` (MSVC)
+
+MSVC 不支持 `__int128`，替代方案：
+
+| 方案 | 实现 | 性能 |
+|------|------|------|
+| `__umul128` + `_umul128` | intrinsics，需要 `<intrin.h>` | **最优** — 编译器直接生成 `mul` 指令 |
+| `unsigned __int128` | GCC/Clang 原生支持 | **等价** — 同样生成单条 `mul` 指令 |
+| 手写 64x64→128 拆分 | 用 32-bit 半字乘法模拟 | 慢 ~2-4x |
+
+**MSVC 下推荐**：`#include <intrin.h>` 使用 `__umul128(a, b, &hi)`，性能与 GCC `__int128` 等价。
+
 ---
 
 ## 性能基准
