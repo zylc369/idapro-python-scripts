@@ -17,6 +17,34 @@ const COMPACT_RULES = `## BinaryAnalysis 关键规则（压缩后恢复）
 ⑦ 失败快速切换 — 同一方向连续 2 次失败 → 强制换方向
 ⑧ 不要执着 Python — 什么技术栈适合就用什么`;
 
+const COMPACTION_CONTEXT_PROMPT = `## BinaryAnalysis 分析状态（压缩时必须保留）
+
+当总结此会话时，如果包含 BinaryAnalysis 相关内容，你必须保留以下信息：
+
+### 1. 分析目标
+- 目标二进制文件路径
+- 文件类型（exe/dll/so）和架构
+
+### 2. 已完成的分析
+- 已识别的关键函数及其地址和用途
+- 已发现的分析结论（如 bug、特殊条件、算法特征）
+- 已执行的 idat 查询和结果摘要
+
+### 3. 当前状态
+- 当前分析阶段（信息收集/分析规划/执行/验证）
+- 待完成的分析步骤
+- 失败记录（什么方向已尝试并失败，避免重复）
+
+### 4. 验证状态
+- 验证结果和置信度评估
+- 是否有待验证的假设
+
+### 5. 显式约束（原文保留）
+- 用户明确提出的要求（如"不要修改数据库"、"先分析再绕过"）
+- 置信度声明：区分"来自 IDA 数据库的事实"和"AI 推理（标注置信度）"
+
+${COMPACT_RULES}`;
+
 function readJsonSafe(filePath) {
   try {
     if (existsSync(filePath)) {
@@ -26,10 +54,12 @@ function readJsonSafe(filePath) {
   return null;
 }
 
+const sessionStates = new Map();
+
 export const BinaryAnalysisPlugin = async ({ directory }) => {
   return {
     "experimental.session.compacting": async (input, output) => {
-      output.context.push(COMPACT_RULES);
+      output.context.push(COMPACTION_CONTEXT_PROMPT);
     },
 
     "experimental.chat.system.transform": async (input, output) => {
@@ -65,14 +95,28 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
         }
       }
 
-      if (typeof output === "string") {
-        output += envSection;
-      } else if (output && typeof output === "object") {
-        if (Array.isArray(output)) {
-          output.push(envSection);
-        } else if ("system" in output) {
-          output.system = (output.system || "") + envSection;
+      output.system.push(envSection);
+    },
+
+    event: async (input) => {
+      const { event } = input;
+      const props = event.properties || {};
+      const sessionID = props.sessionID;
+
+      if (event.type === "session.created") {
+        if (sessionID) {
+          sessionStates.set(sessionID, { createdAt: Date.now() });
         }
+      }
+
+      if (event.type === "session.deleted") {
+        if (sessionID) {
+          sessionStates.delete(sessionID);
+        }
+      }
+
+      if (event.type === "session.compacted") {
+        // reserved: 未来可在此恢复压缩前的分析状态
       }
     },
   };

@@ -13,7 +13,8 @@
 .opencode/binary-analysis/
 ├── _base.py         # 公共基础设施（日志、环境变量、headless 入口、JSON 输出）
 ├── _utils.py        # 共享业务工具（thunk 追踪、数据读取、地址解析）
-├── query.py         # 查询操作（12 种查询类型）
+├── _analysis.py     # 共享分析逻辑（段、入口点、导入、字符串、壳检测、场景分类）
+├── query.py         # 查询操作（13 种查询类型）
 ├── update.py        # 更新操作（4 种操作类型）
 ├── README.md        # 本文件
 ├── scripts/         # 沉淀脚本 + 纯 Python 工具脚本
@@ -27,6 +28,7 @@
 │   ├── crypto-validation-patterns.md
 │   ├── technology-selection.md
 │   ├── ecdlp-solving.md
+│   ├── idapython-conventions.md  # IDAPython 编码规范
 │   └── ...
 ├── environment-setup.md   # 环境搭建指南
 └── context-persistence.md # 上下文持久化方案文档
@@ -64,6 +66,7 @@ IDA_OPERATION=<操作> IDA_OUTPUT=<输出路径> [其他参数] \
 | `exports` | 列出所有导出函数 | 无 |
 | `segments` | 列出所有段信息 | 无 |
 | `read_data` | 读取全局数据 | `IDA_ADDR` + `IDA_READ_MODE` + `IDA_READ_SIZE` + `IDA_DEREF` |
+| `packer_detect` | 检测加壳/混淆（多维信号分析） | 无 |
 
 ### read_data 读取模式
 

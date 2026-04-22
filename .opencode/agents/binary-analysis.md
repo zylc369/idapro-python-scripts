@@ -274,6 +274,7 @@ python3 "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --
 | `technology-selection.md` | 需要实现算法、编写求解器、性能敏感计算、静态vs动态决策 |
 | `ecdlp-solving.md` | 遇到椭圆曲线离散对数问题 (ECDLP) |
 | `script-generation.md` | 需要生成新 IDAPython 脚本 |
+| `idapython-conventions.md` | 生成 IDAPython 脚本时的编码规范（导入、日志、代码风格） |
 
 ---
 
@@ -326,35 +327,4 @@ python3 "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --
 
 ## IDAPython 编码规范
 
-生成 IDAPython 脚本时遵守以下规则（不适用于纯 Python 脚本如 detect_env.py）：
-
-### 导入规则
-
-| 规则 | 正确 | 错误 |
-|------|------|------|
-| 禁止 `import idc` | `import ida_nalt` | `import idc` |
-| 禁止 `import idaapi` | `import ida_funcs` | `import idaapi` |
-| 禁止 `from ida_xxx import` | `ida_kernwin.msg("hi")` | `from ida_kernwin import msg` |
-| 字符串用双引号 | `"hello"` | `'hello'` |
-
-例外：允许 `from _base import ...` 和 `from _utils import ...`。
-
-### 日志规范
-
-```python
-ida_kernwin.msg(f"[*] 正在执行: {detail}\n")   # 进行中 — 每个关键步骤必须有
-ida_kernwin.msg(f"[+] 成功: {result}\n")         # 成功
-ida_kernwin.msg(f"[!] 错误: {reason}\n")          # 失败
-```
-
-- 日志内容使用中文，包含足够上下文（函数名、地址、路径等）
-- 成功和失败都必须有对应日志
-
-### 代码风格
-
-- 内部辅助函数以 `_` 前缀标记
-- 禁止空 `except` 块
-- 捕获异常后必须处理（抛出/记录/返回错误）
-- 函数返回 True/False 表示成功/失败
-- 新脚本必须有 docstring 头部：`"""summary: ...\ndescription: ...\nlevel: ..."""`
-- 无头入口逻辑必须在模块级执行（不能放在 `if __name__ == "__main__"` 内）
+需要生成 IDAPython 脚本时，读取 `$SCRIPTS_DIR/knowledge-base/idapython-conventions.md` 获取完整编码规范（导入规则、日志规范、代码风格）。

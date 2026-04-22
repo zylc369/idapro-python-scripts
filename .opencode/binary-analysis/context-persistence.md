@@ -1,53 +1,66 @@
-# 上下文持久化方案
+# BinaryAnalysis 上下文持久化方案
 
 ## 问题
 
-OpenCode 的 `/ida-pro-analysis` 命令仅在用户显式调用时注入完整 prompt。多次上下文压缩后：
-- 用户不再使用 `/ida-pro-analysis` 前缀 → AI 失去所有规则/知识
-- 即使使用前缀，长时间对话中规则可能被遗忘
-- 之前分析的关键发现（如"二进制有 bug，需要 r==1"）在压缩后丢失
+OpenCode 长对话中存在三类上下文丢失问题：
+1. **规则丢失**: 多轮交互后 Agent 不再遵守 BinaryAnalysis 规则
+2. **知识丢失**: 压缩后之前发现的分析结论（如"二进制有 bug，需要 r==1"）丢失
+3. **环境丢失**: 每轮对话无法感知 IDA 路径、编译器、工具包等环境信息
 
-## 当前方案：规则摘要
+## 当前方案：Plugin + Agent 架构
 
-在 `agents/binary-analysis.md` 的输出格式中增加"规则摘要"：
-- 每次输出分析结果时附加简短摘要（~5行）
-- 摘要包含：验证标准、环境状态、技术选型提醒
-- 确保即使上下文被压缩，关键规则仍存在于最近的对话中
-
-### 摘要内容
+### 架构
 
 ```
-[规则提醒] ① 禁止作弊式验证 | ② 环境: <compiler> + <packages> | ③ 计算密集型用 C | ④ ECDLP: technology-selection.md + ecdlp-solving.md
+.opencode/
+├── agents/binary-analysis.md           # Agent prompt（分析编排规则）
+└── plugins/binary-analysis.mjs         # Plugin（上下文持久化）
 ```
 
-## 长期方案
+### Plugin 使用的 Hooks
 
-### 方案 A: OpenCode Hook 机制
+| Hook | 作用 | 触发时机 |
+|------|------|---------|
+| `experimental.session.compacting` | 注入分析状态保留提示 + 关键规则 | 上下文压缩前 |
+| `experimental.chat.system.transform` | 注入环境信息（IDA路径、编译器、工具包） | 每轮对话 |
+| `event` | 管理 session 生命周期（created/deleted/compacted） | session 状态变化 |
 
-如果 OpenCode 支持在每轮对话开始时自动执行钩子：
-- 自动注入 `agents/binary-analysis.md` 的关键规则
-- 不需要用户每次使用 `/ida-pro-analysis` 前缀
+### Hook API 签名（基于 oh-my-openagent 源码确认）
 
-**评估**: 需要查看 OpenCode 文档确认是否支持。
+```typescript
+// system.transform: 修改系统提示
+(input: { sessionID?: string; model: { id: string; providerID: string; [key: string]: unknown } },
+ output: { system: string[] }) => Promise<void>
+// 使用 output.system.push(content) 注入
 
-### 方案 B: 自定义 Agent
+// compacting: 压缩时注入上下文
+(input: { sessionID: string },
+ output: { context: string[] }) => Promise<void>
+// 使用 output.context.push(content) 注入
 
-如果 OpenCode 支持自定义 agent：
-- 创建一个始终保持 `ida-pro-analysis` 上下文的 agent
-- 用户与此 agent 交互时，始终遵守 ida-pro-analysis 规则
+// event: 响应 session 生命周期事件
+(input: { event: { type: string; properties?: Record<string, unknown> } }) => Promise<void>
+// 事件类型: session.created, session.deleted, session.compacted
+```
 
-**评估**: 需要查看 OpenCode 文档确认是否支持。
+### 数据流
 
-### 方案 C: 关键发现持久化
+1. **环境信息**（每轮）: `~/bw-ida-pro-analysis/config.json` + `env_cache.json` → Plugin 读取 → `system.transform` 注入到系统提示
+2. **分析规则**（压缩时）: Plugin 内置 COMPACT_RULES → `compacting` hook 注入到压缩 prompt
+3. **分析状态**（压缩时）: Plugin 注入结构化提示 → 告知压缩模型保留分析结论
+4. **知识库**（按需）: Agent 通过 Read 工具按需加载 `knowledge-base/` 下的文档
 
-将分析过程中的关键发现写入文件（而非仅存在于对话上下文中）：
-- 发现写入 `~/bw-ida-pro-analysis/workspace/<task_id>/findings.json`
-- 每次分析开始时读取上次任务的 findings
-- 避免"二进制有 bug 需要特殊条件"这类发现丢失
+### 环境数据缓存
 
-## 可行性风险
+- 环境检测结果缓存到 `~/bw-ida-pro-analysis/env_cache.json`，有效期 24 小时
+- 检测脚本: `scripts/detect_env.py`
+- Agent prompt 中有环境检测阶段指引
 
-如果 OpenCode 不支持 hook 机制，方案 H 只能做到"每次输出附加摘要"，不能完全解决上下文丢失问题。此时：
-1. 依赖用户在长时间对话中定期使用 `/ida-pro-analysis` 前缀刷新规则
-2. 依赖 `findings.json` 持久化关键发现
-3. 环境检测结果通过缓存文件持久化（已实现）
+### 知识库按需加载
+
+知识库文件位于 `knowledge-base/`，Agent prompt 中的"知识库索引"表列出每个文件的触发条件。Agent 不会在分析开始时全部加载，而是根据场景标签按需读取。
+
+## 扩展方向
+
+- **分析状态持久化**: 将分析中的关键发现写入 `~/bw-ida-pro-analysis/workspace/<task_id>/findings.json`，跨 session 复用
+- **压缩后自动恢复**: 通过 `event` hook 的 `session.compacted` 事件，自动读取 findings.json 并注入
