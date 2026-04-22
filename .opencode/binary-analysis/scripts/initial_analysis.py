@@ -14,6 +14,7 @@ description:
     IDA_OUTPUT: 输出文件路径（必填）
     IDA_STRINGS_PATTERN: 可选，过滤字符串的子串模式（默认返回全部）
     IDA_MAX_STRINGS: 可选，最大字符串数量（默认 200）
+    IDA_ENV_JSON: 可选，detect_env.py 缓存文件路径（用于检测 frida 等工具可用性）
 
 level: intermediate
 """
@@ -46,7 +47,20 @@ def _main():
 
     func_count = ida_funcs.get_func_qty()
     packer_info = detect_packer(segments, packer_name_from_seg, entries, total_functions)
-    scene = classify_scene(packer_info, strings, import_names, architecture, file_type)
+
+    packages = None
+    env_json_path = env_str("IDA_ENV_JSON", "")
+    if env_json_path:
+        try:
+            import json as _json
+            if os.path.isfile(env_json_path):
+                with open(env_json_path, "r", encoding="utf-8") as _f:
+                    env_data = _json.load(_f)
+                packages = env_data.get("data", {}).get("packages")
+        except Exception as e:
+            log(f"[!] 读取环境缓存失败: {e}\n")
+
+    scene = classify_scene(packer_info, strings, import_names, architecture, file_type, packages)
 
     log("[+] 初始分析流水线完成\n")
 

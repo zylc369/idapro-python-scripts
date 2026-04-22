@@ -32,9 +32,41 @@ mode: primary
 
 ---
 
+## 变量初始化（每轮对话首次执行前）
+
+从 Plugin 注入的环境信息中提取关键路径。如果环境信息段包含 `脚本目录 ($SCRIPTS_DIR): <路径>` 和 `IDA Pro: <路径>`，直接使用这些值赋值。如果环境信息未注入，从 config.json 读取。
+
+**Linux/macOS (bash)**:
+
+```bash
+SCRIPTS_DIR=<从环境信息中提取的脚本目录路径>
+IDAT=$(python3 -c "
+import os, sys, json
+c = json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json')))
+p = c.get('ida_path','')
+for n in ['idat','idat.exe']:
+    f = os.path.join(p, n)
+    if os.path.isfile(f):
+        print(f); break
+else:
+    print(''); sys.exit(1)
+")
+```
+
+**Windows (PowerShell)**:
+
+```powershell
+$SCRIPTS_DIR = "<从环境信息中提取的脚本目录路径>"
+$IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json'))); p=c.get('ida_path',''); [print(os.path.join(p,n)) or None for n in ['idat.exe','idat'] if os.path.isfile(os.path.join(p,n))][:1] or sys.exit(1)"
+```
+
+**验证**: 变量赋值后执行 `echo $SCRIPTS_DIR` / `echo $IDAT` 确认非空。注意: bash 模板使用 `python3`（仅 Linux/macOS），Windows 统一使用 PowerShell 模板（使用 `python`）。
+
+---
+
 ## 参数解析规则
 
-用户输入：`$ARGUMENTS`
+**用户输入**：从对话消息中获取用户的原始输入。
 
 解析指导：
 1. 从用户输入中识别 IDA 数据库文件路径（绝对路径、相对路径、文件名）
@@ -275,6 +307,8 @@ python3 "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --
 | `ecdlp-solving.md` | 遇到椭圆曲线离散对数问题 (ECDLP) |
 | `script-generation.md` | 需要生成新 IDAPython 脚本 |
 | `idapython-conventions.md` | 生成 IDAPython 脚本时的编码规范（导入、日志、代码风格） |
+| `unicorn-templates.md` | 需要模拟执行验证算法、Unicorn 脚本模板 |
+| `frida-hook-templates.md` | 需要 Frida Hook 脚本模板（参数拦截、返回值读取） |
 
 ---
 

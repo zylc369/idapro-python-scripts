@@ -375,7 +375,7 @@ def detect_packer(segments, packer_name_from_seg, entry_points, import_count):
     }
 
 
-def classify_scene(packer_info, strings, import_names, architecture, file_type):
+def classify_scene(packer_info, strings, import_names, architecture, file_type, packages=None):
     """场景分类 — 根据 packer/crypto/GUI 等信号生成场景标签和推荐操作。
 
     参数:
@@ -384,6 +384,8 @@ def classify_scene(packer_info, strings, import_names, architecture, file_type):
         import_names: collect_imports() 返回的名称集合
         architecture: 架构字符串
         file_type: 文件类型字符串
+        packages: detect_env.py 输出的 data.packages 字典（可选）
+                  {"frida": {"available": True/False, ...}, ...}
 
     返回:
         {"scene_tags", "recommended_actions", "knowledge_base_loads",
@@ -436,13 +438,17 @@ def classify_scene(packer_info, strings, import_names, architecture, file_type):
 
     if gui_indicators:
         scene_tags.append("gui")
+        frida_available = packages.get("frida", {}).get("available", False) if packages else False
         recommended_actions.append({
             "action": "gui_interaction",
             "priority": 2 if "packed" not in scene_tags else 4,
             "description": "检测到 GUI 程序，可能需要动态交互",
             "detail": f"GUI API: {gui_indicators[:10]}",
+            "frida_available": frida_available,
         })
         knowledge_base_loads.append("dynamic-analysis.md")
+        if frida_available:
+            knowledge_base_loads.append("dynamic-analysis-frida.md")
 
     error_strings = [s for s in strings if any(
         kw in s["value"].lower()

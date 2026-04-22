@@ -40,8 +40,7 @@ def _load_debugger():
         ida_dbg.load_debugger("linux", 0)
         log("[*] 已加载 linux 调试器插件\n")
     elif filetype == ida_ida.f_MACHO:
-        ida_dbg.load_debugger("mac", 0)
-        log("[*] 已加载 mac 调试器插件\n")
+        log("[!] Mach-O 格式暂不支持 dump（本轮仅支持 PE/ELF）\n")
     else:
         log(f"[!] 不支持的文件类型: {filetype}\n")
 
@@ -189,24 +188,203 @@ def _dump_segments_ida():
     return seg_data
 
 
-def _resolve_pe_output():
-    """确定 PE 输出文件路径。
-
-    从 IDA_PE_OUTPUT 环境变量读取，未设置时从 IDA_OUTPUT 推导。
-    IDA_OUTPUT 和 IDA_PE_OUTPUT 均为空时返回空字符串。
+def _detect_elf_class(image_base):
+    """检测 ELF 文件类别（32-bit 或 64-bit）。
 
     返回:
-        str — PE 输出路径，空字符串表示失败
+        int — 32 或 64，0 表示检测失败
     """
-    pe_output = env_str("IDA_PE_OUTPUT", "")
-    if pe_output:
-        return pe_output
-    json_output = env_str("IDA_OUTPUT", "")
-    if not json_output:
-        return ""
-    if json_output.endswith(".json"):
-        return json_output[:-5] + ".pe"
-    return json_output + ".pe"
+    ident = ida_bytes.get_bytes(image_base, 20)
+    if ident is None or len(ident) < 16:
+        return 0
+    if ident[0:4] != b"\x7fELF":
+        return 0
+    ei_class = ident[4]
+    if ei_class == 1:
+        return 32
+    elif ei_class == 2:
+        return 64
+    return 0
+
+
+def _dump_elf_segments(image_base):
+    """从 ELF program header 读取可加载段数据。
+
+    参数:
+        image_base: image base 地址
+
+    返回:
+        [(start_ea, bytes, vaddr, memsz)] — 段数据列表
+    """
+    log(f"[*] 从 ELF header 读取段数据，image_base=0x{image_base:X}\n")
+
+    ident = ida_bytes.get_bytes(image_base, 64)
+    if ident is None or len(ident) < 16 or ident[0:4] != b"\x7fELF":
+        log("[!] ELF header 读取失败: 无效 ELF 魔数\n")
+        return []
+
+    ei_class = ident[4]
+    is_64 = ei_class == 2
+
+    if is_64:
+        e_phoff = struct.unpack_from("<Q", ident, 32)[0]
+        e_phentsize = struct.unpack_from("<H", ident, 54)[0]
+        e_phnum = struct.unpack_from("<H", ident, 56)[0]
+    else:
+        e_phoff = struct.unpack_from("<I", ident, 28)[0]
+        e_phentsize = struct.unpack_from("<H", ident, 42)[0]
+        e_phnum = struct.unpack_from("<H", ident, 44)[0]
+
+    seg_data = []
+    for i in range(e_phnum):
+        ph_offset = e_phoff + i * e_phentsize
+        ph_data = ida_bytes.get_bytes(image_base + ph_offset, e_phentsize)
+        if ph_data is None:
+            continue
+
+        if is_64:
+            p_type = struct.unpack_from("<I", ph_data, 0)[0]
+            p_flags = struct.unpack_from("<I", ph_data, 4)[0]
+            p_offset = struct.unpack_from("<Q", ph_data, 8)[0]
+            p_vaddr = struct.unpack_from("<Q", ph_data, 16)[0]
+            p_filesz = struct.unpack_from("<Q", ph_data, 32)[0]
+            p_memsz = struct.unpack_from("<Q", ph_data, 40)[0]
+        else:
+            p_type = struct.unpack_from("<I", ph_data, 0)[0]
+            p_offset = struct.unpack_from("<I", ph_data, 4)[0]
+            p_vaddr = struct.unpack_from("<I", ph_data, 8)[0]
+            p_filesz = struct.unpack_from("<I", ph_data, 16)[0]
+            p_memsz = struct.unpack_from("<I", ph_data, 20)[0]
+
+        PT_LOAD = 1
+        if p_type != PT_LOAD or p_memsz == 0:
+            continue
+
+        seg_start = image_base + p_vaddr
+        log(f"[*] 正在 dump ELF LOAD 段 {i}: vaddr=0x{p_vaddr:X} ({p_memsz} 字节)\n")
+
+        data = ida_bytes.get_bytes(seg_start, p_memsz)
+        if data is None:
+            log(f"[!] 读取 ELF 段 {i} 失败: 0x{seg_start:X}\n")
+            continue
+        seg_data.append((seg_start, data, p_vaddr, p_memsz))
+
+    log(f"[+] 从 ELF header 读取完成，共 {len(seg_data)} 个 LOAD 段\n")
+    return seg_data
+
+
+def _rebuild_elf(seg_data, image_base, output_path):
+    """重建 ELF 文件（简化版: 保留 ELF header + 更新 program headers）。
+
+    参数:
+        seg_data: _dump_elf_segments 返回的段数据列表
+        image_base: image base 地址
+        output_path: 输出文件路径
+    """
+    log("[*] 开始重建 ELF 文件...\n")
+
+    is_64 = _detect_elf_class(image_base) == 64
+
+    if is_64:
+        e_ehsize = 64
+        e_phoff = struct.unpack_from("<Q", ida_bytes.get_bytes(image_base, 64), 32)[0]
+        e_phentsize = struct.unpack_from("<H", ida_bytes.get_bytes(image_base, 64), 54)[0]
+        e_phnum = struct.unpack_from("<H", ida_bytes.get_bytes(image_base, 64), 56)[0]
+    else:
+        e_ehsize = 52
+        e_phoff = struct.unpack_from("<I", ida_bytes.get_bytes(image_base, 52), 28)[0]
+        e_phentsize = struct.unpack_from("<H", ida_bytes.get_bytes(image_base, 52), 42)[0]
+        e_phnum = struct.unpack_from("<H", ida_bytes.get_bytes(image_base, 52), 44)[0]
+
+    elf_header = bytearray(ida_bytes.get_bytes(image_base, e_ehsize))
+
+    ph_total = e_phnum * e_phentsize
+    ph_raw = bytearray(ida_bytes.get_bytes(image_base + e_phoff, ph_total))
+
+    seg_map = {}
+    for start_ea, data, vaddr, memsz in seg_data:
+        seg_map[vaddr] = data
+
+    header_size = max(e_ehsize, e_phoff + ph_total)
+    output = bytearray(header_size)
+    header_data = ida_bytes.get_bytes(image_base, header_size)
+    if header_data:
+        output[0:header_size] = header_data[0:header_size]
+
+    output[e_phoff:e_phoff + ph_total] = ph_raw[0:ph_total]
+
+    for i in range(e_phnum):
+        ph_off = i * e_phentsize
+        if is_64:
+            p_type = struct.unpack_from("<I", ph_raw, ph_off + 0)[0]
+            p_vaddr = struct.unpack_from("<Q", ph_raw, ph_off + 16)[0]
+            p_filesz = struct.unpack_from("<Q", ph_raw, ph_off + 32)[0]
+            p_memsz = struct.unpack_from("<Q", ph_raw, ph_off + 40)[0]
+            p_align = struct.unpack_from("<Q", ph_raw, ph_off + 48)[0]
+        else:
+            p_type = struct.unpack_from("<I", ph_raw, ph_off + 0)[0]
+            p_vaddr = struct.unpack_from("<I", ph_raw, ph_off + 8)[0]
+            p_filesz = struct.unpack_from("<I", ph_raw, ph_off + 16)[0]
+            p_memsz = struct.unpack_from("<I", ph_raw, ph_off + 20)[0]
+            p_align = struct.unpack_from("<I", ph_raw, ph_off + 28)[0]
+
+        if p_type != 1 or p_memsz == 0:
+            continue
+
+        aligned_filesz = (p_memsz + (p_align - 1)) & ~(p_align - 1) if p_align > 0 else p_memsz
+
+        if p_vaddr in seg_map:
+            data = seg_map[p_vaddr]
+            copy_size = min(len(data), p_memsz)
+            file_offset = len(output)
+
+            if is_64:
+                struct.pack_into("<Q", ph_raw, ph_off + 8, file_offset)
+                struct.pack_into("<Q", ph_raw, ph_off + 32, copy_size)
+            else:
+                struct.pack_into("<I", ph_raw, ph_off + 4, file_offset)
+                struct.pack_into("<I", ph_raw, ph_off + 16, copy_size)
+
+            output.extend(data[0:copy_size])
+            padding = aligned_filesz - copy_size
+            if padding > 0:
+                output.extend(b"\x00" * padding)
+        else:
+            log(f"[!] ELF 段 vaddr=0x{p_vaddr:X} 未找到对应内存数据\n")
+
+    output[e_phoff:e_phoff + ph_total] = ph_raw[0:ph_total]
+
+    with open(output_path, "wb") as f:
+        f.write(output)
+
+    log(f"[+] ELF 文件已写入: {output_path} ({len(output)} 字节)\n")
+    log("[!] 注意: 输出 ELF 不含符号表重建，仅用于 IDA 加载分析\n")
+    return True
+
+
+def _resolve_dump_output():
+    """确定 dump 输出文件路径。
+
+    从 IDA_PE_OUTPUT 环境变量读取（兼容旧用法），未设置时从 IDA_OUTPUT 推导。
+    根据文件类型自动调整扩展名: PE → .pe，ELF → .elf。
+
+    返回:
+        str — dump 输出路径，空字符串表示失败
+    """
+    dump_output = env_str("IDA_PE_OUTPUT", "")
+    if not dump_output:
+        json_output = env_str("IDA_OUTPUT", "")
+        if not json_output:
+            return ""
+        base = json_output
+        if base.endswith(".json"):
+            base = base[:-5]
+        filetype = ida_ida.inf_get_filetype()
+        if filetype == ida_ida.f_ELF:
+            dump_output = base + ".elf"
+        else:
+            dump_output = base + ".pe"
+    return dump_output
 
 
 def _rebuild_pe(seg_data, image_base, oep_addr, output_path):
@@ -310,10 +488,10 @@ def _rebuild_pe(seg_data, image_base, oep_addr, output_path):
 
 
 class DumpHook(ida_dbg.DBG_Hooks):
-    def __init__(self, oep_addr, pe_output_path):
+    def __init__(self, oep_addr, dump_output_path):
         ida_dbg.DBG_Hooks.__init__(self)
         self.oep_addr = oep_addr
-        self.pe_output_path = pe_output_path
+        self.dump_output_path = dump_output_path
         self.result = {"success": False, "error": None, "data": None}
 
     def dbg_run_to(self, pid, tid=0, ea=0):
@@ -337,25 +515,51 @@ class DumpHook(ida_dbg.DBG_Hooks):
 
         log(f"[+] Image Base: 0x{image_base:X}\n")
 
-        seg_data = _dump_segments_from_pe(image_base)
-        if not seg_data:
-            seg_data = _dump_segments_ida()
-        if not seg_data:
-            self.result["error"] = "dump 内存段失败"
-            ida_dbg.request_exit_process()
-            ida_dbg.run_requests()
-            return
+        filetype = ida_ida.inf_get_filetype()
+        is_elf = filetype == ida_ida.f_ELF
 
-        success = _rebuild_pe(seg_data, image_base, self.oep_addr, self.pe_output_path)
-        self.result["success"] = success
-        self.result["data"] = {
-            "pe_output_path": self.pe_output_path,
-            "oep_addr": hex(self.oep_addr),
-            "image_base": hex(image_base),
-            "segments_dumped": len(seg_data),
-        }
-        if not success:
-            self.result["error"] = "PE 重建失败"
+        if is_elf:
+            seg_data = _dump_elf_segments(image_base)
+            if not seg_data:
+                seg_data_raw = _dump_segments_ida()
+                if seg_data_raw:
+                    seg_data = [(ea, d, 0, len(d)) for ea, d in seg_data_raw]
+            if not seg_data:
+                self.result["error"] = "dump ELF 内存段失败"
+                ida_dbg.request_exit_process()
+                ida_dbg.run_requests()
+                return
+            success = _rebuild_elf(seg_data, image_base, self.dump_output_path)
+            self.result["success"] = success
+            self.result["data"] = {
+                "dump_output_path": self.dump_output_path,
+                "oep_addr": hex(self.oep_addr),
+                "image_base": hex(image_base),
+                "segments_dumped": len(seg_data),
+                "format": "elf",
+            }
+            if not success:
+                self.result["error"] = "ELF 重建失败"
+        else:
+            seg_data = _dump_segments_from_pe(image_base)
+            if not seg_data:
+                seg_data = _dump_segments_ida()
+            if not seg_data:
+                self.result["error"] = "dump 内存段失败"
+                ida_dbg.request_exit_process()
+                ida_dbg.run_requests()
+                return
+            success = _rebuild_pe(seg_data, image_base, self.oep_addr, self.dump_output_path)
+            self.result["success"] = success
+            self.result["data"] = {
+                "dump_output_path": self.dump_output_path,
+                "oep_addr": hex(self.oep_addr),
+                "image_base": hex(image_base),
+                "segments_dumped": len(seg_data),
+                "format": "pe",
+            }
+            if not success:
+                self.result["error"] = "PE 重建失败"
 
         ida_dbg.request_exit_process()
         ida_dbg.run_requests()
@@ -367,11 +571,11 @@ class DumpHook(ida_dbg.DBG_Hooks):
 
 def _main():
     oep_str = env_str("IDA_OEP_ADDR", "")
-    pe_output_path = _resolve_pe_output()
+    dump_output_path = _resolve_dump_output()
 
     if not oep_str:
         return {"success": False, "error": "未设置 IDA_OEP_ADDR 环境变量", "data": None}
-    if not pe_output_path:
+    if not dump_output_path:
         return {"success": False, "error": "IDA_OUTPUT 和 IDA_PE_OUTPUT 均未设置", "data": None}
 
     oep_addr = _parse_oep_addr(oep_str)
@@ -379,11 +583,11 @@ def _main():
         return {"success": False, "error": f"无效的 OEP 地址: {oep_str}", "data": None}
 
     log(f"[*] OEP: 0x{oep_addr:X}\n")
-    log(f"[*] PE 输出路径: {pe_output_path}\n")
+    log(f"[*] Dump 输出路径: {dump_output_path}\n")
 
     _load_debugger()
 
-    hook = DumpHook(oep_addr, pe_output_path)
+    hook = DumpHook(oep_addr, dump_output_path)
     hook.hook()
 
     log(f"[*] 启动调试器，运行到 OEP: 0x{oep_addr:X}\n")

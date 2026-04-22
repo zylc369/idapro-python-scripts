@@ -212,9 +212,11 @@ IDA_OEP_ADDR=<OEP地址> IDA_OUTPUT="$TASK_DIR/<文件名>_unpacked" \
 
 IDA 调试器失败时使用 Frida。详见 `dynamic-analysis-frida.md`。
 
-项目内置 Frida PE 脱壳脚本：`$SCRIPTS_DIR/../../../disassembler/frida_unpack.py`（相对于脚本目录上溯到项目根目录）
+项目内置 Frida PE 脱壳脚本：项目根目录下 `disassembler/frida_unpack.py`。
+从 `$SCRIPTS_DIR` 推导项目根目录: `PROJECT_ROOT=$(dirname $(dirname $(dirname "$SCRIPTS_DIR")))`
+
 ```bash
-python3 "$SCRIPTS_DIR/../../../disassembler/frida_unpack.py" <目标二进制> -o "$TASK_DIR/<文件名>_unpacked" -w 30
+python3 "$PROJECT_ROOT/disassembler/frida_unpack.py" <目标二进制> -o "$TASK_DIR/<文件名>_unpacked" -w 30
 ```
 
 ## 常见解壳模式参考

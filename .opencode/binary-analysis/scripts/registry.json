@@ -3,7 +3,7 @@
     {
       "name": "debug_dump",
       "file": "debug_dump.py",
-      "description": "IDA 调试器脱壳 dump 脚本：运行到 OEP 断点，dump 内存段并重建 PE 文件",
+      "description": "IDA 调试器脱壳 dump 脚本：运行到 OEP 断点，dump 内存段并重建可执行文件（PE/ELF）。需要端到端验证",
       "params": ["IDA_OEP_ADDR", "IDA_PE_OUTPUT", "IDA_OUTPUT"],
       "example_call": "IDA_OEP_ADDR=0x401000 IDA_PE_OUTPUT=$TASK_DIR/unpacked.exe IDA_OUTPUT=$TASK_DIR/result.json $IDAT -A -S$SCRIPTS_DIR/scripts/debug_dump.py target.i64",
       "added_at": "2026-04-19",
