@@ -142,6 +142,11 @@ Let me try yet another approach. Since the binary itself contains the CryptoPP c
 - 当前系统中这个目录下有C/C++编译器吧`C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\bin`？你为什么没有找到，是因为某些环境变量没有配置导致的吗？
 - 我已经安装了VS BuilderTools是否还有必要安装 MinGW-w64 ，它和claude、opencode配合的难道会更好？
 
+## 问题：最新情况，跑算法90分钟没有结果
+我看到应该使用的是 Python 脚本，执行的吧？两个问题：
+1. 为什么不用 C/C++，是不是找不到C/C++环境。
+2. 后台运行了 4 个 Python 进程，是在充分利用机器性能，还是其他3个因为某种原因没有关闭？如果是重复利用机器性能是没有问题的。
+
 ## 问题：逆向分析环境的搭建
 是不是有必要安装你需要用到的逆向分析软件，帮你能够方便的使用它们，例如：
 - Unicorn
@@ -163,3 +168,6 @@ Let me try yet another approach. Since the binary itself contains the CryptoPP c
 ## 其他要求
 - 不要执着 Python 技术栈，什么技术栈适合就用什么。我不是排斥 Python， Python有它的好处、优点，只不过有时候它不一定合适、不一定是最优解。
 - 其他需要进化的点，你自己分析。
+
+## 后记
+**TencentPediyKeygenMe2.exe**最终没有找到正确的**License Code**，我给你停止了让你进化是因为，我觉得上面提到的问题反复出现，例如最新的算法跑的慢的问题。如果问题不解决，恐怕永远无法解决我给你提的要求！
