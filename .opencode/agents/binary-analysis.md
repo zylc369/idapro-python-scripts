@@ -40,6 +40,14 @@ mode: primary
 
 ```bash
 SCRIPTS_DIR=<从环境信息中提取的脚本目录路径>
+# 如果未注入，从 config.json 回退
+if [ -z "$SCRIPTS_DIR" ]; then
+  SCRIPTS_DIR=$(python3 -c "
+import os, json
+c = json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json')))
+print(c.get('scripts_dir', os.path.join('$(pwd)', '.opencode', 'binary-analysis')))
+")
+fi
 IDAT=$(python3 -c "
 import os, sys, json
 c = json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json')))
@@ -57,6 +65,10 @@ else:
 
 ```powershell
 $SCRIPTS_DIR = "<从环境信息中提取的脚本目录路径>"
+# 如果未注入，从 config.json 回退
+if (-not $SCRIPTS_DIR) {
+  $SCRIPTS_DIR = python -c "import os,json; c=json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json'))); print(c.get('scripts_dir',os.path.join(r'$(Get-Location)','.opencode','binary-analysis')))"
+}
 $IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json'))); p=c.get('ida_path',''); [print(os.path.join(p,n)) or None for n in ['idat.exe','idat'] if os.path.isfile(os.path.join(p,n))][:1] or sys.exit(1)"
 ```
 
@@ -276,7 +288,7 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 | `imports` | 导入函数 | 无 |
 | `exports` | 导出函数 | 无 |
 | `segments` | 段信息 | 无 |
-| `read_data` | 读取数据 | `IDA_ADDR` + `IDA_READ_MODE` |
+| `read_data` | 读取数据 | `IDA_ADDR` + `IDA_READ_MODE` + `IDA_READ_SIZE` + `IDA_DEREF` |
 | `packer_detect` | 加壳检测 | 无 |
 
 ### update.py 操作类型

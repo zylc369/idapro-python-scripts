@@ -14,7 +14,6 @@ level: intermediate
 
 import argparse
 import ctypes
-import ctypes.wintypes
 import json
 import os
 import subprocess
@@ -22,32 +21,38 @@ import sys
 import time
 import threading
 
+if sys.platform != "win32":
+    print(json.dumps({"success": False, "error": "gui_verify.py 仅支持 Windows 平台"}))
+    sys.exit(1)
+
+import ctypes.wintypes
+
 kernel32 = ctypes.windll.kernel32
 user32 = ctypes.windll.user32
 
-FindWindowA = user32.FindWindowA
-FindWindowA.argtypes = [ctypes.wintypes.LPCSTR, ctypes.wintypes.LPCSTR]
-FindWindowA.restype = ctypes.wintypes.HWND
+FindWindowW = user32.FindWindowW
+FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+FindWindowW.restype = ctypes.wintypes.HWND
 
 GetDlgItem = user32.GetDlgItem
 GetDlgItem.argtypes = [ctypes.wintypes.HWND, ctypes.c_int]
 GetDlgItem.restype = ctypes.wintypes.HWND
 
-SendMessageA = user32.SendMessageA
-SendMessageA.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM]
-SendMessageA.restype = ctypes.wintypes.LPARAM
+SendMessageW = user32.SendMessageW
+SendMessageW.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM]
+SendMessageW.restype = ctypes.wintypes.LPARAM
 
-PostMessageA = user32.PostMessageA
-PostMessageA.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM]
-PostMessageA.restype = ctypes.c_bool
+PostMessageW = user32.PostMessageW
+PostMessageW.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM]
+PostMessageW.restype = ctypes.c_bool
 
 EnumWindows = user32.EnumWindows
 EnumWindows.argtypes = [ctypes.c_void_p, ctypes.wintypes.LPARAM]
 EnumWindows.restype = ctypes.wintypes.BOOL
 
-GetWindowTextA = user32.GetWindowTextA
-GetWindowTextA.argtypes = [ctypes.wintypes.HWND, ctypes.c_char_p, ctypes.c_int]
-GetWindowTextA.restype = ctypes.c_int
+GetWindowTextW = user32.GetWindowTextW
+GetWindowTextW.argtypes = [ctypes.wintypes.HWND, ctypes.c_wchar_p, ctypes.c_int]
+GetWindowTextW.restype = ctypes.c_int
 
 GetWindowThreadProcessId = user32.GetWindowThreadProcessId
 GetWindowThreadProcessId.argtypes = [ctypes.wintypes.HWND, ctypes.POINTER(ctypes.wintypes.DWORD)]
@@ -79,11 +84,11 @@ def _enum_windows_proc(hwnd, lparam):
     pid = ctypes.wintypes.DWORD()
     GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
     if pid.value == target_pid:
-        text = ctypes.create_string_buffer(512)
-        GetWindowTextA(hwnd, text, 512)
+        text = ctypes.create_unicode_buffer(512)
+        GetWindowTextW(hwnd, text, 512)
         if text.value:
             _enum_result["window_handle"] = hwnd
-            _enum_result["window_text"] = text.value.decode("gbk", errors="replace")
+            _enum_result["window_text"] = text.value
             _enum_result["pid"] = pid.value
             return False
     return True
@@ -125,16 +130,15 @@ def _find_messagebox(pid, timeout=10):
 
 
 def _set_text(hwnd, text):
-    encoded = text.encode("gbk", errors="replace")
-    SendMessageA(hwnd, WM_SETTEXT, 0, ctypes.c_char_p(encoded))
+    SendMessageW(hwnd, WM_SETTEXT, 0, ctypes.c_wchar_p(text))
     time.sleep(0.1)
 
 
 def _click_button(parent_hwnd, button_hwnd):
-    ctrl_id = user32.GetWindowLongA(button_hwnd, -12)  # GWLP_ID
+    ctrl_id = user32.GetWindowLongPtrW(button_hwnd, -12)
     if ctrl_id == 0:
         ctrl_id = user32.GetDlgCtrlID(button_hwnd)
-    PostMessageA(parent_hwnd, WM_COMMAND, (BN_CLICKED << 16) | ctrl_id, button_hwnd)
+    PostMessageW(parent_hwnd, WM_COMMAND, (BN_CLICKED << 16) | ctrl_id, button_hwnd)
     time.sleep(0.2)
 
 
@@ -219,13 +223,10 @@ def main():
     parser.add_argument("--button-id", type=int, default=DEFAULT_BUTTON_ID, help="验证按钮控件 ID")
     args = parser.parse_args()
 
-    if sys.platform != "win32":
-        result = {"success": False, "error": "gui_verify.py 仅支持 Windows 平台"}
-    else:
-        result = run_verify(
-            args.exe, args.username, args.license,
-            args.edit1_id, args.edit2_id, args.button_id, args.timeout
-        )
+    result = run_verify(
+        args.exe, args.username, args.license,
+        args.edit1_id, args.edit2_id, args.button_id, args.timeout
+    )
 
     output_json = json.dumps(result, indent=2, ensure_ascii=False)
     if args.output:

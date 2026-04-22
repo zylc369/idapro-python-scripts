@@ -15,7 +15,11 @@ const COMPACT_RULES = `## BinaryAnalysis 关键规则（压缩后恢复）
 ⑤ 静态分析 15 分钟无进展 → 立即切动态分析
 ⑥ 超时监控 — idat 300s 超时，LLM 60s 无响应反思方案
 ⑦ 失败快速切换 — 同一方向连续 2 次失败 → 强制换方向
-⑧ 不要执着 Python — 什么技术栈适合就用什么`;
+⑧ 不要执着 Python — 什么技术栈适合就用什么
+⑨ 禁止使用 workdir 参数 — 所有中间文件写入 ~/bw-ida-pro-analysis/workspace/
+⑩ 方案优先 — 未输出方案前禁止执行任何 idat 分析调用
+⑪ 数据库锁定时立即报错退出
+⑫ 分析结果必须区分事实和推测，标注置信度`;
 
 const COMPACTION_CONTEXT_PROMPT = `## BinaryAnalysis 分析状态（压缩时必须保留）
 
@@ -24,6 +28,7 @@ const COMPACTION_CONTEXT_PROMPT = `## BinaryAnalysis 分析状态（压缩时必
 ### 1. 分析目标
 - 目标二进制文件路径
 - 文件类型（exe/dll/so）和架构
+- 任务目录路径（$TASK_DIR，包含所有中间输出文件）
 
 ### 2. 已完成的分析
 - 已识别的关键函数及其地址和用途

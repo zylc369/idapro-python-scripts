@@ -163,19 +163,19 @@ def collect_entry_points():
             name = f"entry_{ordinal}"
 
         name_lower = name.lower()
-        if name.startswith("."):
+        if name_lower in ("_init", "init", ".init"):
+            etype = "init"
+        elif name_lower in ("_fini", "fini", ".fini"):
+            etype = "fini"
+        elif name.startswith("."):
             etype = "init_array"
         elif name_lower in ("main", "_main", "wmain", "winmain", "wwinmain",
                             "dllmain", "driverentry"):
             etype = "main"
         elif "jni" in name_lower:
             etype = "jni"
-        elif name_lower in ("_init", "init", ".init"):
-            etype = "init"
         elif name_lower in ("_start", "start"):
             etype = "crt_entry"
-        elif name_lower in ("_fini", "fini", ".fini"):
-            etype = "fini"
         else:
             etype = "entry"
 

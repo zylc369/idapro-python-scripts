@@ -36,13 +36,16 @@ def _load_debugger():
     if filetype == ida_ida.f_PE:
         ida_dbg.load_debugger("win32", 0)
         log("[*] 已加载 win32 调试器插件\n")
+        return True
     elif filetype == ida_ida.f_ELF:
         ida_dbg.load_debugger("linux", 0)
         log("[*] 已加载 linux 调试器插件\n")
+        return True
     elif filetype == ida_ida.f_MACHO:
         log("[!] Mach-O 格式暂不支持 dump（本轮仅支持 PE/ELF）\n")
     else:
         log(f"[!] 不支持的文件类型: {filetype}\n")
+    return False
 
 
 def _parse_oep_addr(oep_str):
@@ -585,7 +588,8 @@ def _main():
     log(f"[*] OEP: 0x{oep_addr:X}\n")
     log(f"[*] Dump 输出路径: {dump_output_path}\n")
 
-    _load_debugger()
+    if not _load_debugger():
+        return {"success": False, "error": "调试器加载失败（仅支持 PE/ELF）", "data": None}
 
     hook = DumpHook(oep_addr, dump_output_path)
     hook.hook()

@@ -315,6 +315,8 @@ def _query_func_info():
                     callees.append({"addr": hex_addr(callee.start_ea), "name": callee_name})
                     if len(callees) >= MAX_REFS_DISPLAY:
                         break
+            if len(callees) >= MAX_REFS_DISPLAY:
+                break
             ea = ida_bytes.next_head(ea, chunk.end_ea)
             if ea == ida_idaapi.BADADDR:
                 break
@@ -333,6 +335,8 @@ def _query_func_info():
                     strings.append({"value": s.decode("utf-8", errors="replace"), "addr": hex_addr(ref)})
                     if len(strings) >= MAX_STRINGS_DISPLAY:
                         break
+            if len(strings) >= MAX_STRINGS_DISPLAY:
+                break
             ea = ida_bytes.next_head(ea, chunk.end_ea)
             if ea == ida_idaapi.BADADDR:
                 break

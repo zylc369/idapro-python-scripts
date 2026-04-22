@@ -116,7 +116,7 @@ if (b === 0x55) {
 }
 ```
 
-或使用 `disassembler/frida_unpack.py` 的内置监控机制。该脚本位于项目根目录: `$(dirname $(dirname $(dirname "$SCRIPTS_DIR")))/disassembler/frida_unpack.py`。
+或使用 `disassembler/frida_unpack.py` 的内置监控机制。该脚本位于项目根目录: `$(dirname $(dirname "$SCRIPTS_DIR"))/disassembler/frida_unpack.py`。
 
 ---
 
