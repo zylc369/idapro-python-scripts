@@ -186,6 +186,32 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 3. **该吃苦时吃苦，找到规律就切换** — 寻找关键点的过程可能需要笨办法（逐个检查函数、手动追踪数据流），但一旦发现规律或模式，立即用聪明办法
 4. **模式识别优于从零分析** — 已知模式（UPX 段名、常见壳结构、密码学常量）直接利用，不重新发现
 
+## 结果验证（强制）
+
+生成的分析结果（如 license、key、password）必须经过验证才能报告给用户。
+
+验证优先级（从高到低，优先使用靠前的手段）：
+1. Unicorn 模拟原函数 — 直接运行二进制中的验证函数，传入结果，读取返回值
+2. ctypes 加载调用 — 将二进制加载到进程，直接调用验证函数
+3. Hook 读取中间值 — 在关键点设置 Hook，运行程序读取中间计算结果
+4. Patch 排除法（二分） — 逐段绕过检查点，定位 pipeline 中的失败位置
+5. 用户人工确认 — 最后手段
+
+**绝对禁止**：用自己的重实现代码验证自己的重实现结果（作弊式验证）。详见 `crypto-validation-patterns.md` 的"验证策略"章节。
+
+## 阶段 0：环境检测
+
+在阶段 A 之前执行环境检测（首次使用或缓存过期时）：
+
+```bash
+python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
+```
+
+- 成功 → 读取 `env.json` 获取环境信息，继续分析
+- 失败 → 输出错误信息，提示用户安装缺失工具
+- 缓存有效期 24 小时，重复使用不重新检测
+- 环境信息用于后续技术选型决策（参见 `technology-selection.md`）
+
 ---
 
 ## 工具脚本清单
@@ -241,6 +267,8 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 | `dynamic-analysis.md` | 需要动态分析（调试、运行时验证） |
 | `dynamic-analysis-frida.md` | IDA 调试器失败时的后备 |
 | `crypto-validation-patterns.md` | 检测到密码学算法特征 |
+| `technology-selection.md` | 需要实现算法、编写求解器、性能敏感计算 |
+| `ecdlp-solving.md` | 遇到椭圆曲线离散对数问题 (ECDLP) |
 | `script-generation.md` | 需要生成新 IDAPython 脚本 |
 
 ---
@@ -264,6 +292,12 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 ## 执行统计
 - idat 调用: X 次 | 手写脚本: X 个 | 重试: X 次 | 耗时: Xm Xs
 - 任务目录: ~/bw-ida-pro-analysis/workspace/<task_id>/
+
+## [规则提醒]
+① 禁止作弊式验证（必须用 Unicorn/ctypes/Hook/Patch 验证结果）
+② 环境检测: 见 env_cache.json
+③ 计算密集型 → 用 C/C++（见 technology-selection.md）
+④ ECDLP → 见 ecdlp-solving.md
 ```
 
 ---

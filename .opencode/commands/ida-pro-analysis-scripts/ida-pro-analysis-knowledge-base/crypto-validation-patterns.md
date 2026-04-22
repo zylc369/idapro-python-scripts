@@ -212,3 +212,103 @@ Base64Decode(Serial)
 ### 数据流追踪
 
 **关键**：逐字节追踪比较操作，确认两个操作数分别来自哪里。不要假设——从反编译代码中确认。
+
+---
+
+## 验证策略（强制）
+
+> 分析结果（如 license、key、password）必须经过验证才能报告给用户。
+> 本章节统一了验证标准、排除法、模拟执行优先三个策略。
+
+### 验证优先级（从高到低）
+
+| 优先级 | 手段 | 适用场景 | 禁忌 |
+|--------|------|---------|------|
+| 1 | **Unicorn 模拟原函数** | 验证加密/解密是否正确，确认输入输出 | — |
+| 2 | **ctypes 加载调用** | Unicorn 无法模拟但可以加载整个二进制 | 需要注意加载地址冲突 |
+| 3 | **Hook 读取中间值** | 需要运行程序并读取中间计算结果 | 需要 GUI 或可自动化操作 |
+| 4 | **Patch 排除法（二分）** | 验证 pipeline 失败时定位具体失败点 | 仅适用于 pipeline 结构 |
+| 5 | **用户人工确认** | 以上手段均不可用时 | — |
+
+**绝对禁止**: 用自己的重实现代码验证自己的重实现结果（作弊式验证）。
+
+### Unicorn 模拟原函数
+
+**何时使用**: 需要验证加密/解密是否正确、对比标准实现与二进制行为。
+
+```python
+from unicorn import Uc, UC_ARCH_X86, UC_MODE_32
+from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ESP
+
+# 1. 加载二进制段到 Unicorn
+mu = Uc(UC_ARCH_X86, UC_MODE_32)
+mu.mem_map(BASE, SIZE)
+mu.mem_write(BASE, binary_data)
+
+# 2. 设置栈
+mu.mem_map(STACK_BASE, STACK_SIZE)
+mu.reg_write(UC_X86_REG_ESP, STACK_BASE + STACK_SIZE - 0x100)
+
+# 3. 写入测试数据
+mu.mem_write(DATA_ADDR, test_input)
+
+# 4. 设置参数（根据调用约定）
+# cdecl: 参数在栈上
+# thiscall: this 在 ECX，参数在栈上
+
+# 5. 执行并读取返回值
+mu.emu_start(FUNC_ADDR, FUNC_ADDR + FUNC_SIZE)
+result = mu.reg_read(UC_X86_REG_EAX)
+```
+
+### ctypes 直接调用
+
+**何时使用**: 需要调用二进制中的函数，且可以将整个二进制加载到进程。
+
+```python
+import ctypes
+dll = ctypes.CDLL("target.exe")  # 或 LoadLibrary
+func = dll.target_function
+func.argtypes = [ctypes.c_char_p, ctypes.c_int]
+func.restype = ctypes.c_int
+result = func(test_input, len(test_input))
+```
+
+### Hook 读取中间值
+
+**何时使用**: 需要运行目标程序并读取加密函数的中间计算结果。
+
+- 使用 Frida 在关键函数设置 Hook
+- 或使用 IDA 调试器在关键地址设置断点读取寄存器/内存
+- 适合验证 pipeline 中某个阶段的输出
+
+### Patch 排除法（二分定位）
+
+**何时使用**: 验证 pipeline 失败，需要定位具体是哪个阶段导致失败。
+
+```
+Pipeline: A → B → C → D → E（每一步是一个独立检查/变换）
+策略: 从 pipeline 末尾开始 patch，逐步向前
+```
+
+**步骤**:
+1. Patch 掉 E 的检查 → 运行程序 → 仍失败？
+2. 恢复 E，Patch D → 运行程序 → 仍失败？
+3. 继续向前，直到找到第一个"patch 后通过"的点
+4. 该点就是真正的失败阶段
+
+**实现要点**:
+- 用 IDA 的 `read_data bytes` 读取原始字节，保存备份
+- `jnz` → `jz` 或 `jmp` (改 1-2 字节) 是最常见的 patch 方式
+- 从 pipeline 末尾开始 patch，逐步向前
+- 每次只 patch 一个检查点
+- 找到失败点后恢复原始字节
+
+### 模拟执行 vs 手动重实现
+
+**何时手动重实现**（必须满足至少一条）:
+- Unicorn 无法模拟（特殊硬件指令、自修改代码）
+- 需要大量测试不同输入（Unicorn 单次调用开销大）
+- 需要理解算法内部细节以进行修改
+
+**其他情况** → 优先模拟执行（避免重实现引入 bug）。
