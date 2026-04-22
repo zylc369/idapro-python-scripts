@@ -142,7 +142,7 @@ IDA_QUERY=read_data IDA_ADDR=0x14013F008 IDA_READ_MODE=pointer IDA_DEREF=1 \
 
 idat 执行失败时：
 1. 检查返回码 `$?`
-2. 读取 `-L` 日志文件末尾 50 行：`python3 -c "import sys; lines = open(sys.argv[1]).readlines(); [print(l, end='') for l in lines[-50:]]" "$TASK_DIR/idat.log"`
+2. 读取 `-L` 日志文件末尾 50 行：`python3 -c "import sys; lines = open(sys.argv[1], encoding='utf-8', errors='replace').readlines(); [print(l, end='') for l in lines[-50:]]" "$TASK_DIR/idat.log"`
 3. 常见错误：
    - `Resource temporarily unavailable` → 数据库被锁
    - `ModuleNotFoundError` → 脚本路径错误
