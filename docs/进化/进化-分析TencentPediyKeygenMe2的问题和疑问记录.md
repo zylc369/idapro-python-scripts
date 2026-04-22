@@ -170,4 +170,5 @@ Let me try yet another approach. Since the binary itself contains the CryptoPP c
 - 其他需要进化的点，你自己分析。
 
 ## 后记
-**TencentPediyKeygenMe2.exe**最终没有找到正确的**License Code**，我给你停止了让你进化是因为，我觉得上面提到的问题反复出现，例如最新的算法跑的慢的问题。如果问题不解决，恐怕永远无法解决我给你提的要求！
+- **TencentPediyKeygenMe2.exe**最终没有找到正确的**License Code**，我给你停止了让你进化是因为，我觉得上面提到的问题反复出现，例如最新的算法跑的慢的问题。如果问题不解决，恐怕永远无法解决我给你提的要求！
+- 目标是，这次进化后，**TencentPediyKeygenMe2.exe**能分析出正确的**License Code**!
