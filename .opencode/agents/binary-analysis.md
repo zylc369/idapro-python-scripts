@@ -107,18 +107,39 @@ print(d)
 
 ---
 
-## 阶段 0：环境检测（首次使用时）
+## 阶段 0：环境检测（强制 — 每次分析前）
 
-在阶段 A 之前执行环境检测：
+**不可跳过**。在阶段 A 之前必须执行环境检测：
 
 ```bash
 python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 ```
 
-- 成功 → 读取 env.json 获取环境信息，继续分析
-- 失败 → 输出错误信息，提示用户安装缺失工具
-- 缓存有效期 24 小时，重复使用不重新检测
+- 成功 → 读取 env.json，提取 `venv_python` 赋值给 `$BA_PYTHON`，继续分析
+- **失败（`success: false`）→ 必须停下来告知用户，列出缺失工具的安装命令，禁止继续分析**
+- 未看到 Plugin 注入的环境信息 → 必须先执行环境检测，禁止跳过
+- 缓存有效期 24 小时，有缓存时快速通过（但仍需确认 env_cache.json 存在且 `success: true`）
 - 环境信息用于后续技术选型决策（参见 `knowledge-base/technology-selection.md`）
+
+**阶段 0 成功后**，初始化 `$BA_PYTHON`（用于运行需要第三方包的独立脚本）：
+
+bash:
+```bash
+BA_PYTHON=$(python3 -c "
+import json, os, sys
+cache_path = os.path.expanduser('~/bw-ida-pro-analysis/env_cache.json')
+if os.path.isfile(cache_path):
+    cache = json.load(open(cache_path))
+    print(cache.get('data', {}).get('venv_python', 'python3'))
+else:
+    print('python3')
+")
+```
+
+PowerShell:
+```powershell
+$BA_PYTHON = python -c "import json,os,sys; p=os.path.expanduser('~/bw-ida-pro-analysis/env_cache.json'); print(json.load(open(p)).get('data',{}).get('venv_python','python')) if os.path.isfile(p) else print('python')"
+```
 
 ---
 
@@ -275,6 +296,8 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 
 ### 环境检测脚本
 
+> 注意: detect_env.py 使用系统 Python（`python3`/`python`），不用 `$BA_PYTHON`。
+
 ```bash
 python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 ```
@@ -282,7 +305,7 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 ### GUI 验证脚本
 
 ```bash
-python3 "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --output "$TASK_DIR/gui_result.json"
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --output "$TASK_DIR/gui_result.json"
 ```
 
 ### 脚本生成与沉淀规则

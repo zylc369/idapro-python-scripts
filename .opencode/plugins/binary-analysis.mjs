@@ -86,6 +86,9 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
         } else {
           envSection += `- 编译器: 未检测到\n`;
         }
+        if (envInfo.venv_python) {
+          envSection += `- BA_PYTHON: ${envInfo.venv_python}\n`;
+        }
         if (envInfo.packages) {
           const pkgs = Object.entries(envInfo.packages)
             .filter(([, v]) => v.available)

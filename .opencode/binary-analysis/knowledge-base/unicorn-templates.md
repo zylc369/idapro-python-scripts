@@ -170,6 +170,7 @@ run_headless(_main)
 ## 模板 2: 纯 Python 脚本（不依赖 IDA）
 
 > 在 Python 进程中直接运行，需要手动提供二进制数据。适用于算法验证。
+> **必须使用 `$BA_PYTHON` 运行**（需要 unicorn 包，安装在 venv 中）。
 
 ```python
 """Unicorn 模拟执行 — 纯 Python 模板
@@ -230,7 +231,7 @@ def emulate_function(binary_path, func_offset, func_size, base_addr=0x400000, is
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print(f"用法: {sys.argv[0]} <二进制文件> <函数偏移(hex)> <函数大小>")
+        print(f"用法: $BA_PYTHON {sys.argv[0]} <二进制文件> <函数偏移(hex)> <函数大小>")
         sys.exit(1)
 
     binary_path = sys.argv[1]

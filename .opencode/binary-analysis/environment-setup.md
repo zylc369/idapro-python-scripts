@@ -2,6 +2,31 @@
 
 > 逆向分析工具链安装指南，按平台分类。
 
+## 虚拟环境策略
+
+Python 第三方包（capstone、unicorn、gmpy2、frida）安装在专用虚拟环境中，**不污染全局 Python**。
+
+- **venv 位置**: `~/bw-ida-pro-analysis/.venv`
+- **自动管理**: `detect_env.py` 自动创建 venv 并安装依赖
+- **缓存**: 环境检测结果缓存在 `~/bw-ida-pro-analysis/env_cache.json`，24 小时有效期
+- **手动安装**:
+  ```bash
+  # Linux/macOS
+  ~/bw-ida-pro-analysis/.venv/bin/python -m pip install <包名>
+
+  # Windows
+  ~/bw-ida-pro-analysis/.venv/Scripts/python.exe -m pip install <包名>
+  ```
+- **重建 venv**: 删除 `~/bw-ida-pro-analysis/.venv` 和 `~/bw-ida-pro-analysis/env_cache.json`，重新运行 `detect_env.py --force`
+
+**三类 Python 环境**:
+
+| 环境 | 用途 | 可执行文件 |
+|------|------|-----------|
+| 系统 Python | detect_env.py、内联一行命令 | `python3`/`python` |
+| venv Python | 需要第三方包的独立脚本（Unicorn、Frida、gui_verify） | `$BA_PYTHON` |
+| IDA Python | IDAPython 脚本（query.py、update.py 等） | `$IDAT` |
+
 ## capstone vs IDA Pro — 为什么要装 capstone？
 
 IDA Pro 自带反汇编引擎，但 **capstone 是独立的反汇编框架**，用于 Unicorn 模拟执行：
@@ -55,8 +80,11 @@ dir "C:\Program Files (x86)\Microsoft Visual Studio" /s /b | findstr vcvarsall.b
 
 ### Python 包
 
+> 自动安装到 venv（`~/bw-ida-pro-analysis/.venv`），一般无需手动操作。
+
+手动安装到 venv（自动安装失败时）：
 ```cmd
-pip install capstone unicorn gmpy2 frida
+~/bw-ida-pro-analysis/.venv/Scripts/python.exe -m pip install capstone unicorn gmpy2 frida
 ```
 
 ### 常见问题
@@ -77,13 +105,16 @@ sudo apt update && sudo apt install -y build-essential libgmp-dev
 
 ### Python 包
 
+> 自动安装到 venv，一般无需手动操作。
+
+手动安装到 venv：
 ```bash
-pip3 install capstone unicorn gmpy2 frida
+~/bw-ida-pro-analysis/.venv/bin/python -m pip install capstone unicorn gmpy2 frida
 ```
 
 验证：
 ```bash
-gcc --version && python3 -c "import capstone; print('capstone OK')"
+gcc --version && ~/bw-ida-pro-analysis/.venv/bin/python -c "import capstone; print('capstone OK')"
 ```
 
 ### 常见问题
@@ -103,13 +134,16 @@ xcode-select --install
 
 ### Python 包
 
+> 自动安装到 venv，一般无需手动操作。
+
+手动安装到 venv：
 ```bash
-pip3 install capstone unicorn gmpy2 frida
+~/bw-ida-pro-analysis/.venv/bin/python -m pip install capstone unicorn gmpy2 frida
 ```
 
 验证：
 ```bash
-clang --version && python3 -c "import capstone; print('capstone OK')"
+clang --version && ~/bw-ida-pro-analysis/.venv/bin/python -c "import capstone; print('capstone OK')"
 ```
 
 ---

@@ -3,8 +3,10 @@
 description:
   检测逆向分析所需的工具链和依赖包，输出 JSON 格式结果。
   支持 Windows/Linux/macOS。
-  Python 包缺失时自动安装，C/C++ 编译器缺失时通知用户。
+  自动创建专用虚拟环境（~/bw-ida-pro-analysis/.venv），在其中安装 Python 包。
+  C/C++ 编译器缺失时通知用户。
   结果缓存 24 小时。
+  必需依赖缺失时返回 success: false，Agent 应停止并提示用户安装。
 
 usage:
   python detect_env.py [--output PATH] [--force] [--skip-install]
@@ -20,11 +22,11 @@ import shutil
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 CACHE_DIR = os.path.expanduser("~/bw-ida-pro-analysis")
 CACHE_FILE = os.path.join(CACHE_DIR, "env_cache.json")
-CACHE_TTL = 86400  # 24 hours
+CACHE_TTL = 86400
+VENV_DIR = os.path.join(CACHE_DIR, ".venv")
 
 REQUIRED_PACKAGES = {
     "capstone": {"required": True, "pip_name": "capstone"},
@@ -32,6 +34,31 @@ REQUIRED_PACKAGES = {
     "gmpy2": {"required": True, "pip_name": "gmpy2"},
     "frida": {"required": False, "pip_name": "frida"},
 }
+
+
+def _venv_python_path():
+    if os.name == "nt":
+        return os.path.join(VENV_DIR, "Scripts", "python.exe")
+    return os.path.join(VENV_DIR, "bin", "python")
+
+
+def _ensure_venv():
+    venv_python = _venv_python_path()
+    if os.path.isfile(venv_python):
+        return venv_python
+
+    print(f"[*] 正在创建虚拟环境: {VENV_DIR}")
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "venv", VENV_DIR],
+            check=True, timeout=120,
+        )
+        print(f"[+] 虚拟环境创建成功: {VENV_DIR}")
+        return venv_python
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+        print(f"[!] 创建虚拟环境失败: {e}", file=sys.stderr)
+        print(f"[!] 请手动创建: {sys.executable} -m venv {VENV_DIR}", file=sys.stderr)
+        return None
 
 
 def _load_cache(force=False):
@@ -171,17 +198,21 @@ def _detect_gcc_unix():
     return {"available": False, "type": None, "path": None, "vcvarsall": None}
 
 
-def _detect_package(name, pip_name):
+def _detect_package(name, venv_python):
     try:
-        mod = __import__(name)
-        version = getattr(mod, "__version__", "unknown")
-        return {"available": True, "version": version}
-    except ImportError:
-        return {"available": False, "version": None}
+        result = subprocess.run(
+            [venv_python, "-c", f"import {name}; print(__import__('{name}').__version__)"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            return {"available": True, "version": result.stdout.strip() or "unknown"}
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return {"available": False, "version": None}
 
 
-def _install_package(pip_name, timeout=60):
-    pip_cmd = [sys.executable, "-m", "pip", "install", pip_name]
+def _install_package(venv_python, pip_name, timeout=60):
+    pip_cmd = [venv_python, "-m", "pip", "install", pip_name]
     try:
         result = subprocess.run(pip_cmd, capture_output=True, text=True, timeout=timeout)
         if result.returncode == 0:
@@ -213,6 +244,15 @@ def _detect_ida_pro():
 def run_detection(skip_install=False):
     errors = []
 
+    print("[*] 正在创建/检测虚拟环境...")
+    venv_python = _ensure_venv()
+    if venv_python is None:
+        errors.append(f"虚拟环境创建失败。请手动运行: {sys.executable} -m venv {VENV_DIR}")
+        result = {"success": False, "data": {"venv_python": None, "compiler": {"available": False}, "packages": {}, "ida_pro": {"available": False}}, "errors": errors}
+        return result
+
+    print(f"[+] 虚拟环境 Python: {venv_python}")
+
     print("[*] 正在检测 C/C++ 编译器...")
     compiler = _detect_compiler()
     if compiler["available"]:
@@ -236,25 +276,28 @@ def run_detection(skip_install=False):
     packages = {}
     for name, info in REQUIRED_PACKAGES.items():
         print(f"[*] 正在检测 {name}...")
-        pkg_info = _detect_package(name, info["pip_name"])
+        pkg_info = _detect_package(name, venv_python)
         if not pkg_info["available"] and not skip_install:
-            print(f"[*] {name} 未安装，正在自动安装...")
-            if _install_package(info["pip_name"]):
-                pkg_info = _detect_package(name, info["pip_name"])
+            print(f"[*] {name} 未安装，正在自动安装到虚拟环境...")
+            if _install_package(venv_python, info["pip_name"]):
+                pkg_info = _detect_package(name, venv_python)
                 if pkg_info["available"]:
                     print(f"[+] {name} 安装成功: {pkg_info['version']}")
                 else:
                     print(f"[!] {name} 安装后仍无法导入")
             else:
+                pip_path = os.path.join(os.path.dirname(venv_python), "pip") if os.name != "nt" else os.path.join(os.path.dirname(venv_python), "pip.exe")
+                manual_cmd = f"{venv_python} -m pip install {info['pip_name']}"
                 if info["required"]:
-                    errors.append(f"{name} 安装失败，请手动运行: pip install {info['pip_name']}")
+                    errors.append(f"{name} 安装失败，请手动运行: {manual_cmd}")
                 else:
-                    print(f"[!] {name} 安装失败（可选包，不影响核心流程）")
+                    print(f"[!] {name} 安装失败（可选包，不影响核心流程）。手动安装: {manual_cmd}")
         elif pkg_info["available"]:
             print(f"[+] {name}: {pkg_info['version']}")
         else:
             if info["required"]:
-                errors.append(f"{name} 未安装且 --skip-install 已指定")
+                manual_cmd = f"{venv_python} -m pip install {info['pip_name']}"
+                errors.append(f"{name} 未安装。请运行: {manual_cmd}")
             print(f"[!] {name} 未安装（--skip-install）")
         packages[name] = pkg_info
 
@@ -263,13 +306,14 @@ def run_detection(skip_install=False):
     if ida_pro["available"]:
         print(f"[+] IDA Pro: {ida_pro['path']}")
     else:
-        print("[!] IDA Pro 未配置（可通过 /ida-pro-analysis 命令配置）")
+        print("[!] IDA Pro 未配置")
 
     data = {
         "compiler": compiler,
         "python_arch": python_arch,
         "packages": packages,
         "ida_pro": ida_pro,
+        "venv_python": venv_python,
     }
 
     success = len(errors) == 0
@@ -289,9 +333,15 @@ def main():
 
     cached = _load_cache(force=args.force)
     if cached and not args.force:
-        result = {"success": True, "data": cached, "errors": []}
-        print("[*] 使用缓存的环境检测结果（使用 --force 强制重新检测）")
-    else:
+        venv_python = cached.get("venv_python")
+        if venv_python and os.path.isfile(venv_python):
+            result = {"success": True, "data": cached, "errors": []}
+            print("[*] 使用缓存的环境检测结果（使用 --force 强制重新检测）")
+        else:
+            print("[!] 缓存中的虚拟环境路径无效，重新检测...")
+            cached = None
+
+    if not cached or args.force:
         result = run_detection(skip_install=args.skip_install)
 
     output_json = json.dumps(result, indent=2, ensure_ascii=False)
