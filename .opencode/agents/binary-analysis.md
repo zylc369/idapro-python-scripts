@@ -232,15 +232,30 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 
 生成的分析结果（如 license、key、password）必须经过验证才能报告给用户。
 
-验证优先级（从高到低，优先使用靠前的手段）：
-1. **Unicorn 模拟原函数** — 直接运行二进制中的验证函数，传入结果，读取返回值
-2. **ctypes 加载调用** — 将二进制加载到进程，直接调用验证函数
-3. **GUI 自动化验证** — 用 `scripts/gui_verify.py` 自动输入并点击验证，读取结果
-4. **Hook 读取中间值** — 在关键点设置 Hook，运行程序读取中间计算结果
-5. **Patch 排除法（二分）** — 逐段绕过检查点，定位 pipeline 中的失败位置
-6. **用户人工确认** — 最后手段
+**完整方案模板见 `$SCRIPTS_DIR/knowledge-base/verification-patterns.md`。**
 
-**绝对禁止**：用自己的重实现代码验证自己的重实现结果（作弊式验证）。详见 `knowledge-base/crypto-validation-patterns.md` 的"验证策略"章节。
+### 验证决策树
+
+```
+第一步：能否定位到验证函数？
+├─ 能 → 函数是否"干净"（纯计算，不调系统 API，无 SEH）？
+│       ├─ 是 → Unicorn 模拟原函数
+│       └─ 否 → Hook 注入参数 + Hook 读返回值
+│               （DLL 例外：直接 ctypes 加载调用，更简单可靠）
+└─ 不能 → 程序类型？
+        ├─ 命令行 → subprocess 传参，读 stdout/退出码
+        ├─ DLL → 枚举导出函数 + ctypes 逐个调用
+        └─ GUI → gui_verify.py
+                  ├─ 控件 ID 未知 → --discover
+                  ├─ 标准操作 → 默认模式
+                  ├─ 输入不进去 → --hook-inject
+                  ├─ 读不出结果 → --hook-result
+                  └─ 全部失败 → Patch 排除法 → 用户人工确认
+```
+
+**核心禁令**:
+- **绝对禁止**用自己重实现代码验证自己重实现结果（作弊式验证）
+- 验证优先用 Hook 读返回值（代码层面 100% 可靠），后备观察程序多维行为（原样报告由 AI 判断）
 
 ---
 
@@ -317,7 +332,17 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 ### GUI 验证脚本
 
 ```bash
+# 标准模式
 "$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --output "$TASK_DIR/gui_result.json"
+
+# 控件探测（ID 未知时先探测）
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --discover --output "$TASK_DIR/discover.json"
+
+# Hook 注入（GUI 输入不进去时，推荐用文件传参避免转义问题）
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --hook-inject --hook-func-addr 0x401000 --hook-inputs-file "$TASK_DIR/inputs.json" --output "$TASK_DIR/result.json"
+
+# Hook 读取结果（读不出结果时）
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --hook-result --hook-compare-addr 0x401200 --output "$TASK_DIR/result.json"
 ```
 
 ### 脚本生成与沉淀规则
@@ -344,6 +369,7 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 | `idapython-conventions.md` | 生成 IDAPython 脚本时的编码规范（导入、日志、代码风格） |
 | `unicorn-templates.md` | 需要模拟执行验证算法、Unicorn 脚本模板 |
 | `frida-hook-templates.md` | 需要 Frida Hook 脚本模板（参数拦截、返回值读取） |
+| `verification-patterns.md` | 需要验证分析结果（license/key/password） |
 
 ---
 

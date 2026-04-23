@@ -18,6 +18,15 @@
       "example_call": "IDA_OUTPUT=$TASK_DIR/result.json $IDAT -A -S$SCRIPTS_DIR/scripts/initial_analysis.py target.i64",
       "added_at": "2026-04-19",
       "verified": false
+    },
+    {
+      "name": "gui_verify",
+      "file": "gui_verify.py",
+      "description": "Win32 GUI 自动化验证脚本：支持控件探测(--discover)、标准 GUI 操作 + 多维行为观察、Hook 注入参数(--hook-inject)、Hook 读取比较结果(--hook-result)，hook-inject 和 hook-result 可组合使用",
+      "params": ["--exe", "--username", "--license", "--output", "--timeout", "--edit1-id", "--edit2-id", "--button-id", "--discover", "--hook-inject", "--hook-func-addr", "--hook-inputs", "--hook-inputs-file", "--hook-trigger-addr", "--hook-calling-convention", "--hook-result", "--hook-compare-addr", "--hook-compare-type", "--observe-rounds"],
+      "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/gui_verify.py --exe TARGET.EXE --username test --license XXXX --output result.json",
+      "added_at": "2026-04-23",
+      "verified": false
     }
   ]
 }

@@ -3,6 +3,8 @@
 > AI 编排器在 IDA 调试器失败时通过 Read 工具加载本后备方案。
 > IDA 调试器为首选，详见 `dynamic-analysis.md`。
 > **GUI 交互经验与 `dynamic-analysis.md` 保持一致。**
+> **验证结果时的完整决策树见 `verification-patterns.md`。**
+> **Hook 注入参数和 Hook 读取结果的模板见 `verification-patterns.md` 的"方案 C1"章节。**
 
 ## 触发条件
 

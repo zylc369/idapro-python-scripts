@@ -2,6 +2,7 @@
 
 > AI 编排器在需要 Frida Hook 脚本时按需加载。
 > **Frida 脚本必须使用 `$BA_PYTHON` 运行**（需要 frida 包，安装在 venv 中）。
+> 验证结果的完整决策树见 `verification-patterns.md`。本文件提供通用的 Hook 模板。
 
 ## 触发条件
 

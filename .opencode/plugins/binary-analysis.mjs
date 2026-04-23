@@ -8,7 +8,7 @@ const ENV_CACHE_FILE = join(DATA_DIR, "env_cache.json");
 
 const COMPACT_RULES = `## BinaryAnalysis 关键规则（压缩后恢复）
 
-① 禁止作弊式验证 — 必须用 Unicorn/ctypes/Hook/GUI/Patch 验证结果，绝不能用自己代码验证自己
+① 禁止作弊式验证 — 定位验证函数→能定位: 干净用Unicorn/复杂用Hook; 不能定位→CLI用subprocess/DLL用ctypes/GUI用gui_verify.py。详见 knowledge-base/verification-patterns.md
 ② 技术选型 — 计算密集型用 C/C++（见 knowledge-base/technology-selection.md）
 ③ ECDLP — 64-bit 以上必须用 C（见 knowledge-base/ecdlp-solving.md）
 ④ 环境检测 — detect_env.py 检测工具链，缓存 24h

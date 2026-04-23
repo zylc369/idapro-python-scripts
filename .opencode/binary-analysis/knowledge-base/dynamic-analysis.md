@@ -26,6 +26,17 @@
 
 > **以下策略按优先级排序，优先使用高优先级方法。低优先级方法是高优先级失败后的回退方案。**
 > **GUI 交互经验在本文档和 `dynamic-analysis-frida.md` 中保持一致。**
+> **验证结果时的完整决策树见 `verification-patterns.md`。**
+
+### 策略 0（最先尝试）：定位验证函数
+
+在尝试任何 GUI 操作之前，先通过静态分析（decompile/xrefs/strings）定位验证函数。
+一旦定位到，直接走"直接调用路径"（Hook 注入参数 + Hook 读返回值），避免 GUI 操作。
+
+**常见验证函数定位方法**:
+1. strings 追踪: 找 "Correct"/"Wrong"/"Success" 等字符串 → xrefs_to → 找到引用函数
+2. imports 追踪: 找 GetDlgItemTextA/GetWindowTextA → 谁调用它们 → 追踪到验证逻辑
+3. Button 点击回调: 找 WM_COMMAND 处理 → BN_CLICKED 分支 → 追踪到验证函数
 
 ### 策略 1（首选）：Hook 比较逻辑地址
 
