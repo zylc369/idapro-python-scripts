@@ -176,8 +176,6 @@ var breakAddr = ptr(BREAK_ADDR);
 if (breakAddr.compare(ptr(0)) !== 0) {
     Interceptor.attach(breakAddr, {
         onEnter: function(args) {
-            var result = this.context.readMemory
-                ? null : null;
             try {
                 var bytes = targetAddr.readByteArray(readSize);
                 var arr = new Uint8Array(bytes);

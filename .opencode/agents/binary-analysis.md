@@ -343,6 +343,9 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 
 # Hook 读取结果（读不出结果时）
 "$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --hook-result --hook-compare-addr 0x401200 --output "$TASK_DIR/result.json"
+
+# Hook 注入 + Hook 读取结果 组合模式（GUI 无法输入也无法读取结果时）
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --hook-inject --hook-func-addr 0x401000 --hook-inputs-file "$TASK_DIR/inputs.json" --hook-result --hook-compare-addr 0x401200 --hook-trigger-addr 0x401500 --output "$TASK_DIR/result.json"
 ```
 
 ### 脚本生成与沉淀规则

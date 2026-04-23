@@ -36,6 +36,14 @@ import ctypes.wintypes
 kernel32 = ctypes.windll.kernel32
 user32 = ctypes.windll.user32
 
+# kernel32 函数声明（用于进程检测）
+kernel32.OpenProcess.argtypes = [ctypes.wintypes.DWORD, ctypes.wintypes.BOOL, ctypes.wintypes.DWORD]
+kernel32.OpenProcess.restype = ctypes.wintypes.HANDLE
+kernel32.WaitForSingleObject.argtypes = [ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD]
+kernel32.WaitForSingleObject.restype = ctypes.wintypes.DWORD
+kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+
 # Win32 API 声明
 FindWindowW = user32.FindWindowW
 FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
@@ -76,6 +84,10 @@ GetWindowThreadProcessId.restype = ctypes.wintypes.DWORD
 GetDlgCtrlID = user32.GetDlgCtrlID
 GetDlgCtrlID.argtypes = [ctypes.wintypes.HWND]
 GetDlgCtrlID.restype = ctypes.c_int
+
+GetWindowLongPtrW = user32.GetWindowLongPtrW
+GetWindowLongPtrW.argtypes = [ctypes.wintypes.HWND, ctypes.c_int]
+GetWindowLongPtrW.restype = ctypes.c_void_p
 
 WM_SETTEXT = 0x000C
 WM_COMMAND = 0x0111
@@ -159,7 +171,7 @@ def _enum_children(parent_hwnd):
         cls = ctypes.create_unicode_buffer(256)
         GetClassNameW(hwnd, cls, 256)
         text = ctypes.create_unicode_buffer(512)
-        SendMessageW(hwnd, 0x000D, 512, ctypes.cast(text, ctypes.wintypes.LPARAM))  # WM_GETTEXT
+        SendMessageW(hwnd, 0x000D, 512, ctypes.addressof(text))  # WM_GETTEXT
 
         class_lower = cls.value.lower()
         if "edit" in class_lower:
@@ -225,7 +237,7 @@ def _set_text(hwnd, text):
 def _click_button(parent_hwnd, button_hwnd):
     ctrl_id = GetDlgCtrlID(button_hwnd)
     if ctrl_id == 0:
-        ctrl_id = user32.GetWindowLongPtrW(button_hwnd, -12)
+        ctrl_id = GetWindowLongPtrW(button_hwnd, -12)
     PostMessageW(parent_hwnd, WM_COMMAND, (BN_CLICKED << 16) | ctrl_id, button_hwnd)
     time.sleep(0.2)
 
@@ -289,6 +301,72 @@ def _observe_behavior(pid, main_wnd, proc, rounds=5, interval=0.5):
             observations["title_changed"] = True
 
         # 检查 Static 控件文本
+        children = _enum_children(main_wnd)
+        for c in children:
+            if c["type"] == "static" and c["text"]:
+                for kw in SUCCESS_KEYWORDS + FAIL_KEYWORDS:
+                    if kw in c["text"].lower() and c["text"] not in observations["static_texts"]:
+                        observations["static_texts"].append(c["text"])
+
+    return observations
+
+
+def _observe_frida_process(pid, rounds=5, interval=0.5):
+    """Frida 管理的进程的行为观察（无 Popen 对象，通过 EnumWindows 和进程检测判断）"""
+    observations = {
+        "new_windows": [],
+        "title_changed": False,
+        "static_texts": [],
+        "exit_code": None,
+        "process_running": True,
+    }
+
+    # 检查进程是否仍在运行
+    SYNCHRONIZE = 0x100000
+    handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+    if handle:
+        WAIT_TIMEOUT = 0x102
+        result = kernel32.WaitForSingleObject(handle, 0)
+        kernel32.CloseHandle(handle)
+        if result != WAIT_TIMEOUT:
+            observations["process_running"] = False
+            return observations  # 进程已死，后续观察无意义
+
+    # 查找该进程的窗口
+    windows = _find_all_windows(pid)
+    main_wnd = None
+    initial_title = ""
+    for w in windows:
+        if w["text"]:
+            main_wnd = w["handle"]
+            initial_title = w["text"]
+            break
+
+    if not main_wnd:
+        return observations
+
+    for _ in range(rounds):
+        time.sleep(interval)
+        # 每轮检查进程存活
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+        if handle:
+            wait_result = kernel32.WaitForSingleObject(handle, 0)
+            kernel32.CloseHandle(handle)
+            if wait_result != WAIT_TIMEOUT:
+                observations["process_running"] = False
+                break
+        all_wins = _find_all_windows(pid)
+        for w in all_wins:
+            text_lower = w["text"].lower()
+            if w["handle"] != main_wnd and w["text"]:
+                is_result = any(kw in text_lower for kw in SUCCESS_KEYWORDS + FAIL_KEYWORDS)
+                if is_result and w["text"] not in observations["new_windows"]:
+                    observations["new_windows"].append(w["text"])
+        # 检查标题变化
+        current_title = ctypes.create_unicode_buffer(512)
+        GetWindowTextW(main_wnd, current_title, 512)
+        if current_title.value != initial_title:
+            observations["title_changed"] = True
         children = _enum_children(main_wnd)
         for c in children:
             if c["type"] == "static" and c["text"]:
@@ -428,7 +506,7 @@ for (var idx = 0; idx < compareAddrs.length; idx++) {{
             }} catch(e) {{}}
         }}
 
-        // 通用 Hook
+        // 通用 Hook（无法获取返回值，match 为 null 表示未知）
         Interceptor.attach(addr, {{
             onEnter: function(args) {{
                 try {{
@@ -438,7 +516,7 @@ for (var idx = 0; idx < compareAddrs.length; idx++) {{
                         type: "compare", addr: addrStr,
                         op1_hex: Array.from(new Uint8Array(b1)).map(function(b){{return ('0'+b.toString(16)).slice(-2)}}).join(' '),
                         op2_hex: Array.from(new Uint8Array(b2)).map(function(b){{return ('0'+b.toString(16)).slice(-2)}}).join(' '),
-                        match: false
+                        match: null
                     }});
                 }} catch(e) {{
                     send({{type: "error", addr: addrStr, error: e.toString()}});
@@ -450,7 +528,7 @@ for (var idx = 0; idx < compareAddrs.length; idx++) {{
 """
 
 
-def _run_frida_hook(target_path, js_code, timeout=30, need_click=False, button_id=DEFAULT_BUTTON_ID, need_gui_input=False, username=None, license_code=None, edit1_id=DEFAULT_EDIT1_ID, edit2_id=DEFAULT_EDIT2_ID):
+def _run_frida_hook(target_path, js_code, timeout=30, need_click=False, button_id=DEFAULT_BUTTON_ID, need_gui_input=False, username=None, license_code=None, edit1_id=DEFAULT_EDIT1_ID, edit2_id=DEFAULT_EDIT2_ID, observe_rounds=3):
     """通用 Frida Hook 执行框架
     
     need_click: resume 后是否需要点击按钮触发验证
@@ -483,45 +561,63 @@ def _run_frida_hook(target_path, js_code, timeout=30, need_click=False, button_i
             messages.append({"type": "error", "error": msg.get("stack", str(msg))})
 
     script.on("message", on_message)
-    script.load()
-    frida.resume(pid)
 
-    # resume 后等待窗口出现
-    if need_click or need_gui_input:
-        time.sleep(2)
-        main_wnd, wnd_text = _find_main_window(pid, timeout=10)
-        if main_wnd:
-            if need_gui_input and username and license_code:
-                edit1 = GetDlgItem(main_wnd, edit1_id)
-                edit2 = GetDlgItem(main_wnd, edit2_id)
-                button = _find_button_by_heuristic(main_wnd, button_id)
-                if edit1 and edit2:
-                    _set_text(edit1, username)
-                    _set_text(edit2, license_code)
-                if button:
-                    _click_button(main_wnd, button)
-            elif need_click:
-                button = _find_button_by_heuristic(main_wnd, button_id)
-                if button:
-                    _click_button(main_wnd, button)
-
+    observations = {}
     try:
+        script.load()
+        frida.resume(pid)
+
+        # resume 后等待窗口出现并进行 GUI 操作
+        if need_click or need_gui_input:
+            time.sleep(2)
+            main_wnd, wnd_text = _find_main_window(pid, timeout=10)
+            if main_wnd:
+                if need_gui_input and username and license_code:
+                    edit1 = GetDlgItem(main_wnd, edit1_id)
+                    edit2 = GetDlgItem(main_wnd, edit2_id)
+                    button = _find_button_by_heuristic(main_wnd, button_id)
+                    if edit1 and edit2:
+                        _set_text(edit1, username)
+                        _set_text(edit2, license_code)
+                    if button:
+                        _click_button(main_wnd, button)
+                elif need_click:
+                    button = _find_button_by_heuristic(main_wnd, button_id)
+                    if button:
+                        _click_button(main_wnd, button)
+
+            # 在 sleep 期间收集 observations
+            observations = _observe_frida_process(pid, rounds=observe_rounds, interval=0.5)
+
         time.sleep(timeout)
     except KeyboardInterrupt:
         pass
     finally:
+        # sleep 后做最终一轮观察（捕获延迟弹窗等慢响应）
+        if need_click or need_gui_input:
+            final_obs = _observe_frida_process(pid, rounds=2, interval=0.5)
+            for key in ["new_windows", "static_texts"]:
+                for item in final_obs.get(key, []):
+                    if item not in observations.get(key, []):
+                        observations.setdefault(key, []).append(item)
+            if final_obs.get("title_changed"):
+                observations["title_changed"] = True
         try:
             session.detach()
         except Exception:
             pass
         _kill_process(pid)
 
-    return {"success": True, "messages": messages, "pid": pid}
+    return {"success": True, "messages": messages, "pid": pid, "observations": observations}
 
 
 def _kill_process(pid):
     if sys.platform == "win32":
-        os.system(f"taskkill /PID {pid} /F >nul 2>&1")
+        subprocess.call(
+            ["taskkill", "/PID", str(pid), "/F"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=0x08000000  # CREATE_NO_WINDOW
+        )
 
 
 # ============ 模式实现 ============
@@ -624,7 +720,7 @@ def run_standard(exe_path, username, license_code, edit1_id, edit2_id, button_id
         _terminate_proc(proc)
 
 
-def run_hook_inject(exe_path, func_addr, inputs, trigger_addr=None, calling_convention="auto", timeout=30, compare_addrs=None, observe_rounds=5):
+def run_hook_inject(exe_path, func_addr, inputs, trigger_addr=None, calling_convention="auto", timeout=30, compare_addrs=None, observe_rounds=5, button_id=DEFAULT_BUTTON_ID):
     """hook-inject 模式（可组合 hook-result）"""
     if not _check_frida():
         return {"success": False, "error": "frida 未安装，请运行: $BA_PYTHON -m pip install frida"}
@@ -632,25 +728,26 @@ def run_hook_inject(exe_path, func_addr, inputs, trigger_addr=None, calling_conv
     if not os.path.isfile(exe_path):
         return {"success": False, "error": f"可执行文件不存在: {exe_path}"}
 
-    # 构建 JS
-    js_code = _build_inject_js(func_addr, inputs, calling_convention)
+    # 构建 JS — 组合模式时先设 compare hook，再设 inject hook（需求 Branch C）
+    js_code = ""
+    if compare_addrs:
+        js_code = _build_result_js(compare_addrs, "auto")
 
-    # 如果有 trigger_addr，追加触发逻辑
+    js_code += _build_inject_js(func_addr, inputs, calling_convention)
+
+    # 如果有 trigger_addr，追加触发逻辑（Branch B: 监控 trigger 点入口/出口）
     if trigger_addr:
         js_code += f"""
 var triggerAddr = ptr("{hex(trigger_addr)}");
 Interceptor.attach(triggerAddr, {{
     onEnter: function(args) {{
-        // trigger-addr 命中，验证函数已被 inject hook 修改参数
-        // 如果需要手动调用验证函数，在此处添加 NativeFunction 调用
         send({{type: "trigger_hit", addr: "{hex(trigger_addr)}"}});
+    }},
+    onLeave: function(retval) {{
+        send({{type: "trigger_return", retval: retval.toInt32()}});
     }}
 }});
 """
-
-    # 如果组合 hook-result，追加比较 Hook
-    if compare_addrs:
-        js_code += _build_result_js(compare_addrs, "auto")
 
     print(f"[*] Hook inject 模式: func={hex(func_addr)}, inputs={len(inputs)} 个参数")
     if trigger_addr:
@@ -661,7 +758,8 @@ Interceptor.attach(triggerAddr, {{
     frida_result = _run_frida_hook(
         exe_path, js_code, timeout=timeout,
         need_click=(trigger_addr is None),
-        button_id=DEFAULT_BUTTON_ID,
+        button_id=button_id,
+        observe_rounds=observe_rounds,
     )
 
     if not frida_result["success"]:
@@ -675,10 +773,13 @@ Interceptor.attach(triggerAddr, {{
         if m.get("type") == "compare":
             compare_results.append(m)
 
-    # 如果有比较结果，基于比较结果判断
     if compare_results:
-        all_match = all(c.get("match", False) for c in compare_results)
-        confidence = "high" if all_match else "high"
+        non_none = [c for c in compare_results if c.get("match") is not None]
+        if non_none:
+            all_match = all(c["match"] for c in non_none)
+        else:
+            all_match = None  # 所有比较结果均为未知
+        confidence = "high" if all_match else "medium" if all_match is False else "low"
         return {
             "success": True,
             "mode": "hook_inject",
@@ -686,7 +787,7 @@ Interceptor.attach(triggerAddr, {{
             "verification_passed": all_match,
             "confidence": confidence,
             "aggregation_rule": "all",
-            "observations": {"raw_messages_count": len(messages)},
+            "observations": frida_result.get("observations", {}),
         }
 
     # 无比较结果，检查 inject_done 消息
@@ -698,7 +799,7 @@ Interceptor.attach(triggerAddr, {{
             "verification_passed": None,
             "message": "Hook 注入成功，但无比较结果可读",
             "confidence": "low",
-            "observations": {"raw_messages_count": len(messages)},
+            "observations": frida_result.get("observations", {}),
         }
 
     return {
@@ -707,7 +808,7 @@ Interceptor.attach(triggerAddr, {{
         "verification_passed": None,
         "message": "Hook 未触发或无消息返回",
         "confidence": "low",
-        "observations": {"raw_messages_count": len(messages)},
+        "observations": frida_result.get("observations", {}),
     }
 
 
@@ -732,6 +833,7 @@ def run_hook_result(exe_path, username, license_code, compare_addrs, compare_typ
         license_code=license_code,
         edit1_id=edit1_id,
         edit2_id=edit2_id,
+        observe_rounds=observe_rounds,
     )
 
     if not frida_result["success"]:
@@ -746,7 +848,18 @@ def run_hook_result(exe_path, username, license_code, compare_addrs, compare_typ
             compare_results.append(m)
 
     if compare_results:
-        all_match = all(c.get("match", False) for c in compare_results)
+        non_none = [c for c in compare_results if c.get("match") is not None]
+        if not non_none:
+            return {
+                "success": True,
+                "mode": "hook_result",
+                "compare_results": compare_results,
+                "verification_passed": None,
+                "message": "比较结果均为未知（通用 Hook 无法判断匹配状态）",
+                "confidence": "low",
+                "observations": frida_result.get("observations", {}),
+            }
+        all_match = all(c["match"] for c in non_none)
         return {
             "success": True,
             "mode": "hook_result",
@@ -754,7 +867,7 @@ def run_hook_result(exe_path, username, license_code, compare_addrs, compare_typ
             "verification_passed": all_match,
             "confidence": "high",
             "aggregation_rule": "all",
-            "observations": {"raw_messages_count": len(messages)},
+            "observations": frida_result.get("observations", {}),
         }
 
     return {
@@ -764,7 +877,7 @@ def run_hook_result(exe_path, username, license_code, compare_addrs, compare_typ
         "verification_passed": None,
         "message": "比较点未命中，无比较结果",
         "confidence": "low",
-        "observations": {"raw_messages_count": len(messages)},
+        "observations": frida_result.get("observations", {}),
     }
 
 
@@ -789,7 +902,7 @@ def main():
     parser.add_argument("--username", required=False, help="用户名")
     parser.add_argument("--license", required=False, help="License 代码")
     parser.add_argument("--output", "-o", help="输出 JSON 文件路径")
-    parser.add_argument("--timeout", type=int, default=30, help="超时秒数（默认 30）")
+    parser.add_argument("--timeout", type=int, default=30, help="standard/discover 模式为窗口查找超时；hook 模式为 Hook 消息等待时间（默认 30）")
     parser.add_argument("--edit1-id", type=int, default=DEFAULT_EDIT1_ID, help="用户名编辑框控件 ID")
     parser.add_argument("--edit2-id", type=int, default=DEFAULT_EDIT2_ID, help="License 编辑框控件 ID")
     parser.add_argument("--button-id", type=int, default=DEFAULT_BUTTON_ID, help="验证按钮控件 ID")
@@ -838,10 +951,13 @@ def main():
     if args.hook_result:
         if not args.hook_compare_addr:
             parser.error("--hook-result 需要 --hook-compare-addr")
+        # hook-result 独立模式（不含 hook-inject）需要 username/license
+        if not args.hook_inject and (not args.username or not args.license):
+            parser.error("hook-result 独立模式需要 --username 和 --license（用于 GUI 输入触发验证）")
 
     if args.hook_inject and args.hook_result:
-        if not args.hook_trigger_addr and not args.button_id:
-            parser.error("组合模式需要 --hook-trigger-addr 或 --button-id（至少一个）")
+        if not args.hook_trigger_addr and args.button_id == DEFAULT_BUTTON_ID:
+            print("[!] 组合模式未指定 --hook-trigger-addr，将使用默认按钮 ID 尝试触发")
 
     # 执行
     if mode == "discover":
@@ -881,6 +997,7 @@ def main():
                 timeout=args.timeout,
                 compare_addrs=compare_addrs,
                 observe_rounds=args.observe_rounds,
+                button_id=args.button_id,
             )
         else:
             # 仅 hook-result

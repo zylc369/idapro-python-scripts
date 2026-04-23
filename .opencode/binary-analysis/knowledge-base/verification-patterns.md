@@ -188,35 +188,14 @@ Agent 操作步骤: 读取 `frida-hook-templates.md` → 复制模板 1 → 替�
 
 **CLI EXE / DLL**: 参照 `frida-hook-templates.md` 模板 3（比较函数 Hook）手动编写
 
-### 比较函数 Hook 示例（密码学逆向专用）
+### 比较函数 Hook 示例
 
-```javascript
-'use strict';
+> 详细的 Hook 模板见 `frida-hook-templates.md` 模板 3（含 memcmp/strcmp 通用 Hook）。
+> 以下为验证场景的快速参考：
 
-// Hook memcmp — 捕获所有内存比较
-var memcmp = Module.getExportByName(null, "memcmp");
-if (memcmp) {
-    Interceptor.attach(memcmp, {
-        onEnter: function(args) {
-            this.buf1 = args[0];
-            this.buf2 = args[1];
-            this.size = args[2].toInt32();
-        },
-        onLeave: function(retval) {
-            var size = Math.min(this.size, 64);
-            var b1 = this.buf1.readByteArray(size);
-            var b2 = this.buf2.readByteArray(size);
-            send({
-                type: "memcmp",
-                size: this.size,
-                result: retval.toInt32(),
-                buf1_hex: Array.from(new Uint8Array(b1)).map(b => ('0'+b.toString(16)).slice(-2)).join(' '),
-                buf2_hex: Array.from(new Uint8Array(b2)).map(b => ('0'+b.toString(16)).slice(-2)).join(' '),
-            });
-        }
-    });
-}
-```
+Hook memcmp 捕获内存比较，在 `onLeave` 中读取两个缓冲区内容和比较结果。
+Hook strcmp 捕获字符串比较，在 `onEnter` 中读取两个字符串。
+两者都通过 `send()` 将结果传回 Python 端，用于判断验证是否通过。
 
 ---
 
