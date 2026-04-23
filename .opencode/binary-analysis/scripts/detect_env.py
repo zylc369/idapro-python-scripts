@@ -12,6 +12,9 @@ usage:
   python detect_env.py [--output PATH] [--force] [--skip-install]
 
 level: intermediate
+
+packages:
+  必需: capstone, unicorn, gmpy2, frida, Pillow, pyautogui, pyperclip
 """
 
 import argparse
@@ -32,7 +35,10 @@ REQUIRED_PACKAGES = {
     "capstone": {"required": True, "pip_name": "capstone"},
     "unicorn": {"required": True, "pip_name": "unicorn"},
     "gmpy2": {"required": True, "pip_name": "gmpy2"},
-    "frida": {"required": False, "pip_name": "frida"},
+    "frida": {"required": True, "pip_name": "frida"},
+    "PIL": {"required": True, "pip_name": "Pillow"},
+    "pyautogui": {"required": True, "pip_name": "pyautogui"},
+    "pyperclip": {"required": True, "pip_name": "pyperclip"},
 }
 
 

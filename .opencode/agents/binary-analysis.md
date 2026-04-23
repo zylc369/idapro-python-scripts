@@ -74,6 +74,8 @@ $IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw
 
 **验证**: 变量赋值后执行 `echo $SCRIPTS_DIR` / `echo $IDAT` 确认非空。注意: bash 模板使用 `python3`（仅 Linux/macOS），Windows 统一使用 PowerShell 模板（使用 `python`）。
 
+**强制规则（Python 执行）**：所有需要第三方包的 Python 脚本必须通过 `$BA_PYTHON` 执行。禁止使用系统 Python（`python3`/`python`）执行带第三方依赖的脚本。系统 Python 仅用于运行 `detect_env.py`（因为它负责创建 venv）。违反此规则会导致包安装到全局环境，在其他机器上不可复现。
+
 ---
 
 ## 参数解析规则
