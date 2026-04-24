@@ -27,6 +27,33 @@
       "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/gui_verify.py --exe TARGET.EXE --username test --license XXXX --output result.json",
       "added_at": "2026-04-23",
       "verified": false
+    },
+    {
+      "name": "gui_capture",
+      "file": "gui_capture.py",
+      "description": "全屏截图工具，输出 JPEG/PNG 图片 + 元数据 JSON",
+      "params": ["--output-dir", "--name", "--format", "--quality"],
+      "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/gui_capture.py --output-dir $TASK_DIR/view --name step1_initial",
+      "added_at": "2026-04-24",
+      "verified": false
+    },
+    {
+      "name": "gui_act",
+      "file": "gui_act.py",
+      "description": "坐标级键鼠操作（click/type/hotkey/scroll），支持剪贴板粘贴",
+      "params": ["--action", "--x", "--y", "--text", "--keys", "--direction", "--clicks", "--button", "--paste", "--settle"],
+      "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/gui_act.py --action click --x 460 --y 320",
+      "added_at": "2026-04-24",
+      "verified": false
+    },
+    {
+      "name": "gui_launch",
+      "file": "gui_launch.py",
+      "description": "进程和窗口管理（launch/find_window/bring_to_front/kill/wait_window），P0 仅 Windows",
+      "params": ["--action", "--exe", "--pid", "--title", "--timeout"],
+      "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/gui_launch.py --action launch --exe TARGET.EXE",
+      "added_at": "2026-04-24",
+      "verified": false
     }
   ]
 }

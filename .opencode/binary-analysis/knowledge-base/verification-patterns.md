@@ -22,11 +22,14 @@
 └─ 不能 → Q: 程序类型？
         ├─ 命令行程序 → subprocess 运行，传参，读 stdout/退出码（方案 E3）
         ├─ DLL → 枚举导出函数 + ctypes 逐个调用（方案 E4）
-        └─ GUI 程序 → gui_verify.py（方案 A）
-                      ├─ 控件 ID 未知 → --discover
-                      ├─ 标准操作 → 默认模式
-                      ├─ 输入不进去 → --hook-inject
-                      ├─ 读不出结果 → --hook-result
+        └─ GUI 程序 → 视觉驱动 GUI 自动化（首选）
+                      ├─ 截图 → MCP 定位控件 → 键鼠操作 → 截图读结果
+                      ├─ MCP 连续 2 次超时或不可用 → 降级 gui_verify.py
+                      │   ├─ 控件 ID 未知 → --discover
+                      │   ├─ 标准操作 → 默认模式
+                      │   ├─ 输入不进去 → --hook-inject
+                      │   ├─ 读不出结果 → --hook-result
+                      │   └─ 全部失败 → Patch 排除法 → 用户人工确认
                       └─ 全部失败 → Patch 排除法 → 用户人工确认
 ```
 
@@ -158,6 +161,29 @@ for export in pe.DIRECTORY_ENTRY_EXPORT.symbols:
 ### 回退链
 
 ctypes 直接调用 → Hook inject/result（Frida 模板，见方案 C1）→ 用户确认
+
+---
+
+## GUI 视觉驱动方案（首选）
+
+**适用**: 未定位验证函数 + 程序类型为 GUI
+
+### 核心思路
+
+用多模态 LLM（zai-mcp-server）识别截图中的控件位置和文字，用坐标级键鼠操作（pyautogui + pyperclip）模拟人的操作，用截图对比判断操作结果。不依赖控件 API，跨框架通用。
+
+### 操作流程
+
+1. 截图 → MCP 识别控件坐标和文字
+2. 键鼠操作（gui_act.py）模拟点击和输入
+3. 再截图 → MCP 对比判断结果
+
+详细操作流程见 `$SCRIPTS_DIR/knowledge-base/gui-automation.md`。
+
+### 降级: gui_verify.py（仅当 MCP 不可用时）
+
+触发条件: MCP 连续 2 次超时 或 MCP 服务完全不可用。
+一旦降级，每次操作前仍尝试 MCP（1 次），恢复则切回视觉驱动。
 
 ---
 

@@ -247,11 +247,14 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 └─ 不能 → 程序类型？
         ├─ 命令行 → subprocess 传参，读 stdout/退出码
         ├─ DLL → 枚举导出函数 + ctypes 逐个调用
-        └─ GUI → gui_verify.py
-                  ├─ 控件 ID 未知 → --discover
-                  ├─ 标准操作 → 默认模式
-                  ├─ 输入不进去 → --hook-inject
-                  ├─ 读不出结果 → --hook-result
+        └─ GUI → 视觉驱动 GUI 自动化（首选）
+                  ├─ 截图 → MCP 定位控件 → 键鼠操作 → 截图读结果
+                  ├─ MCP 连续 2 次超时或不可用 → 降级 gui_verify.py
+                  │   ├─ 控件 ID 未知 → --discover
+                  │   ├─ 标准操作 → 默认模式
+                  │   ├─ 输入不进去 → --hook-inject
+                  │   ├─ 读不出结果 → --hook-result
+                  │   └─ 全部失败 → Patch 排除法 → 用户人工确认
                   └─ 全部失败 → Patch 排除法 → 用户人工确认
 ```
 
@@ -331,7 +334,32 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 ```
 
-### GUI 验证脚本
+### GUI 自动化工具
+
+> 视觉驱动 GUI 自动化方案详情见 `$SCRIPTS_DIR/knowledge-base/gui-automation.md`。
+> 以下为脚本快速参考。
+
+#### 视觉驱动方案（首选）
+
+```bash
+# 启动目标程序
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_launch.py" --action launch --exe <TARGET>
+
+# 截图定位控件
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_capture.py" --output-dir "$TASK_DIR/view" --name step1_initial
+
+# 键鼠操作（MCP 返回坐标后执行）
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_act.py" --action click --x 460 --y 320
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_act.py" --action type --text "license" --paste
+
+# 截图读结果
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_capture.py" --output-dir "$TASK_DIR/view" --name step2_result
+
+# 清理
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_launch.py" --action kill --pid <PID>
+```
+
+#### 降级方案（MCP 不可用时）: gui_verify.py
 
 ```bash
 # 标准模式
@@ -375,6 +403,7 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 | `unicorn-templates.md` | 需要模拟执行验证算法、Unicorn 脚本模板 |
 | `frida-hook-templates.md` | 需要 Frida Hook 脚本模板（参数拦截、返回值读取） |
 | `verification-patterns.md` | 需要验证分析结果（license/key/password） |
+| `gui-automation.md` | GUI 自动化操作（视觉驱动方案） |
 
 ---
 
