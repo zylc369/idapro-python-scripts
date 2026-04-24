@@ -8,6 +8,11 @@
 - 需要 `zai-mcp-server` MCP（视觉理解能力，全局安装在 OpenCode 中）
 - 脚本路径: `$SCRIPTS_DIR/scripts/gui_capture.py` / `gui_act.py` / `gui_launch.py`
 
+**环境变量说明**:
+- `$BA_PYTHON`: 带 pyautogui/pyperclip 的 venv Python 路径（从 `~/bw-ida-pro-analysis/env_cache.json` 的 `venv_python` 字段获取，或在 Binary-Analysis agent 中由环境检测阶段自动设置）
+- `$SCRIPTS_DIR`: 脚本根目录，通常为 `.opencode/binary-analysis/`（从 `~/bw-ida-pro-analysis/config.json` 的 `scripts_dir` 字段获取）
+- `$TASK_DIR`: 当前任务的工作目录（`~/bw-ida-pro-analysis/workspace/<task_id>/`），截图放在 `view/` 子目录下
+
 ## 标准操作流程
 
 ### Step 1: 启动目标程序
@@ -95,13 +100,16 @@
 "$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --discover --output "$TASK_DIR/discover.json"
 
 # 标准模式
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --output "$TASK_DIR/result.json"
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --output "$TASK_DIR/gui_result.json"
 
 # Hook 注入
 "$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --hook-inject --hook-func-addr 0x401000 --hook-inputs-file "$TASK_DIR/inputs.json" --output "$TASK_DIR/result.json"
 
 # Hook 读取结果
 "$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --hook-result --hook-compare-addr 0x401200 --output "$TASK_DIR/result.json"
+
+# Hook 注入 + Hook 读取结果 组合模式
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --hook-inject --hook-func-addr 0x401000 --hook-inputs-file "$TASK_DIR/inputs.json" --hook-result --hook-compare-addr 0x401200 --hook-trigger-addr 0x401500 --output "$TASK_DIR/result.json"
 ```
 
 降级后每次操作前仍尝试 MCP（1 次），恢复则切回视觉驱动。

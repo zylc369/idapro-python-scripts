@@ -262,6 +262,8 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 - **绝对禁止**用自己重实现代码验证自己重实现结果（作弊式验证）
 - 验证优先用 Hook 读返回值（代码层面 100% 可靠），后备观察程序多维行为（原样报告由 AI 判断）
 
+**GUI 降级护栏**: 降级到 gui_verify.py 后，每次 GUI 操作前仍尝试 MCP（1 次），恢复则切回视觉驱动。
+
 ---
 
 ## 超时监控（强制）
@@ -344,6 +346,9 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 ```bash
 # 启动目标程序
 "$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_launch.py" --action launch --exe <TARGET>
+
+# 等待窗口出现
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_launch.py" --action wait_window --pid <PID> --timeout 10
 
 # 截图定位控件
 "$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_capture.py" --output-dir "$TASK_DIR/view" --name step1_initial

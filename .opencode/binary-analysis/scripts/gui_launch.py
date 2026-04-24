@@ -120,11 +120,12 @@ def _find_windows_by_pid(pid, title_filter=None):
 
 
 def _kill_by_pid(pid):
-    subprocess.call(
+    result = subprocess.call(
         ["taskkill", "/PID", str(pid), "/F"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         creationflags=0x08000000,
     )
+    return result == 0
 
 
 def _is_process_running_by_name(basename):
@@ -141,7 +142,9 @@ def _is_process_running_by_name(basename):
 
 
 def do_launch(exe_path):
-    if not os.path.isfile(exe_path):
+    import shutil
+    resolved = shutil.which(exe_path) or exe_path
+    if not os.path.isfile(resolved) and not shutil.which(exe_path):
         _fail("launch", {"exe": exe_path}, f"可执行文件不存在: {exe_path}")
 
     basename = os.path.basename(exe_path)
@@ -181,6 +184,8 @@ def do_launch(exe_path):
         stderr_text = stderr_out.decode("utf-8", errors="replace") if stderr_out else ""
         proc.stderr.close()
         _fail("launch", {"exe": exe_path}, f"程序立即退出（exit code {poll}）: {stderr_text[:500]}")
+
+    proc.stderr.close()
 
     _log(f"[+] 进程已启动: PID={proc.pid}")
     _output({"success": True, "action": "launch", "pid": proc.pid, "exe": exe_path})
@@ -229,9 +234,12 @@ def do_bring_to_front(pid):
 
 def do_kill(pid):
     _log(f"[*] 终止进程 PID={pid}")
-    _kill_by_pid(pid)
-    _log(f"[+] 进程已终止")
-    _output({"success": True, "action": "kill", "pid": pid})
+    ok = _kill_by_pid(pid)
+    if ok:
+        _log(f"[+] 进程已终止")
+        _output({"success": True, "action": "kill", "pid": pid})
+    else:
+        _output({"success": True, "action": "kill", "pid": pid, "warning": "taskkill 返回非零，进程可能已不存在"})
 
 
 def main():

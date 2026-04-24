@@ -40,7 +40,7 @@
     {
       "name": "gui_act",
       "file": "gui_act.py",
-      "description": "坐标级键鼠操作（click/type/hotkey/scroll），支持剪贴板粘贴",
+      "description": "坐标级键鼠操作（click/double_click/type/hotkey/scroll），支持剪贴板粘贴",
       "params": ["--action", "--x", "--y", "--text", "--keys", "--direction", "--clicks", "--button", "--paste", "--settle"],
       "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/gui_act.py --action click --x 460 --y 320",
       "added_at": "2026-04-24",

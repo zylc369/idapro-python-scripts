@@ -45,7 +45,13 @@ def main():
     except ImportError:
         _fail("pyautogui 未安装，请运行: pip install pyautogui")
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    if args.quality < 1 or args.quality > 100:
+        _fail("--quality 必须在 1-100 范围内")
+
+    try:
+        os.makedirs(args.output_dir, exist_ok=True)
+    except OSError as e:
+        _fail(f"创建输出目录失败: {e}")
 
     img_format = args.format
     quality = args.quality

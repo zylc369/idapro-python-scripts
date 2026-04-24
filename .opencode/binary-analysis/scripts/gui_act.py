@@ -88,8 +88,8 @@ def main():
 
     elif action == "type":
         params = {"text": args.text}
-        if args.text is None:
-            _fail(action, params, "type 模式需要 --text 参数")
+        if args.text is None or args.text == "":
+            _fail(action, params, "type 模式需要非空 --text 参数")
         _log(f"[*] 输入文本: {args.text[:50]}{'...' if len(args.text) > 50 else ''}")
 
         has_non_ascii = any(ord(c) > 127 for c in args.text)
