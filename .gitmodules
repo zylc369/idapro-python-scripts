@@ -1,3 +1,6 @@
 [submodule "vendor/ida-sdk"]
 	path = vendor/ida-sdk
 	url = git@github.com:HexRaysSA/ida-sdk.git
+[submodule "vendor/oh-my-openagent"]
+	path = vendor/oh-my-openagent
+	url = https://github.com/code-yeongyu/oh-my-openagent.git

@@ -152,16 +152,16 @@ def _op_batch(batch_file, dry_run):
     log(f"[*] 批量操作模式，文件: {batch_file}\n")
 
     if not batch_file:
-        return {"error": "IDA_BATCH_FILE 未指定"}
+        return {"status": "error", "error": "IDA_BATCH_FILE 未指定"}
 
     if not os.path.isfile(batch_file):
-        return {"error": f"批量操作文件不存在: {batch_file}"}
+        return {"status": "error", "error": f"批量操作文件不存在: {batch_file}"}
 
     try:
         with open(batch_file, "r", encoding="utf-8") as f:
             batch_data = json.load(f)
     except Exception as e:
-        return {"error": f"读取批量操作文件失败: {e}"}
+        return {"status": "error", "error": f"读取批量操作文件失败: {e}"}
 
     operations = batch_data.get("operations", [])
     if not operations:

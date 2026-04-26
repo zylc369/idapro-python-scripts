@@ -38,8 +38,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _base import env_str, env_int, env_bool, log, run_headless
 from _utils import (
-    _PACKER_SEGMENT_PATTERNS,
-    estimate_entropy,
     get_func_name_safe,
     hex_addr,
     read_bytes_at,
@@ -48,20 +46,22 @@ from _utils import (
     read_string_at,
     resolve_addr,
     resolve_thunk,
-    seg_perm_str,
+)
+from _analysis import (
+    collect_entry_points,
+    collect_imports,
+    collect_segments,
+    collect_strings,
+    detect_packer,
 )
 
 import ida_auto
 import ida_bytes
 import ida_entry
 import ida_funcs
-import ida_ida
 import ida_idaapi
 import ida_lines
-import ida_loader
 import ida_nalt
-import ida_name
-import ida_segment
 import ida_xref
 import idautils
 
@@ -76,178 +76,36 @@ MAX_REFS_DISPLAY = 50
 MAX_STRINGS_DISPLAY = 100
 
 
-def _detect_segment_anomaly(name, seg, total_size):
-    """检测段的异常信号（加壳指示器）。"""
-    hints = []
-    name_upper = name.upper()
-    for packer, patterns in _PACKER_SEGMENT_PATTERNS.items():
-        for pat in patterns:
-            if name_upper == pat.upper() or name_upper.startswith(pat.upper()):
-                hints.append(f"known_packer_segment:{packer}")
-                break
-        if any(h.startswith("known_packer_segment") for h in hints):
-            break
-    seg_size = seg.size()
-    if total_size > 0 and seg_size > 0 and seg_size / total_size > 0.9:
-        hints.append("oversized_segment")
-    return hints
-
-
 def _query_packer_detect():
     """检测加壳/混淆二进制。通过多维信号分析判断是否加壳。"""
     log("[*] 正在检测加壳/混淆特征...\n")
 
-    signals = []
-    detected_packer = None
-    confidence = "none"
+    seg_list, packer_name_from_seg, _ = collect_segments()
+    entries, _, _, _ = collect_entry_points()
+    _, import_count, _ = collect_imports()
 
-    seg_qty = ida_segment.get_segm_qty()
-    log(f"[*] 段数量: {seg_qty}\n")
-
-    total_seg_size = 0
-    segment_names = []
-    for i in range(seg_qty):
-        seg = ida_segment.getnseg(i)
-        if seg is None:
-            continue
-        name = ida_segment.get_segm_name(seg)
-        segment_names.append(name)
-        total_seg_size += seg.size()
-
-    for name in segment_names:
-        name_upper = name.upper()
-        for packer, patterns in _PACKER_SEGMENT_PATTERNS.items():
-            for pat in patterns:
-                if name_upper == pat.upper() or name_upper.startswith(pat.upper()):
-                    signals.append({
-                        "type": "segment_name",
-                        "detail": f"段 {name} 存在",
-                        "weight": "high",
-                    })
-                    if detected_packer is None:
-                        detected_packer = packer
-                    log(f"[*] 检测到已知壳段名: {name} → {packer}\n")
-                    break
-
-    func_count = 0
-    for _ in idautils.Functions():
-        func_count += 1
-    log(f"[*] 函数数量: {func_count}\n")
-
-    if func_count <= 5:
-        eqty = ida_entry.get_entry_qty()
-        has_entry = eqty > 0
-        if has_entry:
-            weight = "high" if func_count <= 2 else "medium"
-            signals.append({
-                "type": "function_count",
-                "detail": f"仅 {func_count} 个函数（有入口点）",
-                "weight": weight,
-            })
-            log(f"[*] 异常信号: 函数数量过少 ({func_count})\n")
-
-    nimps = ida_nalt.get_import_module_qty()
-    imp_total = 0
-    for i in range(nimps):
-        def _count_cb(ea, name, ordinal):
-            nonlocal imp_total
-            imp_total += 1
-            return True
-        ida_nalt.enum_import_names(i, _count_cb)
-    log(f"[*] 导入函数数量: {imp_total}\n")
-
-    if imp_total == 0:
-        signals.append({
-            "type": "import_count",
-            "detail": "0 个导入函数",
-            "weight": "high",
-        })
-        log("[*] 异常信号: 无导入函数\n")
-    elif imp_total <= 3:
-        signals.append({
-            "type": "import_count",
-            "detail": f"仅 {imp_total} 个导入函数",
-            "weight": "medium",
-        })
-        log(f"[*] 异常信号: 导入函数过少 ({imp_total})\n")
-
-    high_entropy_segments = []
-    for i in range(seg_qty):
-        seg = ida_segment.getnseg(i)
-        if seg is None:
-            continue
-        seg_size = seg.size()
-        if seg_size < 64:
-            continue
-        entropy = estimate_entropy(seg.start_ea, seg_size)
-        if entropy > 7.0:
-            name = ida_segment.get_segm_name(seg)
-            high_entropy_segments.append({"name": name, "entropy": round(entropy, 2)})
-            log(f"[*] 高熵段: {name} entropy={entropy:.2f}\n")
-
-    if high_entropy_segments:
-        signals.append({
-            "type": "high_entropy",
-            "detail": f"{len(high_entropy_segments)} 个段熵 > 7.0: {', '.join(s['name'] for s in high_entropy_segments)}",
-            "weight": "medium",
-        })
-
-    if seg_qty <= 2 and total_seg_size > 0:
-        for seg_obj_name in segment_names:
-            pass
-        code_ratio = 0
-        for i in range(seg_qty):
-            seg = ida_segment.getnseg(i)
-            if seg is not None and seg.perm & 1:
-                code_ratio += seg.size()
-        if total_seg_size > 0 and code_ratio / total_seg_size > 0.95:
-            signals.append({
-                "type": "segment_layout",
-                "detail": f"仅 {seg_qty} 个段，代码段占比 {code_ratio / total_seg_size:.0%}",
-                "weight": "medium",
-            })
-
-    if detected_packer:
-        confidence = "high"
-    else:
-        high_signals = sum(1 for s in signals if s["weight"] == "high")
-        medium_signals = sum(1 for s in signals if s["weight"] == "medium")
-        if high_signals >= 2:
-            detected_packer = "unknown"
-            confidence = "high"
-        elif high_signals >= 1 and medium_signals >= 1:
-            detected_packer = "unknown"
-            confidence = "medium"
-        elif medium_signals >= 2:
-            detected_packer = "unknown"
-            confidence = "low"
-
-    packer_detected = confidence in ("high", "medium")
-    recommendation = ""
-    if packer_detected:
-        if detected_packer and detected_packer != "unknown":
-            recommendation = f"检测到 {detected_packer} 壳（置信度: {confidence}），建议先脱壳后分析。可尝试 {detected_packer.lower()} -d <file> 脱壳后重新加载到 IDA。"
-        else:
-            recommendation = f"检测到疑似加壳/混淆（置信度: {confidence}），建议先脱壳后分析。常见工具: upx -d、die（Detect It Easy）等。"
-        log(f"[!] 壳检测结果: {detected_packer or '疑似'}，置信度 {confidence}\n")
-    else:
-        log("[+] 未检测到加壳特征\n")
+    result = detect_packer(seg_list, packer_name_from_seg, entries, import_count)
 
     entry_count = ida_entry.get_entry_qty()
 
-    return {
-        "packer_detected": packer_detected,
-        "confidence": confidence if packer_detected else "none",
-        "packer_name": detected_packer if packer_detected else None,
-        "signals": signals,
-        "recommendation": recommendation,
-        "stats": {
-            "segment_count": seg_qty,
-            "function_count": func_count,
-            "import_count": imp_total,
-            "entry_points": entry_count,
-        },
+    result["stats"] = {
+        "segment_count": len(seg_list),
+        "function_count": ida_funcs.get_func_qty(),
+        "import_count": import_count,
+        "entry_points": entry_count,
     }
+
+    if result["packer_detected"]:
+        packer_name = result["packer_name"]
+        confidence = result["confidence"]
+        if packer_name and packer_name != "unknown":
+            result["recommendation"] = f"检测到 {packer_name} 壳（置信度: {confidence}），建议先脱壳后分析。可尝试 {packer_name.lower()} -d <file> 脱壳后重新加载到 IDA。"
+        else:
+            result["recommendation"] = "检测到疑似加壳/混淆，建议先脱壳后分析。常见工具: upx -d、die（Detect It Easy）等。"
+    else:
+        result["recommendation"] = ""
+
+    return result
 
 
 def _resolve_func(addr_str):
@@ -259,26 +117,6 @@ def _resolve_func(addr_str):
     if func is None:
         log(f"[!] 地址 {hex_addr(ea)} 不属于任何函数\n")
     return func, []
-
-
-def _get_file_type():
-    """获取文件类型描述，用于入口点智能识别。"""
-    try:
-        ft = ida_loader.get_file_type_name()
-        if not ft:
-            return "unknown"
-        ft_lower = ft.lower()
-        if "dll" in ft_lower or "dynamic link library" in ft_lower:
-            return "dll"
-        if "shared object" in ft_lower or "elf" in ft_lower:
-            return "so"
-        if "pe" in ft_lower or "executable" in ft_lower or "coff" in ft_lower:
-            return "exe"
-        if "mach-o" in ft_lower:
-            return "macho"
-        return ft_lower
-    except Exception:
-        return "unknown"
 
 
 def _resolve_func_with_thunk(addr_str):
@@ -318,87 +156,14 @@ def _resolve_func_with_thunk(addr_str):
 def _query_entry_points():
     """枚举所有入口点，根据文件类型智能识别入口。"""
     log("[*] 正在查询入口点...\n")
-    file_type = _get_file_type()
-    log(f"[*] 文件类型: {file_type}\n")
+    entries, file_type, architecture, bits = collect_entry_points()
 
-    entries = []
-    seen = set()
-    eqty = ida_entry.get_entry_qty()
-    for i in range(eqty):
-        ordinal = ida_entry.get_entry_ordinal(i)
-        ea = ida_entry.get_entry(ordinal)
-        if ea == ida_idaapi.BADADDR or ea in seen:
-            continue
-        seen.add(ea)
-        name = ida_entry.get_entry_name(ordinal)
-        if not name:
-            name = get_func_name_safe(ea)
-        entry_type = "entry"
-        if name and name.startswith("."):
-            entry_type = "init_array"
-        elif name in ("main", "_main", "wmain", "WinMain", "wWinMain",
-                       "DllMain", "DriverEntry"):
-            entry_type = "main"
-        elif name in ("JNI_OnLoad", "JNI_OnUnload"):
-            entry_type = "jni"
-        elif name in ("_init", "init", ".init"):
-            entry_type = "init"
-        elif name in ("_start", "start"):
-            entry_type = "crt_entry"
-        elif name in ("_fini", "fini", ".fini"):
-            entry_type = "fini"
-        func = ida_funcs.get_func(ea)
-        entries.append({
-            "name": name,
-            "addr": hex_addr(ea),
-            "type": entry_type,
-            "ordinal": ordinal,
-            "size": func.size() if func else 0,
-        })
-
-    if file_type in ("dll", "so"):
-        log(f"[*] {file_type} 类型文件，补充导出函数到入口列表\n")
-        export_count = 0
-        for ea in idautils.Functions():
-            if ea in seen:
-                continue
-            name = get_func_name_safe(ea)
-            is_export = ida_bytes.is_mapped(ea) and name and not name.startswith("sub_")
-            if not is_export:
-                continue
-            seen.add(ea)
-            func = ida_funcs.get_func(ea)
-            entries.append({
-                "name": name,
-                "addr": hex_addr(ea),
-                "type": "export",
-                "ordinal": -1,
-                "size": func.size() if func else 0,
-            })
-            export_count += 1
-        log(f"[+] 补充 {export_count} 个导出函数，共 {len(entries)} 个入口点\n")
-
-    proc = ida_ida.inf_get_procname()
-    arch_map = {
-        "metapc": "x86",
-        "ARM": "arm",
-        "ARM64": "arm64",
-        "aarch64": "arm64",
-        "MIPS": "mips",
-        "PPC": "ppc",
-    }
-    architecture = arch_map.get(proc, proc)
     result = {"entries": entries, "file_type": file_type, "total": len(entries),
               "architecture": architecture}
-    if architecture == "x86":
-        if ida_ida.inf_is_64bit():
-            result["bits"] = 64
-        elif ida_ida.inf_is_32bit_exactly():
-            result["bits"] = 32
-        else:
-            result["bits"] = 16
+    if bits is not None:
+        result["bits"] = bits
     log(f"[+] 找到 {len(entries)} 个入口点 (架构: {architecture}"
-        + (f", {result.get('bits', '?')}bit" if architecture == "x86" else "")
+        + (f", {bits}bit" if bits else "")
         + ")\n")
     return result
 
@@ -550,6 +315,8 @@ def _query_func_info():
                     callees.append({"addr": hex_addr(callee.start_ea), "name": callee_name})
                     if len(callees) >= MAX_REFS_DISPLAY:
                         break
+            if len(callees) >= MAX_REFS_DISPLAY:
+                break
             ea = ida_bytes.next_head(ea, chunk.end_ea)
             if ea == ida_idaapi.BADADDR:
                 break
@@ -568,6 +335,8 @@ def _query_func_info():
                     strings.append({"value": s.decode("utf-8", errors="replace"), "addr": hex_addr(ref)})
                     if len(strings) >= MAX_STRINGS_DISPLAY:
                         break
+            if len(strings) >= MAX_STRINGS_DISPLAY:
+                break
             ea = ida_bytes.next_head(ea, chunk.end_ea)
             if ea == ida_idaapi.BADADDR:
                 break
@@ -706,56 +475,20 @@ def _query_strings():
     pattern = env_str("IDA_PATTERN", "")
     log(f"[*] 正在搜索字符串，模式: '{pattern or '(全部)'}'\n")
 
-    results = []
-    strlist = idautils.Strings(False)
-    for s in strlist:
-        value = str(s)
-        if pattern and pattern.lower() not in value.lower():
-            continue
-        ea = s.ea
-        xrefs = []
-        for xref in idautils.XrefsTo(ea, 0):
-            func_name = get_func_name_safe(xref.frm)
-            xrefs.append({"from": hex_addr(xref.frm), "func": func_name})
-            if len(xrefs) >= 10:
-                break
-        results.append({
-            "value": value,
-            "addr": hex_addr(ea),
-            "length": s.length,
-            "xrefs": xrefs,
-        })
-        if len(results) >= MAX_STRINGS_DISPLAY:
-            log(f"[!] 字符串结果超过 {MAX_STRINGS_DISPLAY}，已截断\n")
-            break
+    strings_list = collect_strings(pattern, MAX_STRINGS_DISPLAY)
 
-    log(f"[+] 找到 {len(results)} 个字符串\n")
-    return {"strings": results, "total": len(results), "pattern": pattern}
+    truncated = len(strings_list) >= MAX_STRINGS_DISPLAY
+    if truncated:
+        log(f"[!] 字符串结果超过 {MAX_STRINGS_DISPLAY}，已截断\n")
+
+    log(f"[+] 找到 {len(strings_list)} 个字符串\n")
+    return {"strings": strings_list, "total": len(strings_list), "pattern": pattern, "truncated": truncated}
 
 
 def _query_imports():
     """列出所有导入函数。"""
     log("[*] 正在查询导入表...\n")
-
-    modules = []
-    nimps = ida_nalt.get_import_module_qty()
-    for i in range(nimps):
-        module_name = ida_nalt.get_import_module_name(i)
-        if not module_name:
-            module_name = f"module_{i}"
-        functions = []
-        def _imp_cb(ea, name, ordinal):
-            functions.append({
-                "name": name if name else f"ord_{ordinal}",
-                "addr": hex_addr(ea),
-                "ordinal": ordinal,
-            })
-            return True
-        ida_nalt.enum_import_names(i, _imp_cb)
-        if functions:
-            modules.append({"module": module_name, "functions": functions, "count": len(functions)})
-
-    total = sum(len(m["functions"]) for m in modules)
+    modules, total, _ = collect_imports()
     log(f"[+] 找到 {len(modules)} 个导入模块，共 {total} 个导入函数\n")
     return {"modules": modules, "total_modules": len(modules), "total_functions": total}
 
@@ -788,49 +521,9 @@ def _query_segments():
     """列出所有段信息，含异常信号标注。"""
     log("[*] 正在查询段信息...\n")
 
-    segments = []
-    seg_qty = ida_segment.get_segm_qty()
-    log(f"[*] 段数量: {seg_qty}\n")
+    seg_list, detected_packer, packer_confidence = collect_segments()
 
-    total_size = 0
-    seg_objects = []
-    for i in range(seg_qty):
-        seg = ida_segment.getnseg(i)
-        if seg is None:
-            continue
-        total_size += seg.size()
-        seg_objects.append(seg)
-
-    detected_packer = None
-    packer_confidence = "none"
-
-    for seg in seg_objects:
-        name = ida_segment.get_segm_name(seg)
-        seg_type = ""
-        try:
-            seg_type = ida_segment.segm_class(seg)
-        except Exception as e:
-            log(f"[!] 获取段类失败: {name} — {e}\n")
-
-        anomaly_hints = _detect_segment_anomaly(name, seg, total_size)
-
-        for hint in anomaly_hints:
-            if hint.startswith("known_packer_segment:"):
-                detected_packer = hint.split(":", 1)[1]
-                packer_confidence = "high"
-                log(f"[!] 检测到已知壳段: {name} → {detected_packer}\n")
-
-        segments.append({
-            "name": name,
-            "start": hex_addr(seg.start_ea),
-            "end": hex_addr(seg.end_ea),
-            "size": seg.size(),
-            "type": seg_type,
-            "perm": seg_perm_str(seg.perm),
-            "anomaly_hints": anomaly_hints,
-        })
-
-    result = {"segments": segments, "total": len(segments)}
+    result = {"segments": seg_list, "total": len(seg_list)}
 
     if detected_packer:
         result["packer_warning"] = {
@@ -842,7 +535,7 @@ def _query_segments():
     else:
         result["packer_warning"] = {"detected": False, "packer_name": None, "confidence": "none"}
 
-    log(f"[+] 找到 {len(segments)} 个段\n")
+    log(f"[+] 找到 {len(seg_list)} 个段\n")
     return result
 
 

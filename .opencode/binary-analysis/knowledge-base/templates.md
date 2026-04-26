@@ -142,8 +142,107 @@ IDA_QUERY=read_data IDA_ADDR=0x14013F008 IDA_READ_MODE=pointer IDA_DEREF=1 \
 
 idat 执行失败时：
 1. 检查返回码 `$?`
-2. 读取 `-L` 日志文件末尾 50 行：`python3 -c "import sys; lines = open(sys.argv[1]).readlines(); [print(l, end='') for l in lines[-50:]]" "$TASK_DIR/idat.log"`
+2. 读取 `-L` 日志文件末尾 50 行：`python3 -c "import sys; lines = open(sys.argv[1], encoding='utf-8', errors='replace').readlines(); [print(l, end='') for l in lines[-50:]]" "$TASK_DIR/idat.log"`
 3. 常见错误：
    - `Resource temporarily unavailable` → 数据库被锁
    - `ModuleNotFoundError` → 脚本路径错误
    - `qexit(1)` / exit code 1 → 脚本内部错误
+
+---
+
+## Windows PowerShell 命令模板
+
+> Windows 上使用 PowerShell 执行。与上方 bash 模板一一对应。
+> 关键差异: `python3` → `python`，`VAR=xxx command` → `$env:VAR="xxx"; command`，路径分隔符 `\`。
+
+### 预检查脚本
+
+```powershell
+# 1. 文件存在性
+python -c "import os, sys; p=sys.argv[1]; print('EXISTS' if os.path.isfile(p) else 'NOT_FOUND: '+p)" "<目标文件>"
+
+# 2. 数据库锁检测
+python -c "
+import sys, os, msvcrt
+target = sys.argv[1]
+base, ext = os.path.splitext(target)
+if ext == '.i64':
+    lock_file = target
+else:
+    lock_file = base + '.id0'
+if not os.path.exists(lock_file):
+    print('NO_DB'); sys.exit(0)
+try:
+    f = open(lock_file, 'r')
+    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    f.close()
+    print('UNLOCKED')
+except (IOError, OSError):
+    print('LOCKED'); sys.exit(1)
+" "<目标文件路径>"
+```
+
+### TASK_DIR 创建
+
+```powershell
+$TASK_DIR = python -c "
+import os, random
+from datetime import datetime
+base = os.path.expanduser('~/bw-ida-pro-analysis/workspace')
+os.makedirs(base, exist_ok=True)
+name = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + format(random.randint(0, 65535), '04x')
+d = os.path.join(base, name)
+os.makedirs(d, exist_ok=True)
+print(d)
+"
+```
+
+### IDAT 检测
+
+```powershell
+$IDA_PATH = "<上方 IDA Pro 路径>"
+$IDAT = python -c "import os, sys; p=sys.argv[1]; [print(os.path.join(p,n)) or None for n in ['idat.exe','idat'] if os.path.isfile(os.path.join(p,n))][:1] or sys.exit(1)" "$IDA_PATH"
+```
+
+### 查询操作
+
+```powershell
+$env:IDA_QUERY = "<类型>"
+$env:IDA_OUTPUT = "$TASK_DIR\result.json"
+$env:IDA_FUNC_ADDR = "<地址>"
+& "$IDAT" -A -S"$SCRIPTS_DIR\query.py" -L"$TASK_DIR\idat.log" "<目标文件>"
+```
+
+### 更新操作（单操作）
+
+```powershell
+$env:IDA_OPERATION = "<操作>"
+$env:IDA_OUTPUT = "$TASK_DIR\result.json"
+$env:IDA_OLD_NAME = "<旧名>"
+$env:IDA_NEW_NAME = "<新名>"
+& "$IDAT" -A -S"$SCRIPTS_DIR\update.py" -L"$TASK_DIR\idat.log" "<目标文件>"
+```
+
+### 初始分析流水线
+
+```powershell
+$env:IDA_OUTPUT = "$TASK_DIR\initial.json"
+& "$IDAT" -A -S"$SCRIPTS_DIR\scripts\initial_analysis.py" -L"$TASK_DIR\initial.log" "<目标文件>"
+```
+
+### debug_dump 调用
+
+```powershell
+$env:IDA_OEP_ADDR = "0x401000"
+$env:IDA_PE_OUTPUT = "$TASK_DIR\unpacked.exe"
+$env:IDA_OUTPUT = "$TASK_DIR\result.json"
+& "$IDAT" -A -S"$SCRIPTS_DIR\scripts\debug_dump.py" -L"$TASK_DIR\debug.log" "<目标文件>"
+```
+
+### 错误诊断
+
+```powershell
+# 读取日志末尾 50 行
+python -c "import sys; lines = open(sys.argv[1], encoding='utf-8', errors='replace').readlines(); [print(l, end='') for l in lines[-50:]]" "$TASK_DIR\idat.log"
+```
