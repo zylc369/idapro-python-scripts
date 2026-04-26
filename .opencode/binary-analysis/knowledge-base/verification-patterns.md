@@ -246,16 +246,33 @@ Hook strcmp 捕获字符串比较，在 `onEnter` 中读取两个字符串。
 
 **适用**: 验证 pipeline 中某个阶段导致失败，需要定位具体失败点。
 
-### 步骤
+### 静态 Patch（IDA 数据库修改）
+
+#### 步骤
 
 1. 从 pipeline 末尾开始 patch，每次只 patch 一个检查点
 2. 常见 patch 方式：`jnz` → `jz` 或 `jmp`（改 1-2 字节）
 3. 找到"patch 后通过"的点 → 该点之前就是真正的失败阶段
 4. 找到失败点后恢复原始字节
 
-### 实现要点
+#### 实现要点
 
 - 用 IDA 的 `read_data bytes` 读取原始字节，保存备份
 - 从 pipeline 末尾开始向前逐个 patch
 - 每次只 patch 一个检查点
 - **必须恢复原始字节**，不保留 patch
+
+### 运行时 Patch（process_patch.py）
+
+当需要 patch 运行中的进程并捕获结果时，使用 `process_patch.py`（替代手写 ctypes 脚本）：
+
+```bash
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/process_patch.py" \
+  --exe TARGET.EXE \
+  --patch 0x401234:EB \
+  --capture 0x422480:16 \
+  --trigger click:1002 \
+  --output "$TASK_DIR/patch_result.json"
+```
+
+完整参数参考见 `$SCRIPTS_DIR/knowledge-base/process-patch-reference.md`。

@@ -114,6 +114,24 @@
 
 降级后每次操作前仍尝试 MCP（1 次），恢复则切回视觉驱动。
 
+## 再降级到 process_patch.py
+
+当 gui_verify.py 所有模式也失败时（如 MFC DDX 控件无法通过 API 输入、Hook 地址不确定），降级到 process_patch.py 进行底层内存操作：
+
+```bash
+# Code cave 注入 + 捕获计算结果（CRACKME3 典型场景）
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/process_patch.py" \
+  --exe TARGET.EXE \
+  --write-code 0x40234E:56578D... \
+  --patch 0x401000:E9... \
+  --capture 0x422480:16 \
+  --signal 0x42248C:DEADBEEF \
+  --trigger click:1002 \
+  --output "$TASK_DIR/patch_result.json"
+```
+
+完整参数参考见 `$SCRIPTS_DIR/knowledge-base/process-patch-reference.md`。
+
 ## 视觉分析产物管理（强制）
 
 1. **截图时机**: 只在需要信息时截图（定位控件、读结果、诊断故障），不在每步操作前后都截
