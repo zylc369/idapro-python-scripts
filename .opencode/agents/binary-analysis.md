@@ -416,7 +416,16 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
   --output "$TASK_DIR/patch_result.json"
 ```
 
-**参数说明**: `--patch`/`--write-data`/`--write-code` 格式为 `ADDR:HEXBYTES`；`--capture` 格式为 `ADDR:SIZE`；`--signal` 格式为 `ADDR:VALUE`；`--trigger` 支持 `click:CTRL_ID`。
+**参数说明**:
+- `--patch ADDR:HEXBYTES`: 覆盖指定地址的字节（通用补丁）
+- `--write-data ADDR:HEXBYTES`: 写入数据段（不刷新指令缓存）
+- `--write-code ADDR:HEXBYTES`: 写入代码段（自动 FlushInstructionCache，用于 code cave）
+- `--capture ADDR:SIZE`: 捕获指定地址和大小的内存数据
+- `--signal ADDR:VALUE`: 轮询等待信号值出现（4 字节 DWORD，十六进制）
+- `--trigger click:CTRL_ID`: 通过 BM_CLICK 点击按钮控件
+- `--no-kill`: 完成后不终止进程（用于后续截图或 Frida attach）
+- `--timeout SEC`: 信号等待超时，默认 15 秒
+- `--settle SEC`: 无 signal 时的等待时间，默认 2 秒
 
 ---
 

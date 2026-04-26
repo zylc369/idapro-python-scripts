@@ -30,7 +30,6 @@ import json
 import os
 import struct
 import subprocess
-import sys
 import time
 
 # Windows 常量
@@ -151,6 +150,7 @@ def build_parser():
                     help="触发动作: click:CTRL_ID")
     p.add_argument("--timeout", type=int, default=15, help="信号等待超时（秒），默认 15")
     p.add_argument("--settle", type=float, default=2.0, help="触发后等待时间（秒），默认 2")
+    p.add_argument("--no-kill", action="store_true", help="完成后不终止目标进程（用于后续截图等操作）")
     p.add_argument("--output", required=True, help="输出 JSON 路径")
     return p
 
@@ -276,12 +276,15 @@ def main():
         if handle:
             k32.CloseHandle(handle)
         if proc and proc.poll() is None:
-            time.sleep(0.5)
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            print(f"[+] 进程已终止")
+            if args.no_kill:
+                print(f"[*] 进程保持存活 (--no-kill), PID={proc.pid}")
+            else:
+                time.sleep(0.5)
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                print(f"[+] 进程已终止")
 
     # 输出 JSON
     output_dir = os.path.dirname(args.output)
