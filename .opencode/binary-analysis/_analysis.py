@@ -418,10 +418,11 @@ def classify_scene(packer_info, strings, import_names, architecture, file_type, 
     if "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/" in string_values:
         crypto_signals.append("base64_table")
 
-    # 增强: 通过字符串值检测算法名称
-    crypto_algo_keywords = ["md5", "sha", "sha1", "sha256", "sha512", "aes", "des", "rc4",
+    # 增强: 通过字符串值检测算法名称（排除易误报的短词如 des/cast/idea，
+    # 它们由下方 import 函数名通道覆盖）
+    crypto_algo_keywords = ["md5", "sha", "sha1", "sha256", "sha512", "aes", "rc4",
                             "rc2", "blowfish", "twofish", "chacha", "salsa", "serpent",
-                            "camellia", "cast", "idea", "rsa", "ecc", "ecdsa"]
+                            "camellia", "rsa", "ecc", "ecdsa"]
     string_values_lower = string_values.lower()
     for kw in crypto_algo_keywords:
         if kw in string_values_lower and kw not in crypto_signals:

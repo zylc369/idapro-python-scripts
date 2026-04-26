@@ -170,14 +170,17 @@ $BA_PYTHON = python -c "import json,os,sys; p=os.path.expanduser('~/bw-ida-pro-a
 bash:
 ```bash
 IDA_OUTPUT="$TASK_DIR/initial.json" \
+IDA_ENV_JSON="$HOME/bw-ida-pro-analysis/env_cache.json" \
   "$IDAT" -A -S"$SCRIPTS_DIR/scripts/initial_analysis.py" -L"$TASK_DIR/initial.log" "<目标文件>"
 ```
 
 PowerShell:
 ```powershell
 $env:IDA_OUTPUT="$TASK_DIR\initial.json"
+$env:IDA_ENV_JSON="$HOME\bw-ida-pro-analysis\env_cache.json"
 & "$IDAT" -A "-S$SCRIPTS_DIR\scripts\initial_analysis.py" "-L$TASK_DIR\initial.log" "<目标文件>"
 Remove-Item Env:\IDA_OUTPUT
+Remove-Item Env:\IDA_ENV_JSON
 ```
 
 读取输出 JSON，获取：segments、entry_points、imports、strings、packer_detect、scene 分类。
@@ -401,7 +404,7 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 ### 进程 Patch 工具
 
 > 当需要向运行中的进程写入补丁/代码/数据，或捕获内存值时使用。
-> 替代手写 ctypes 脚本（OpenProcess/VirtualProtectEx/WriteProcessMemory 等样板代码）。
+> 参数详见 `$SCRIPTS_DIR/knowledge-base/process-patch-reference.md`。
 
 ```bash
 "$BA_PYTHON" "$SCRIPTS_DIR/scripts/process_patch.py" \
@@ -415,17 +418,6 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
   --timeout 15 \
   --output "$TASK_DIR/patch_result.json"
 ```
-
-**参数说明**:
-- `--patch ADDR:HEXBYTES`: 覆盖指定地址的字节（通用补丁）
-- `--write-data ADDR:HEXBYTES`: 写入数据段（不刷新指令缓存）
-- `--write-code ADDR:HEXBYTES`: 写入代码段（自动 FlushInstructionCache，用于 code cave）
-- `--capture ADDR:SIZE`: 捕获指定地址和大小的内存数据
-- `--signal ADDR:VALUE`: 轮询等待信号值出现（4 字节 DWORD，十六进制）
-- `--trigger click:CTRL_ID`: 通过 BM_CLICK 点击按钮控件
-- `--no-kill`: 完成后不终止进程（用于后续截图或 Frida attach）
-- `--timeout SEC`: 信号等待超时，默认 15 秒
-- `--settle SEC`: 无 signal 时的等待时间，默认 2 秒
 
 ---
 
@@ -449,6 +441,7 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 | `frida-hook-templates.md` | 需要 Frida Hook 脚本模板（参数拦截、返回值读取） |
 | `verification-patterns.md` | 需要验证分析结果（license/key/password） |
 | `gui-automation.md` | GUI 自动化操作（视觉驱动方案） |
+| `process-patch-reference.md` | 使用 process_patch.py 时的完整参数参考 |
 
 ---
 

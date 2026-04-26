@@ -162,6 +162,7 @@ def main():
     result = {
         "success": False,
         "pid": None,
+        "hwnd": None,
         "patches_applied": [],
         "captures": {},
         "signal_received": False,
@@ -197,6 +198,7 @@ def main():
         if not hwnd:
             raise RuntimeError(f"未找到窗口: '{window_title}'")
         print(f"[+] 窗口已找到: 0x{hwnd:08X}")
+        result["hwnd"] = f"0x{hwnd:08X}"
 
         # 3. 打开进程
         handle = k32.OpenProcess(PROCESS_ALL_ACCESS, False, proc.pid)
@@ -266,7 +268,12 @@ def main():
                 result["captures"][f"0x{addr:X}"] = {"hex": "", "size": 0}
                 print(f"[!] 捕获失败: 0x{addr:X}")
 
-        result["success"] = True
+        # 成功判定: 如果指定了 signal 但未收到，则不标记为成功
+        if signal_addr is not None and not result["signal_received"]:
+            result["success"] = False
+            result["error"] = result.get("error") or "信号未收到（进程可能已崩溃或 patch 有误）"
+        else:
+            result["success"] = True
 
     except Exception as e:
         result["error"] = str(e)
