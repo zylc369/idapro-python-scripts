@@ -41,12 +41,18 @@ def _main():
     entries, file_type, architecture, bits = collect_entry_points()
     modules, total_functions, import_names = collect_imports()
 
-    pattern = env_str("IDA_STRINGS_PATTERN", "")
-    max_strings = env_int("IDA_MAX_STRINGS", 200)
-    strings = collect_strings(pattern, max_strings)
-
     func_count = ida_funcs.get_func_qty()
     packer_info = detect_packer(segments, packer_name_from_seg, entries, total_functions)
+
+    # 加壳二进制字符串降噪: 壳代码中的字符串多为乱码，减少数量节省上下文
+    pattern = env_str("IDA_STRINGS_PATTERN", "")
+    max_strings = env_int("IDA_MAX_STRINGS", 200)
+    strings_reduced = False
+    if packer_info["packer_detected"] and func_count <= 5 and not pattern:
+        max_strings = 20
+        strings_reduced = True
+        log(f"[+] 加壳检测: 字符串数量限制为 {max_strings}（原始默认 200）\n")
+    strings = collect_strings(pattern, max_strings)
 
     packages = None
     env_json_path = env_str("IDA_ENV_JSON", "")
@@ -89,6 +95,7 @@ def _main():
             },
             "packer_detect": packer_info,
             "scene": scene,
+            "strings_reduced": strings_reduced,
             "stats": {
                 "function_count": func_count,
                 "segment_count": len(segments),

@@ -166,9 +166,18 @@ $BA_PYTHON = python -c "import json,os,sys; p=os.path.expanduser('~/bw-ida-pro-a
 **触发条件**：分析型需求、混合型需求。查询型需求跳过。
 
 执行初始分析流水线（单次 idat 调用完成所有基础信息收集）：
+
+bash:
 ```bash
 IDA_OUTPUT="$TASK_DIR/initial.json" \
   "$IDAT" -A -S"$SCRIPTS_DIR/scripts/initial_analysis.py" -L"$TASK_DIR/initial.log" "<目标文件>"
+```
+
+PowerShell:
+```powershell
+$env:IDA_OUTPUT="$TASK_DIR\initial.json"
+& "$IDAT" -A "-S$SCRIPTS_DIR\scripts\initial_analysis.py" "-L$TASK_DIR\initial.log" "<目标文件>"
+Remove-Item Env:\IDA_OUTPUT
 ```
 
 读取输出 JSON，获取：segments、entry_points、imports、strings、packer_detect、scene 分类。
@@ -208,6 +217,7 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 | `VirtualAllocEx` 注入失败 | 切 `.text` 段 code cave（零填充区域）|
 | 静态脱壳算法理解困难 | 立即切 OEP 定位 → 动态 dump |
 | 已知工具脱壳失败 | 切 IDA 调试器 dump → Frida dump → 静态分析 |
+| 假设标准算法但结果不匹配 | 停止推理，用 `process_patch.py` 捕获实际中间值，与标准算法对比 |
 
 ### 循环控制
 
@@ -227,6 +237,7 @@ IDA_OUTPUT="$TASK_DIR/initial.json" \
 3. **该吃苦时吃苦，找到规律就切换** — 一旦发现规律或模式，立即用聪明办法
 4. **模式识别优于从零分析** — 已知模式直接利用，不重新发现
 5. **分析算法如何实现不是目的，得出正确的结果才是目的** — 优先用模拟执行得出结果，而非手动重实现
+6. **假设必须验证** — 当假设使用了标准算法（MD5/SHA/AES 等）时，先用动态分析捕获实际中间值，与标准算法输出对比。不一致则立即停止基于该假设的推理，切换到"非标准算法"分析方向
 
 ---
 
@@ -386,6 +397,26 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 ### 脚本生成与沉淀规则
 
 需要生成新脚本时，读取 `$SCRIPTS_DIR/knowledge-base/script-generation.md`。
+
+### 进程 Patch 工具
+
+> 当需要向运行中的进程写入补丁/代码/数据，或捕获内存值时使用。
+> 替代手写 ctypes 脚本（OpenProcess/VirtualProtectEx/WriteProcessMemory 等样板代码）。
+
+```bash
+"$BA_PYTHON" "$SCRIPTS_DIR/scripts/process_patch.py" \
+  --exe TARGET.EXE \
+  --patch 0x40234C:EB \
+  --write-data 0x422600:4B435446 \
+  --write-code 0x40234E:56578D... \
+  --capture 0x422480:16 \
+  --signal 0x42248C:DEADBEEF \
+  --trigger click:1002 \
+  --timeout 15 \
+  --output "$TASK_DIR/patch_result.json"
+```
+
+**参数说明**: `--patch`/`--write-data`/`--write-code` 格式为 `ADDR:HEXBYTES`；`--capture` 格式为 `ADDR:SIZE`；`--signal` 格式为 `ADDR:VALUE`；`--trigger` 支持 `click:CTRL_ID`。
 
 ---
 

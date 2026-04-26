@@ -54,6 +54,15 @@
       "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/gui_launch.py --action launch --exe TARGET.EXE",
       "added_at": "2026-04-24",
       "verified": false
+    },
+    {
+      "name": "process_patch",
+      "file": "process_patch.py",
+      "description": "通用进程 Patch + 值捕获工具：启动目标进程，应用多点多类型补丁（patch/write-data/write-code），触发动作（click），等待信号同步，捕获内存数据。替代手写 ctypes 脚本",
+      "params": ["--exe", "--window-title", "--patch", "--write-data", "--write-code", "--capture", "--signal", "--trigger", "--timeout", "--settle", "--output"],
+      "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/process_patch.py --exe TARGET.EXE --patch 0x40234C:EB --capture 0x422480:16 --signal 0x42248C:DEADBEEF --trigger click:1002 --timeout 15 --output result.json",
+      "added_at": "2026-04-26",
+      "verified": false
     }
   ]
 }
