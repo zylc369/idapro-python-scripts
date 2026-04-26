@@ -428,8 +428,9 @@ def classify_scene(packer_info, strings, import_names, architecture, file_type, 
         if kw in string_values_lower and kw not in crypto_signals:
             crypto_signals.append(f"algo_name:{kw}")
 
-    # 增强: 通过导入函数名检测密码学 API
-    crypto_import_patterns = ["crypt", "hash", "md5", "sha", "aes", "rsa", "des",
+    # 增强: 通过导入函数名检测密码学 API（"des" 已移除，由 "decrypt"/"encrypt" 覆盖，
+    # 避免匹配 DestroyWindow 等常见非密码学导入）
+    crypto_import_patterns = ["crypt", "hash", "md5", "sha", "aes", "rsa",
                               "cipher", "encrypt", "decrypt", "digest", "sign", "verify"]
     crypto_imports = []
     for name in import_names:

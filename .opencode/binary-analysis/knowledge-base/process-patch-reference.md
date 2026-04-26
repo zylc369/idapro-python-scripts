@@ -87,7 +87,7 @@
 使用 `--no-kill` 后，进程保持存活。输出 JSON 包含 `pid` 和 `hwnd`，可用于：
 - 截图: `$BA_PYTHON $SCRIPTS_DIR/scripts/gui_capture.py`
 - Frida attach: `frida -p <pid>`
-- 二次 patch: 再次调用 process_patch.py（但需要自行 OpenProcess）
+- 后续内存操作: 需自行编写 ctypes 脚本（process_patch.py 只能启动新进程，无法操作已有进程）
 
 ## 常见场景
 
