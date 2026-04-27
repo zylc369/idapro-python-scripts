@@ -203,15 +203,28 @@ static inline uint64_t mod_mul(uint64_t a, uint64_t b) {
 
 #endif
 
-/* 模加 */
+/* 模加（处理 a+b 溢出 uint64_t 的情况，当 p > 2^63 时可能发生）*/
 static inline uint64_t mod_add(uint64_t a, uint64_t b) {
     uint64_t s = a + b;
+    if (s < a) {
+        /* 发生回绕: 真实值 = s + 2^64，需要 mod p */
+        /* s + (2^64 - p) 即可（因为 2^64 mod p = 2^64 - p*k，这里 p < 2^64 所以 k=1）*/
+        s += (UINT64_MAX - p_val + 1);
+    }
     return s >= p_val ? s - p_val : s;
 }
 
 /* 模减 */
 static inline uint64_t mod_sub(uint64_t a, uint64_t b) {
-    return a >= b ? a - b : a + p_val - b;
+    if (a >= b) return a - b;
+    /* a < b: 结果 = a - b + p。用两次加法避免溢出: 先加 (p-b)，再处理可能的溢出 */
+    uint64_t d = p_val - b;   /* d > 0，d <= p */
+    uint64_t r = a + d;       /* 可能溢出: a+d <= (p-1)+p = 2p-1 */
+    if (r < a) {
+        /* 溢出: 真实值 = r + 2^64，结果 = r + 2^64 - p = r + (2^64 - p) */
+        r += (UINT64_MAX - p_val + 1);
+    }
+    return r;  /* r < p（因为真实值 = a-b+p，0 < a-b+p < p）*/
 }
 
 /* 模逆（费马小定理: a^(p-2) mod p）*/
@@ -241,7 +254,21 @@ static inline uint64_t mod_mul_n(uint64_t a, uint64_t b) {
 #endif
 
 static inline uint64_t mod_sub_n(uint64_t a, uint64_t b) {
-    return a >= b ? a - b : a + N_VAL - b;
+    if (a >= b) return a - b;
+    uint64_t d = N_VAL - b;
+    uint64_t r = a + d;
+    if (r < a) {
+        r += (UINT64_MAX - N_VAL + 1);
+    }
+    return r;
+}
+
+static inline uint64_t mod_add_n(uint64_t a, uint64_t b) {
+    uint64_t s = a + b;
+    if (s < a) {
+        s += (UINT64_MAX - N_VAL + 1);
+    }
+    return s >= N_VAL ? s - N_VAL : s;
 }
 
 static uint64_t mod_inv_n(uint64_t a) {
@@ -313,16 +340,16 @@ static void rho_step(Point *P, Coeff *c, Point G, Point T) {
     switch (P->x % 3) {
         case 0:  /* P = P + G, a += 1 */
             *P = point_add(*P, G);
-            c->a = mod_add(c->a, 1ULL); /* mod n — 此处简化，大数场景需 mod n */
+            c->a = mod_add_n(c->a, 1ULL);
             break;
         case 1:  /* P = 2*P, a *= 2, b *= 2 */
             *P = point_add(*P, *P);
-            c->a = mod_add(c->a, c->a);
-            c->b = mod_add(c->b, c->b);
+            c->a = mod_add_n(c->a, c->a);
+            c->b = mod_add_n(c->b, c->b);
             break;
         default: /* P = P + T, b += 1 */
             *P = point_add(*P, T);
-            c->b = mod_add(c->b, 1ULL);
+            c->b = mod_add_n(c->b, 1ULL);
             break;
     }
 }
@@ -342,10 +369,10 @@ static void *worker(void *arg) {
     ThreadArg *ta = (ThreadArg *)arg;
     Point G = ta->G, T = ta->T;
 
-    /* 随机起点: P = a0*G + b0*T */
+    /* 随机起点: P = a0*G + b0*T（a0/b0 用不同种子偏移确保独立性）*/
     uint64_t seed = ta->seed;
     uint64_t a0 = (seed * 6364136223846793005ULL + 1442695040888963407ULL) % N_VAL | 1;
-    uint64_t b0 = (seed * 6364136223846793005ULL + 1442695040888963407ULL) % N_VAL | 1;
+    uint64_t b0 = (seed * 6364136223846793005ULL + 0x5DEECE66DULL) % N_VAL | 1;
     Point P = point_add(point_mul(a0, G), point_mul(b0, T));
     Coeff c = {a0, b0};
 
