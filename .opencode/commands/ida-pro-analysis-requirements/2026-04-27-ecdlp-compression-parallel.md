@@ -11,7 +11,7 @@
 
 **目标**:
 - 方案 A: 升级 `ecdlp-solving.md` — 添加并行 Pollard's rho + DP 模板、r=1 等特殊约束、完整工作流
-- 方案 B: 增强 Plugin 压缩上下文保留 — COMPACTION_CONTEXT_PROMPT 添加环境信息摘要；Agent prompt 添加变量丢失自愈规则
+- 方案 B: 增强 Plugin 压缩上下文保留 — Plugin compacting hook 动态注入环境信息；Agent prompt 添加变量丢失自愈规则
 - 方案 C: 升级 `technology-selection.md` — 添加并行计算策略（线程数选择、DP 策略、MSVC 多线程模板）
 - 方案 D (可选): Frida 版本适配知识库
 - 方案 E: (已合入方案 C) MSVC 兼容性知识
@@ -29,7 +29,7 @@
 
 **改动内容**:
 
-1. **算法选择表** — 新增"并行 Pollard's rho + DP"行：
+1. **算法选择表** — 在现有表中新增"并行 Pollard's rho + DP"行（保留现有所有行，包括单线程 Pollard's rho 和 BSGS）：
    | 曲线位数 | 算法 | 预估耗时 | 内存 |
    | 33-64 bit | 并行 Pollard's rho + DP | 分钟级 (C, 8线程) | 极低+DP表 |
 
@@ -39,7 +39,7 @@
    - 终止检测：共享原子标志或文件锁，任一线程找到解后通知其他线程退出
    - 碰撞检测：各线程的 DP 点写入共享哈希表，新 DP 与已有 DP 的 y 坐标比较
 
-3. **新增 C 模板** — 仿射坐标并行 DP 版本（替换现有简陋的 C 模板）：
+3. **替换现有 C 模板** — 仿射坐标并行 DP 版本（现有 Python 模板保留不改，仅替换 C 模板）：
    - 使用 `CreateThread`（Windows）/ `pthread`（Linux）
    - 仿射坐标（比 Jacobian 快 ~2x，因为省去 Z 坐标运算）
    - DP 判定：`(P.x & DP_MASK) == 0`
@@ -52,7 +52,7 @@
    - 解法：ECDLP 求解 `k` 使得 `(k·G).x mod n = 1`（而非任意 r）
    - 验证：确认点 (1, y) 在曲线上且在子群中
 
-5. **渐进策略更新** — 添加并行化决策：
+5. **渐进策略更新** — 在现有渐进策略中追加并行化决策步骤（插在"转 C"和"验证"之间），不替换现有步骤：
    - 单线程 Python 原型验证正确性（~30min）
    - 性能估算 → 如果需要 >30min → 转 C 多线程
    - C 多线程 DP 版本（~60min）
@@ -66,23 +66,26 @@
 ### 方案 B: 增强压缩上下文保留
 
 **改动文件**:
-1. `.opencode/plugins/binary-analysis.mjs` — `COMPACTION_CONTEXT_PROMPT`
+1. `.opencode/plugins/binary-analysis.mjs` — 修改 compacting hook 逻辑（动态注入环境信息）
 2. `.opencode/agents/binary-analysis.md` — 添加变量丢失自愈规则
 
-**改动 1: COMPACTION_CONTEXT_PROMPT 添加环境信息摘要**
+**改动 1: Plugin compacting hook 动态注入环境信息摘要**
 
-在现有 `### 1. 分析目标` 之后新增 `### 0. 环境信息摘要`：
+在 `experimental.session.compacting` hook 中，从 `ENV_CACHE_FILE` 读取实际环境信息，动态拼接成摘要文本注入到 `output.context`（而非在静态 COMPACTION_CONTEXT_PROMPT 常量中添加模板）：
 
+```js
+// 在 compacting hook 中动态注入（伪代码）
+const envData = readJsonSafe(ENV_CACHE_FILE);
+let envSummary = "## 环境信息（压缩时自动注入）\n";
+if (envData?.data) {
+  envSummary += `- BA_PYTHON: ${envData.data.venv_python || '未知'}\n`;
+  // ... 其他字段（参照 system.transform 中的逻辑独立构建，不修改 system.transform）
+}
+output.context.push(envSummary);
+output.context.push(COMPACTION_CONTEXT_PROMPT);
 ```
-### 0. 环境信息摘要（从 Plugin 注入的系统 prompt 中提取）
-- IDA Pro 路径
-- 脚本目录 ($SCRIPTS_DIR) 路径
-- BA_PYTHON 路径
-- 编译器类型和路径（如有）
-- 可用 Python 包（如有）
 
-注意: 任务目录路径是动态创建的，不在此处注入。Agent 压缩恢复时通过自愈规则从 workspace 恢复。
-```
+这样环境信息的值是 Plugin 从 env_cache.json 实时读取的，不依赖 LLM 总结器从对话历史中提取。
 
 **改动 2: Agent prompt 添加变量丢失自愈规则**
 
@@ -112,7 +115,7 @@
    | 暴力搜索 | cpu_count | 线性加速 |
    | 内存密集型 | min(cpu_count, 4) | 内存带宽瓶颈 |
 
-2. **MSVC 多线程模板**：
+2. **MSVC 多线程模板**（仅 Windows 部分，Linux 替代方案 pthread 见 ecdlp-solving.md 的 C 模板）：
     ```c
     #include <windows.h>
     // CRITICAL_SECTION 保护 DP 表
@@ -152,9 +155,10 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
 | 方案 | 文件 | 改动类型 | 预估行数 |
 |------|------|---------|---------|
 | A | knowledge-base/ecdlp-solving.md | 修改 | ~160 行新增/替换 |
-| B | plugins/binary-analysis.mjs | 修改 | ~10 行新增 |
-| B | agents/binary-analysis.md | 修改 | ~10 行新增，-60 行提取（净 -50 行）|
+| B | plugins/binary-analysis.mjs | 修改 | ~15 行新增（compacting hook 中动态拼接环境信息 + 保持原有 COMPACTION_CONTEXT_PROMPT）|
+| B | agents/binary-analysis.md | 修改 | ~10 行新增，-75 行提取（净 -65 行）|
 | B | knowledge-base/gui-automation.md | 扩充（如已存在）或新建 | ~45 行（从 Agent prompt 提取的 GUI 命令详情）|
+| B | knowledge-base/process-patch-reference.md | 无需修改 | Agent prompt 中的 Patch 命令示例已被此文件包含，只需从 Agent prompt 删除即可 |
 | C | knowledge-base/technology-selection.md | 修改 | ~50 行新增/替换 |
 | D | knowledge-base/frida-hook-templates.md | 修改 | ~15 行新增 |
 | E | (已合入方案 C) | — | — |
@@ -164,7 +168,7 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
 - 知识库 .md 文件必须自包含（不依赖主 prompt 上下文）
 - 代码模板中的注释使用中文
 - C 模板使用 MSVC 兼容语法（不使用 `__int128`，用 `__umul128`），同时用 `#ifdef _WIN32` 支持跨平台
-- 不修改任何 Python/JS 逻辑代码（仅修改 .md 文本和 .mjs 中的常量字符串）
+- 不修改任何 Python 逻辑代码。JS 仅修改 compacting hook 的环境信息注入逻辑（从 env_cache.json 读取并 push），不修改 system.transform 和 event hook
 
 ### §3.1 实施步骤拆分
 
@@ -193,22 +197,22 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
   - 验证点: 确认（a）r=1 约束说明完整（b）渐进策略包含并行化决策（c）新陷阱覆盖复盘中的 n>p 异常和 DP mask 选择
   - 依赖: 步骤 3
 
-步骤 5. 增强 COMPACTION_CONTEXT_PROMPT
+步骤 5. 增强 Plugin compacting hook — 动态注入环境信息
   - 文件: plugins/binary-analysis.mjs
-  - 预估行数: ~10 行（在 COMPACTION_CONTEXT_PROMPT 常量中添加环境信息摘要段落）
-  - 验证点: `node --check binary-analysis.mjs` 语法通过 + 人工阅读确认提示措辞
+  - 预估行数: ~15 行（在 compacting hook 中从 env_cache.json 读取实际环境信息，动态拼接后与 COMPACTION_CONTEXT_PROMPT 一起注入）
+  - 验证点: `node --check binary-analysis.mjs` 语法通过 + 确认 compacting hook 读取 env_cache.json 并拼接环境信息文本
   - 依赖: 无
 
 步骤 6. Agent prompt 添加变量丢失自愈规则
   - 文件: agents/binary-analysis.md
   - 预估行数: ~10 行（在后续交互处理章节中添加自愈规则）
   - 验证点: 人工阅读确认规则可执行 + 不与其他规则冲突
-  - 依赖: 步骤 5
+  - 依赖: 无
 
 步骤 6.5. Agent prompt 瘦身（Phase 4.5）
   - 文件: agents/binary-analysis.md + knowledge-base/gui-automation.md
-  - 预估行数: -60 行（从 Agent prompt 提取 GUI 自动化工具详细命令到 gui-automation.md，主 prompt 保留一行引用："视觉驱动 GUI 自动化方案详情见 $SCRIPTS_DIR/knowledge-base/gui-automation.md"）
-  - 验证点: `wc -l agents/binary-analysis.md` 确认 < 450 行 + gui-automation.md 自包含 + 引用路径正确
+  - 预估行数: -75 行（从 Agent prompt 提取（a）GUI 自动化工具：保留现有引用行（行 355），删除其后的标题和详细命令代码块 ~45 行 → gui-automation.md（b）进程 Patch 工具：保留现有引用行（行 407），删除其后的命令代码块 ~17 行（process-patch-reference.md 已包含相同内容））
+  - 验证点: `wc -l agents/binary-analysis.md` 确认 < 450 行（预期 ~432 行）+ gui-automation.md 自包含 + 引用路径正确 + process-patch-reference.md 未被修改
   - 依赖: 步骤 6（先加后减，确保净行数达标）
 
 步骤 7. 升级 technology-selection.md 并行计算策略
@@ -233,7 +237,7 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
 | F1 | ecdlp-solving.md 包含并行 Pollard's rho + DP 完整描述 | 人工阅读 |
 | F2 | ecdlp-solving.md 的 C 模板使用 MSVC 兼容语法 | 检查无 `__int128`，使用 `__umul128` |
 | F3 | ecdlp-solving.md 包含 r=1 特殊约束说明 | 人工阅读 |
-| F4 | COMPACTION_CONTEXT_PROMPT 包含环境信息摘要段落 | 读取 mjs 文件确认 |
+| F4 | Plugin compacting hook 动态注入环境信息摘要 | 读取 mjs 确认 compacting hook 从 env_cache.json 读取并拼接环境信息 |
 | F5 | Agent prompt 包含变量丢失自愈规则 | 读取 md 文件确认 |
 | F6 | technology-selection.md 并行计算策略包含线程数选择和 DP 策略 | 人工阅读 |
 | F7 | 所有知识库文件自包含 | 逐个阅读确认不依赖主 prompt 上下文 |
