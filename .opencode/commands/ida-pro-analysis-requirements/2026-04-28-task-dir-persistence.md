@@ -28,56 +28,81 @@ BinaryAnalysis Agent 在分析过程中会动态创建任务目录（`$TASK_DIR`
 
 ### 目标
 
-确保压缩后 Agent 能**精确**恢复到正确的 TASK_DIR，不盲猜、不降级。
+1. **精确匹配**：每个 session 精确对应一个 TASK_DIR，多轮对话、多轮压缩后依然精确
+2. **并发支持**：多个会话并行分析不同二进制，互不干扰
+3. **用户可切换**：用户要求使用新任务目录时，映射自动更新
+4. **不依赖 LLM 复制**：链路中不依赖 LLM 从文本中复制粘贴字符串
 
 ### 约束
 
-- 支持多个会话并行分析不同二进制
 - 不增加压缩上下文体积（不能扫描整个 workspace 注入）
-- 不依赖 LLM 手动复制粘贴字符串
 - 改动范围可控，不引入新的架构层
 
 ---
 
 ## §2 技术方案
 
-### API 能力调研结论
+### API 能力调研（含 oh-my-openagent 参考）
 
-| Hook | sessionID | 可靠性 |
-|------|-----------|--------|
-| `experimental.session.compacting` | `input.sessionID: string`（必填） | ✅ 每次压缩都能拿到 |
-| `experimental.chat.system.transform` | `input.sessionID?: string`（可选） | ⚠️ 通常有，但可能 undefined |
-| `shell.env` | `input.sessionID?: string`（可选） | ⚠️ 通常有，可以注入到 shell 环境变量 |
-| `event: session.created` | `properties.info.id: string` | ✅ 完整 Session 对象 |
-| `event: session.deleted` | `properties.info.id: string` | ✅ 完整 Session 对象 |
-| `event: session.compacted` | `properties.sessionID: string` | ✅ |
+#### OpenCode Plugin Hook API
 
-**关键发现**：`shell.env` hook 可以把 sessionID 注入到 shell 环境变量中。Agent 执行 bash 命令时，Python 脚本能通过 `os.environ['SESSION_ID']` 直接获取，**完全不需要 LLM 手动复制**。
+| Hook | sessionID | 类型 | 调用时机 |
+|------|-----------|------|---------|
+| `experimental.session.compacting` | `input.sessionID` | `string`（必填） | 每次压缩前 |
+| `experimental.chat.system.transform` | `input.sessionID` | `string?`（可选） | 每轮 LLM 调用前 |
+| `shell.env` | `input.sessionID` | `string?`（可选） | Agent 执行 bash 命令时 |
+| `event: session.created` | `properties.info.id` | `string` | 会话创建 |
+| `event: session.deleted` | `properties.info.id` | `string` | 会话删除 |
+| `event: session.compacted` | `properties.sessionID` | `string` | 压缩完成 |
 
-### 方案：sessionID 映射 + shell.env 注入
+#### oh-my-openagent 参考实现
+
+| 模式 | 实现方式 | 文件 |
+|------|---------|------|
+| 状态持久化 | 内存 `Map<sessionID, State>` | 全局使用，纯内存 |
+| compaction 恢复 | `capture(sessionID)` 保存 → `inject(sessionID)` 注入 → `session.compacted` 事件恢复 | `compaction-context-injector/hook.ts` |
+| TODO 保存/恢复 | `capture(sessionID)` 快照 → `session.compacted` 事件 `restore(sessionID)` | `compaction-todo-preserver/hook.ts` |
+| 环境变量注入 | `tool.execute.before` 修改 `output.args.command`（在命令前加 export） | `non-interactive-env/non-interactive-env-hook.ts` |
+| 文件持久化（唯一例外） | `~/.local/share/opencode/storage/interactive-bash-session/{sessionID}.json` | `interactive-bash-session/storage.ts` |
+
+#### 关键结论
+
+1. **sessionID 在 compaction 前后不变** — oh-my-openagent 所有恢复逻辑都基于同一 sessionID
+2. **shell.env 可以注入环境变量到 Agent 的 bash 进程** — oh-my-openagent 没使用此 hook，但 `@opencode-ai/plugin` 接口支持
+3. **oh-my-openagent 没有 "session → 工作目录" 映射** — 因为它假设所有 session 在同一项目目录下。我们需要这个映射是因为每个分析任务有独立的 TASK_DIR
+
+### 方案：sessionID 映射 + shell.env 注入 + 映射自动更新
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ 1. session.created 事件                                      │
-│    → Plugin 无需操作（sessionID 在后续 hook 中获取）          │
-├─────────────────────────────────────────────────────────────┤
-│ 2. shell.env hook（Agent 每次执行 bash 时触发）               │
-│    → Plugin 注入 SESSION_ID=<sessionID> 到环境变量           │
-│    → Agent 的 bash 进程中 $SESSION_ID 自动可用               │
-├─────────────────────────────────────────────────────────────┤
-│ 3. Agent 创建 TASK_DIR                                       │
-│    → Python 脚本读 $SESSION_ID（环境变量）                    │
-│    → 写 .task_sessions.json: { sessionID: taskDir }          │
-│    → 无需 LLM 手动复制任何值                                 │
-├─────────────────────────────────────────────────────────────┤
-│ 4. compacting hook（压缩时触发）                              │
-│    → Plugin 用 input.sessionID 查 .task_sessions.json       │
-│    → 精确找到 TASK_DIR → 显式注入到压缩上下文                │
-│    → "不可省略" 标记，LLM 总结器必须保留                      │
-├─────────────────────────────────────────────────────────────┤
-│ 5. session.deleted 事件                                       │
-│    → Plugin 从 .task_sessions.json 删除对应条目              │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                                                                     │
+│  A. shell.env hook（Agent 每次执行 bash 时触发）                     │
+│     → Plugin 注入 SESSION_ID=<sessionID> 到环境变量                 │
+│     → Agent 的 bash 进程中 $SESSION_ID 自动可用                     │
+│     → Agent 的 Python 脚本通过 os.environ['SESSION_ID'] 读取        │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  B. Agent 创建 TASK_DIR（或切换到新目录）                            │
+│     → Python 脚本从环境变量读取 SESSION_ID                           │
+│     → 写 .task_sessions.json: { "session_abc": "/path/to/task" }   │
+│     → 同一 session 多次执行会覆盖旧值（用户要求新目录时自动切换）     │
+│     → 完全不需要 LLM 手动复制字符串                                  │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  C. compacting hook（每次压缩时触发）                                │
+│     → Plugin 用 input.sessionID 查 .task_sessions.json             │
+│     → 精确找到 TASK_DIR → 显式注入到压缩上下文                      │
+│     → 标记"不可省略"，LLM 总结器必须保留                             │
+│     → 多轮压缩都能查到（因为 sessionID 不变，映射持久化在文件中）     │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  D. session.deleted 事件                                             │
+│     → Plugin 从 .task_sessions.json 删除对应条目                    │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 数据格式
@@ -91,17 +116,61 @@ BinaryAnalysis Agent 在分析过程中会动态创建任务目录（`$TASK_DIR`
 }
 ```
 
-- Key: sessionID（来自 OpenCode 运行时）
+- Key: sessionID（来自 OpenCode 运行时，compaction 前后不变）
 - Value: TASK_DIR 绝对路径
 - 多个会话并行时各自写入各自的 key，不冲突
+- 同一会话创建新 TASK_DIR 时覆盖旧值（自动切换）
+
+### 对 6 个关键问题的回答
+
+**Q1: 结合 oh-my-openagent REVIEW**
+
+oh-my-openagent 的 compaction 恢复模式是 `capture → compact → restore`，全用内存 Map。我们用文件持久化（`.task_sessions.json`）是因为 TASK_DIR 需要跨进程（Plugin 进程 vs Agent bash 进程）共享，内存 Map 做不到。
+
+**Q2: 当前实现是否合适**
+
+当前 `findActiveTask` 盲猜逻辑不合适：
+- 多个 in_progress 时放弃 → 无法精确匹配
+- 用户要求新目录时无法感知 → Q4 无法解决
+- 并行会话时可能匹配到别人的任务 → Q5 无法解决
+
+**Q3: 多轮压缩后如何保证找到**
+
+sessionID 在 compaction 前后不变（oh-my-openagent 已验证）。映射持久化在 `.task_sessions.json` 文件中，不受进程重启、内存清理影响。compacting hook 每次 compression 都能用同一 sessionID 查到同一个 TASK_DIR。
+
+**Q4: 用户要求新任务目录时是否生效**
+
+Agent 创建新 TASK_DIR 的代码会覆盖 `.task_sessions.json` 中同一 sessionID 的旧值。下次压缩时 compacting hook 查到的就是新目录。
+
+**Q5: 多个会话并发分析**
+
+`.task_sessions.json` 是 map 结构，每个 sessionID 独立。两个会话各自注册自己的映射，互不干扰。compacting hook 用 `input.sessionID` 精确查找，不会混淆。
+
+**Q6: 多轮对话、多轮压缩后精确匹配**
+
+```
+第 1 轮对话: Agent 创建 TASK_DIR → 注册映射 { "sid_abc": "/path/A" }
+第 1 次压缩: compacting hook 查 "sid_abc" → 找到 /path/A → 注入
+  → LLM 总结器保留 TASK_DIR = /path/A
+第 2 轮对话: Agent 继续使用 /path/A
+第 2 次压缩: compacting hook 查 "sid_abc" → 找到 /path/A → 注入
+  → LLM 总结器保留 TASK_DIR = /path/A
+...
+第 N 次压缩: 同上，始终精确匹配
+```
+
+sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 
 ### 降级策略
 
-| 情况 | 行为 |
-|------|------|
-| shell.env 的 sessionID 为 undefined | Agent 注册映射时 sessionID 为空字符串 → 映射无效 → 降级到自愈 |
-| Agent 未注册映射（sessionID 为空或其他原因） | compacting hook 查不到 → 依赖 LLM 总结器保留 |
-| 两者都失败 | Agent 自愈规则：find_task.py + 问用户 |
+| 情况 | 原因 | 行为 |
+|------|------|------|
+| `shell.env` 的 sessionID 为 undefined | OpenCode 框架异常 | Agent 注册时读到空字符串 → 映射无效 → 降级 |
+| Agent 未执行注册（sessionID 为空或跳过） | Agent 未按 prompt 执行 | compacting hook 查不到 → 依赖 LLM 总结器 |
+| 映射文件损坏/丢失 | 文件系统异常 | compacting hook 查不到 → 降级到自愈 |
+| 以上全部失败 | 极端情况 | Agent 自愈规则：find_task.py + 问用户 |
+
+三层降级：映射精确匹配 → LLM 总结器 → find_task.py 问用户
 
 ---
 
@@ -109,57 +178,66 @@ BinaryAnalysis Agent 在分析过程中会动态创建任务目录（`$TASK_DIR`
 
 ### §3.1 实施步骤
 
-**步骤 1. Plugin 新增 `shell.env` hook — 注入 SESSION_ID 环境变量**
+**步骤 1. Plugin 新增 `shell.env` hook**
 - 文件: `.opencode/plugins/binary-analysis.mjs`
-- 预估行数: ~15 行
-- 验证点: `node --check` 通过 + 手动确认 hook 结构正确
+- 改动: 新增 `"shell.env"` hook，注入 `SESSION_ID` 到 `output.env`
+- 预估行数: ~10 行
+- 验证点: `node --check` 通过
 - 依赖: 无
 
-**步骤 2. Plugin compacting hook — 用 sessionID 查映射注入 TASK_DIR**
+**步骤 2. Plugin 新增映射读写函数 + compacting hook 精确查找**
 - 文件: `.opencode/plugins/binary-analysis.mjs`
-- 预估行数: ~20 行（含映射读写函数）
-- 验证点: `node --check` 通过
-- 依赖: 步骤 1
+- 改动:
+  - 新增 `readTaskSessions()` / `writeTaskSessions()` / `getTaskDir(sessionID)` 函数
+  - compacting hook 中用 `input.sessionID` 查 `.task_sessions.json`，找到则注入 TASK_DIR
+  - 删除旧的 `findActiveTask()` 盲猜逻辑
+- 预估行数: +25 -30（净减少 ~5 行）
+- 验证点: `node --check` 通过 + compacting hook 使用 sessionID 查找而非盲猜
+- 依赖: 无
 
 **步骤 3. Plugin event hook — session.deleted 清理映射**
 - 文件: `.opencode/plugins/binary-analysis.mjs`
+- 改动: `session.deleted` 事件中从 `.task_sessions.json` 删除对应条目
 - 预估行数: ~5 行
 - 验证点: `node --check` 通过
 - 依赖: 步骤 2
 
-**步骤 4. Agent prompt — 任务目录约定加入映射注册**
+**步骤 4. Agent prompt — 任务目录创建加入映射注册**
 - 文件: `.opencode/agents/binary-analysis.md`
-- 预估行数: ~10 行（修改现有 TASK_DIR 创建代码，增加注册步骤）
-- 验证点: 行数 < 450 + 创建命令逻辑正确
+- 改动: TASK_DIR 创建命令后增加一行：从 `$SESSION_ID` 环境变量读取 sessionID，写入 `.task_sessions.json`
+- 预估行数: ~8 行（修改现有代码块）
+- 验证点: 行数 < 450 + Python 代码通过 `os.environ` 读取 SESSION_ID
 - 依赖: 步骤 1（shell.env 确保 SESSION_ID 可用）
 
-**步骤 5. Agent prompt — 自愈规则引用 find_task.py**
+**步骤 5. Agent prompt — 确认自愈规则完整**
 - 文件: `.opencode/agents/binary-analysis.md`
-- 预估行数: ~5 行（已有，确认无误）
-- 验证点: 自愈流程完整（映射 → LLM 总结器 → find_task.py → 问用户）
+- 改动: 确认自愈规则引用 find_task.py，三层降级链路完整
+- 预估行数: ~3 行（已有，微调措辞）
+- 验证点: 三层降级链路清晰（映射 → LLM 总结器 → find_task.py → 问用户）
 - 依赖: 步骤 4
 
-**步骤 6. 删除旧的盲猜逻辑**
+**步骤 6. 清理：删除 findActiveTask 相关的 readdirSync/statSync import**
 - 文件: `.opencode/plugins/binary-analysis.mjs`
-- 预估行数: -15 行（删除 findActiveTask 函数及相关代码）
-- 验证点: `node --check` 通过 + 不再有 findActiveTask
-- 依赖: 步骤 2、3
+- 改动: 清理不再使用的 import（`readdirSync`, `statSync`）
+- 预估行数: -2 行
+- 验证点: `node --check` 通过
+- 依赖: 步骤 2
 
 ### 改动范围表
 
 | 文件 | 改动类型 | 预估行数 |
 |------|---------|---------|
-| `.opencode/plugins/binary-analysis.mjs` | 修改 | +40 -15 |
-| `.opencode/agents/binary-analysis.md` | 修改 | +15 -5 |
+| `.opencode/plugins/binary-analysis.mjs` | 修改 | +40 -32 |
+| `.opencode/agents/binary-analysis.md` | 修改 | +11 -3 |
 
-**不新增文件。不修改 Python 脚本。不修改知识库。**
+**不新增文件。不修改 Python 脚本（find_task.py 已存在）。不修改知识库。**
 
 ### 编码规则
 
 1. `.task_sessions.json` 读写用 `readJsonSafe`/`writeJsonSafe`，失败不影响主流程
-2. `shell.env` hook 中 sessionID 为 undefined 时不注入
-3. compacting hook 中查不到映射时不注入（不报错）
-4. Agent prompt 中注册命令用 `sys.argv` 或 `os.environ` 读取 SESSION_ID，不依赖 LLM 复制字符串
+2. `shell.env` hook 中 sessionID 为 undefined 时不注入（`output.env` 不添加 SESSION_ID）
+3. compacting hook 中查不到映射时不注入（静默降级）
+4. Agent prompt 中注册命令通过 `os.environ.get('SESSION_ID', '')` 读取，空字符串时不注册
 
 ---
 
@@ -167,13 +245,15 @@ BinaryAnalysis Agent 在分析过程中会动态创建任务目录（`$TASK_DIR`
 
 ### 功能验收
 
-| 验收项 | 预期结果 |
-|--------|---------|
-| shell.env 注入 | Agent bash 进程中 `echo $SESSION_ID` 输出非空 |
-| 映射注册 | 创建 TASK_DIR 后 `.task_sessions.json` 中有对应条目 |
-| 压缩注入 | compacting hook 输出中包含正确的 TASK_DIR |
-| 并行隔离 | 两个会话的映射互不干扰 |
-| 会话清理 | session.deleted 后映射条目被删除 |
+| 验收项 | 预期结果 | 验证方式 |
+|--------|---------|---------|
+| shell.env 注入 | Agent bash 进程中 `echo $SESSION_ID` 输出非空 | Agent 执行时检查 |
+| 映射注册 | 创建 TASK_DIR 后 `.task_sessions.json` 中有对应条目 | 检查文件内容 |
+| 压缩注入 | compacting hook 输出中包含正确的 TASK_DIR | 日志检查 |
+| 并行隔离 | 两个会话的映射互不干扰 | 检查 `.task_sessions.json` 有两个独立条目 |
+| 会话清理 | session.deleted 后映射条目被删除 | 检查文件 |
+| 用户切换目录 | 创建新 TASK_DIR 后映射更新为新路径 | 检查文件 |
+| 多轮压缩 | N 次压缩后仍能查到正确的 TASK_DIR | 连续触发压缩验证 |
 
 ### 回归验收
 
@@ -187,7 +267,8 @@ BinaryAnalysis Agent 在分析过程中会动态创建任务目录（`$TASK_DIR`
 
 - 无循环依赖
 - Plugin 只依赖 `workspace/.task_sessions.json`（已存在的目录）
-- Agent 只依赖 `SESSION_ID` 环境变量（由 Plugin 注入）
+- Agent 只依赖 `SESSION_ID` 环境变量（由 Plugin shell.env hook 注入）
+- 整条链路不依赖 LLM 手动操作
 
 ---
 
@@ -195,5 +276,47 @@ BinaryAnalysis Agent 在分析过程中会动态创建任务目录（`$TASK_DIR`
 
 | 文档 | 关系 |
 |------|------|
-| `2026-04-22-plugin-and-architecture-improvements.md` | Plugin 架构已建立，本需求在此基础上增强 shell.env hook |
-| `2026-04-27-ecdlp-compression-parallel.md` | 已实现 compacting hook 的环境信息注入，本需求增加 TASK_DIR 精确恢复能力 |
+| `2026-04-22-plugin-and-architecture-improvements.md` | Plugin 架构已建立，本需求在此基础上新增 shell.env hook |
+| `2026-04-27-ecdlp-compression-parallel.md` | 已实现 compacting hook 的环境信息注入，本需求增加 TASK_DIR 精确恢复能力（替换盲猜逻辑） |
+
+---
+
+## 附录 A: sessionID 生命周期验证
+
+来源: oh-my-openagent 源码分析
+
+```
+session.created  → sessionID = "abc123"
+    ↓
+第 1 轮对话（多轮 tool 调用，每次 shell.env 都拿到 "abc123"）
+    ↓
+第 1 次压缩:
+  compacting hook input.sessionID = "abc123"  ← 不变
+  session.compacted event.sessionID = "abc123"  ← 不变
+    ↓
+第 2 轮对话（shell.env 仍然拿到 "abc123"）
+    ↓
+第 2 次压缩:
+  compacting hook input.sessionID = "abc123"  ← 不变
+    ↓
+... 无限次压缩，sessionID 始终不变
+    ↓
+session.deleted → sessionID = "abc123"  ← 清理映射
+```
+
+## 附录 B: shell.env hook 类型签名
+
+```typescript
+"shell.env"?: (
+  input: {
+    cwd: string
+    sessionID?: string
+    callID?: string
+  },
+  output: {
+    env: Record<string, string>  // 注入的环境变量
+  }
+) => Promise<void>
+```
+
+使用方式: `output.env["SESSION_ID"] = input.sessionID`
