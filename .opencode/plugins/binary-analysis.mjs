@@ -64,6 +64,37 @@ const sessionStates = new Map();
 export const BinaryAnalysisPlugin = async ({ directory }) => {
   return {
     "experimental.session.compacting": async (input, output) => {
+      // 动态注入环境信息摘要（从 env_cache.json 和 config.json 实时读取）
+      const config = readJsonSafe(CONFIG_FILE);
+      const envData = readJsonSafe(ENV_CACHE_FILE);
+      const envInfo = envData?.data;
+      const scriptsDir = config?.scripts_dir || "";
+      const idaPath = config?.ida_path || "";
+
+      let envSummary = "## 环境信息（压缩时自动注入）\n";
+      if (idaPath) {
+        envSummary += `- IDA Pro: ${idaPath}\n`;
+      }
+      if (scriptsDir) {
+        envSummary += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;
+      }
+      if (envInfo) {
+        if (envInfo.venv_python) {
+          envSummary += `- BA_PYTHON: ${envInfo.venv_python}\n`;
+        }
+        const compiler = envInfo.compiler;
+        if (compiler?.available) {
+          envSummary += `- 编译器: ${compiler.type} (${compiler.path})\n`;
+        }
+        if (envInfo.packages) {
+          const pkgs = Object.entries(envInfo.packages)
+            .filter(([, v]) => v.available)
+            .map(([k, v]) => `${k}@${v.version}`)
+            .join(", ");
+          if (pkgs) envSummary += `- Python 包: ${pkgs}\n`;
+        }
+      }
+      output.context.push(envSummary);
       output.context.push(COMPACTION_CONTEXT_PROMPT);
     },
 

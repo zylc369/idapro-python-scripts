@@ -132,15 +132,90 @@ int main(int argc, char *argv[]) {
 
 ## 并行计算策略
 
-计算密集型任务（如 ECDLP 求解）可以通过多进程并行加速：
+> 计算密集型任务可通过多线程/多进程并行加速。ECDLP 特定的并行实现细节见 `ecdlp-solving.md`。
 
-- **启动方式**：多个进程各跑一个独立随机起点的 Pollard's rho
-- **每个进程一个核心**：4 核 CPU 启动 4 个进程，线性加速
-- **Python 多进程**：`multiprocessing.Process` 或手动启动多个脚本
-- **C 多线程**：`CreateThread`（Windows）或 `pthread`（Linux）
-- **结果收集**：任一进程找到结果后写入文件，主进程检测后终止其他进程
+### 线程数选择
 
-**注意**：用户看到多个 Python/C 进程是正常的并行行为，不是泄漏。
+| 场景 | 线程数 | 原因 |
+|------|--------|------|
+| ECDLP (64-bit) | `min(cpu_count, 16)` | 8 线程比单线程快 ~50x |
+| 暴力搜索 | `cpu_count` | 线性加速，无锁竞争 |
+| 内存密集型（哈希表查表） | `min(cpu_count, 4)` | 内存带宽瓶颈，更多线程无收益 |
+
+### Distinguished Points (DP) 策略（通用）
+
+**适用场景**: 多线程随机游走类算法（线程间不共享路径，只通过 DP 表碰撞）。
+
+**核心机制**:
+- 游走过程中，只有满足特定条件（如值的低 d bit 全零）的"特殊点"才被记录
+- 多线程各自游走，记录的 DP 点写入共享哈希表
+- 当两个不同路径到达同一点（DP 碰撞），即可求解
+
+**DP mask 选择原则**:
+- d 值决定 DP 概率 = 1/2^d
+- d 小 → 记录频繁 → 表大但碰撞快
+- d 大 → 记录稀疏 → 表小但碰撞慢
+- 推荐: d ≈ 问题规模位数/2 - 4（如 64-bit 问题 → d=28）
+- 可用内存 = `预计 DP 数量 × 每条目大小`，需提前估算
+
+**DP 表实现模式**:
+1. 共享哈希表（以 DP 值为 key）
+2. 线程安全写入（`CRITICAL_SECTION` / `pthread_mutex`）
+3. 新 DP 写入前检查是否已存在（碰撞检测）
+
+### MSVC 多线程 API（Windows）
+
+```c
+#include <windows.h>
+
+CRITICAL_SECTION cs;
+InitializeCriticalSection(&cs);
+
+// 创建线程
+HANDLE hThread = CreateThread(NULL, 0, WorkerFunc, &arg, 0, NULL);
+
+// 保护共享数据
+EnterCriticalSection(&cs);
+// ... 写 DP 表 ...
+LeaveCriticalSection(&cs);
+
+// 终止标志（原子操作）
+volatile LONG g_found = 0;
+InterlockedExchange(&g_found, 1);  // 设置标志
+if (g_found) return;               // 检查标志
+
+// 等待所有线程
+WaitForMultipleObjects(nThreads, hThreads, TRUE, INFINITE);
+```
+
+**Linux 替代方案**: 用 `pthread` + `pthread_mutex_t`，详见 `ecdlp-solving.md` C 模板。
+
+### Python 调用并行 C 程序模式
+
+编译多线程 C 程序后，通过 subprocess 调用：
+
+```python
+import subprocess, os
+
+# 线程数通过命令行参数传递
+cpu_count = os.cpu_count() or 4
+nthreads = min(cpu_count, 16)
+
+result = subprocess.run(
+    ["./solver", str(nthreads)],
+    capture_output=True, text=True, timeout=3600  # 1小时超时
+)
+
+if result.returncode == 0 and "FOUND" in result.stdout:
+    # 解析结果
+    for line in result.stdout.strip().split("\n"):
+        if line.startswith("FOUND"):
+            print(f"求解成功: {line}")
+else:
+    print(f"求解失败: {result.stderr}")
+```
+
+**注意**：用户看到多个 C 进程或高 CPU 占用是正常的并行行为，不是资源泄漏。
 
 ---
 

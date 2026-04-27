@@ -355,47 +355,12 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 > 视觉驱动 GUI 自动化方案详情见 `$SCRIPTS_DIR/knowledge-base/gui-automation.md`。
 > 以下为脚本快速参考。
 
-#### 视觉驱动方案（首选）
-
-```bash
-# 启动目标程序
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_launch.py" --action launch --exe <TARGET>
-
-# 等待窗口出现
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_launch.py" --action wait_window --pid <PID> --timeout 10
-
-# 截图定位控件
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_capture.py" --output-dir "$TASK_DIR/view" --name step1_initial
-
-# 键鼠操作（MCP 返回坐标后执行）
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_act.py" --action click --x 460 --y 320
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_act.py" --action type --text "license" --paste
-
-# 截图读结果
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_capture.py" --output-dir "$TASK_DIR/view" --name step2_result
-
-# 清理
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_launch.py" --action kill --pid <PID>
-```
-
-#### 降级方案（MCP 不可用时）: gui_verify.py
-
-```bash
-# 标准模式
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --output "$TASK_DIR/gui_result.json"
-
-# 控件探测（ID 未知时先探测）
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --discover --output "$TASK_DIR/discover.json"
-
-# Hook 注入（GUI 输入不进去时，推荐用文件传参避免转义问题）
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --hook-inject --hook-func-addr 0x401000 --hook-inputs-file "$TASK_DIR/inputs.json" --output "$TASK_DIR/result.json"
-
-# Hook 读取结果（读不出结果时）
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --hook-result --hook-compare-addr 0x401200 --output "$TASK_DIR/result.json"
-
-# Hook 注入 + Hook 读取结果 组合模式（GUI 无法输入也无法读取结果时）
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --hook-inject --hook-func-addr 0x401000 --hook-inputs-file "$TASK_DIR/inputs.json" --hook-result --hook-compare-addr 0x401200 --hook-trigger-addr 0x401500 --output "$TASK_DIR/result.json"
-```
+| 脚本 | 用途 | 关键参数 |
+|------|------|---------|
+| `gui_launch.py` | 启动/等待/终止目标程序 | `--action launch\|wait_window\|kill --exe <TARGET> --pid <PID>` |
+| `gui_capture.py` | 截图 | `--output-dir "$TASK_DIR/view" --name <名称>` |
+| `gui_act.py` | 键鼠操作 | `--action click\|type --x <X> --y <Y> --text <TEXT> --paste` |
+| `gui_verify.py` | Win32 控件方案（MCP 不可用时降级） | `--exe <TARGET> --discover\|--hook-inject\|--hook-result` |
 
 ### 脚本生成与沉淀规则
 
@@ -405,19 +370,6 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 
 > 当需要向运行中的进程写入补丁/代码/数据，或捕获内存值时使用。
 > 参数详见 `$SCRIPTS_DIR/knowledge-base/process-patch-reference.md`。
-
-```bash
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/process_patch.py" \
-  --exe TARGET.EXE \
-  --patch 0x40234C:EB \
-  --write-data 0x422600:4B435446 \
-  --write-code 0x40234E:56578D... \
-  --capture 0x422480:16 \
-  --signal 0x42248C:DEADBEEF \
-  --trigger click:1002 \
-  --timeout 15 \
-  --output "$TASK_DIR/patch_result.json"
-```
 
 ---
 
@@ -473,6 +425,14 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 - 记住当前会话中的 IDA 数据库文件路径和任务目录
 - 新问题针对同一文件 → 跳过路径解析，仍执行预检查
 - 增量更新 → 直接调用 update.py
+
+### 变量丢失自愈（压缩恢复后执行）
+
+如果上下文压缩后变量丢失（$TASK_DIR、$SCRIPTS_DIR 等），按以下步骤恢复：
+1. $SCRIPTS_DIR: 从 Plugin 注入的环境信息恢复，或从 `~/bw-ida-pro-analysis/config.json` 读取
+2. $TASK_DIR: 从 `~/bw-ida-pro-analysis/workspace/` 中查找包含匹配目标二进制路径的 `summary.json` 的目录
+3. 如果有多个匹配 → 按修改时间排序取最新的
+4. 如果找不到匹配的任务目录 → 提示用户确认，或创建新任务目录
 
 ---
 

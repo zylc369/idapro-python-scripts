@@ -12,6 +12,21 @@
 
 ---
 
+## 版本兼容性说明
+
+不同 Frida 版本的 API 有差异，以下列出常见替代方案：
+
+| 旧 API | 替代方案 | 说明 |
+|--------|---------|------|
+| `Module.findBaseAddress(name)` | `Process.findModuleByName(name).base` | 更可靠，返回 Module 对象 |
+| `Memory.readU32(ptr)` | `ptr.readU32()` | 直接在 NativePointer 上调用 |
+| `Memory.writeU32(ptr, val)` | `ptr.writeU32(val)` | 直接在 NativePointer 上调用 |
+| `Memory.patchCode(ptr, size, fn)` | `Memory.protect(ptr, size, 'rwx')` + `ptr.writeU8(val)` | `patchCode` 在某些版本可能 hang |
+
+**建议**: 优先使用 `ptr.readXxx()` / `ptr.writeXxx()` 风格，而非 `Memory.readXxx()` 全局函数。
+
+---
+
 ## 模板 1: 参数拦截 + 返回值读取
 
 ```python
