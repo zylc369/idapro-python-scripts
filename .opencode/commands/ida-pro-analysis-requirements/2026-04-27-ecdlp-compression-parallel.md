@@ -14,7 +14,7 @@
 - 方案 B: 增强 Plugin 压缩上下文保留 — COMPACTION_CONTEXT_PROMPT 添加环境信息摘要；Agent prompt 添加变量丢失自愈规则
 - 方案 C: 升级 `technology-selection.md` — 添加并行计算策略（线程数选择、DP 策略、MSVC 多线程模板）
 - 方案 D (可选): Frida 版本适配知识库
-- 方案 E (可选): MSVC 兼容性知识
+- 方案 E: (已合入方案 C) MSVC 兼容性知识
 
 **预期收益**:
 - 速度: ECDLP 8 线程并行比单线程快 ~50x（40s vs ~33min 估算）
@@ -33,7 +33,7 @@
    | 曲线位数 | 算法 | 预估耗时 | 内存 |
    | 33-64 bit | 并行 Pollard's rho + DP | 分钟级 (C, 8线程) | 极低+DP表 |
 
-2. **新增 § "并行 Pollard's rho + Distinguished Points"**：
+2. **新增 § "并行 Pollard's rho + Distinguished Points"**（ECDLP 特定实现细节，通用 DP 策略在 technology-selection.md）：
    - DP 策略：点 x 的低 d bit 全零时记录（如 d=16 → 1/65536 概率记录）
    - 线程数选择：min(CPU 核心数, 曲线位数/8)，不超过 16
    - 终止检测：共享原子标志或文件锁，任一线程找到解后通知其他线程退出
@@ -44,6 +44,7 @@
    - 仿射坐标（比 Jacobian 快 ~2x，因为省去 Z 坐标运算）
    - DP 判定：`(P.x & DP_MASK) == 0`
    - 线程安全：`CRITICAL_SECTION` 或 `pthread_mutex` 保护 DP 表
+   - 跨平台：`#ifdef _WIN32` 条件编译区分 Windows (CreateThread/CRITICAL_SECTION) 和 Linux (pthread/pthread_mutex)
    - 结果输出到 stdout，Python 通过 subprocess 调用
 
 4. **新增 § "特殊约束：非标准 ECDSA"**：
@@ -92,8 +93,8 @@
 
 如果上下文压缩后变量丢失（$TASK_DIR、$SCRIPTS_DIR 等），按以下步骤恢复：
 1. $SCRIPTS_DIR: 从 Plugin 注入的环境信息恢复，或从 config.json 读取
-2. $TASK_DIR: 从 ~/bw-ida-pro-analysis/workspace/ 中按修改时间排序，找最新的目录
-3. 读取 $TASK_DIR/summary.json 或 progress.md 确认是否为当前任务的目录
+2. $TASK_DIR: 从 ~/bw-ida-pro-analysis/workspace/ 中查找包含匹配目标二进制路径的 summary.json 的目录
+3. 如果有多个匹配 → 按修改时间排序取最新的
 4. 如果找不到匹配的任务目录 → 提示用户确认，或创建新任务目录
 ```
 
@@ -112,19 +113,19 @@
    | 内存密集型 | min(cpu_count, 4) | 内存带宽瓶颈 |
 
 2. **MSVC 多线程模板**：
-   ```c
-   #include <windows.h>
-   // CRITICAL_SECTION for DP table protection
-   // CreateThread with worker function
-   // InterlockedExchange for termination flag
-   ```
+    ```c
+    #include <windows.h>
+    // CRITICAL_SECTION 保护 DP 表
+    // CreateThread 创建工作线程
+    // InterlockedExchange 设置终止标志
+    ```
 
-3. **Distinguished Points 策略**：
-   - 什么场景用 DP：多线程 Pollard's rho（线程间不共享路径，只通过 DP 表碰撞）
-   - DP mask 选择：d = 曲线位数/2 - 4（如 64-bit 曲线用 d=28）
-   - DP 表实现：哈希表，key=点.y 的低 32 bit，value=完整 DP 记录
+3. **Distinguished Points 策略（通用描述，不含 ECDLP 特定实现，详细实现见 ecdlp-solving.md）**：
+   - 什么场景用 DP：多线程随机游走类算法（线程间不共享路径，只通过 DP 表碰撞）
+   - DP mask 选择原则：d 值决定 DP 概率，影响表大小和碰撞速度，需根据可用内存权衡
+   - DP 表实现模式：哈希表 + 线程安全写入 + 碰撞检测（通用模式，不限 ECDLP）
 
-4. **Python 调用并行 C 程序模式**：
+4. **Python 调用并行 C 程序模式**（扩充现有"渐进策略"章节，不替换）：
    - 编译多线程 C → subprocess 调用 → 读 stdout
    - 线程数通过命令行参数传递
    - 超时通过 subprocess timeout 控制
@@ -152,7 +153,8 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
 |------|------|---------|---------|
 | A | knowledge-base/ecdlp-solving.md | 修改 | ~160 行新增/替换 |
 | B | plugins/binary-analysis.mjs | 修改 | ~10 行新增 |
-| B | agents/binary-analysis.md | 修改 | ~10 行新增 |
+| B | agents/binary-analysis.md | 修改 | ~10 行新增，-60 行提取（净 -50 行）|
+| B | knowledge-base/gui-automation.md | 扩充（如已存在）或新建 | ~45 行（从 Agent prompt 提取的 GUI 命令详情）|
 | C | knowledge-base/technology-selection.md | 修改 | ~50 行新增/替换 |
 | D | knowledge-base/frida-hook-templates.md | 修改 | ~15 行新增 |
 | E | (已合入方案 C) | — | — |
@@ -161,7 +163,7 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
 
 - 知识库 .md 文件必须自包含（不依赖主 prompt 上下文）
 - 代码模板中的注释使用中文
-- C 模板使用 MSVC 兼容语法（不使用 `__int128`，用 `__umul128`）
+- C 模板使用 MSVC 兼容语法（不使用 `__int128`，用 `__umul128`），同时用 `#ifdef _WIN32` 支持跨平台
 - 不修改任何 Python/JS 逻辑代码（仅修改 .md 文本和 .mjs 中的常量字符串）
 
 ### §3.1 实施步骤拆分
@@ -170,25 +172,25 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
 步骤 1. 升级 ecdlp-solving.md — 算法选择表 + 并行 Pollard's rho + DP 章节
   - 文件: knowledge-base/ecdlp-solving.md
   - 预估行数: ~60 行（替换算法选择表 + 新增并行章节）
-  - 验证点: 人工阅读确认自包含性 + MSVC 兼容 + 引用路径正确
+  - 验证点: 阅读新增内容确认（a）不引用主 prompt 中未定义的术语（b）MSVC 兼容（c）引用路径格式正确
   - 依赖: 无
 
 步骤 2. 升级 ecdlp-solving.md — C 并行模板（基础框架 + 模运算 + 点运算）
   - 文件: knowledge-base/ecdlp-solving.md
   - 预估行数: ~80 行（替换现有 C 模板：仿射坐标点运算 + MSVC __umul128 模运算）
-  - 验证点: C 代码语法检查（cmd /c cl /Zs）+ 无 __int128 + MSVC 兼容
+  - 验证点: 确认（a）无 `__int128`，用 `__umul128`（b）代码结构完整（有 struct 定义、模运算函数、点运算函数声明）（c）不含 main 函数（在步骤 3 添加）
   - 依赖: 步骤 1
 
 步骤 3. 升级 ecdlp-solving.md — C 并行模板（多线程 + DP 碰撞 + main）
   - 文件: knowledge-base/ecdlp-solving.md
   - 预估行数: ~80 行（在步骤 2 基础上追加：CreateThread + CRITICAL_SECTION + DP 表 + worker 函数 + main）
-  - 验证点: C 代码语法检查 + 完整可编译 + 自包含性
+  - 验证点: 确认（a）代码完整可编译（有 main 入口）（b）使用 `#ifdef _WIN32` 跨平台（c）DP 判定和碰撞逻辑正确
   - 依赖: 步骤 2
 
 步骤 4. 升级 ecdlp-solving.md — 特殊约束 + 渐进策略 + 陷阱更新
   - 文件: knowledge-base/ecdlp-solving.md
   - 预估行数: ~40 行
-  - 验证点: 人工阅读确认完整覆盖复盘中的经验教训
+  - 验证点: 确认（a）r=1 约束说明完整（b）渐进策略包含并行化决策（c）新陷阱覆盖复盘中的 n>p 异常和 DP mask 选择
   - 依赖: 步骤 3
 
 步骤 5. 增强 COMPACTION_CONTEXT_PROMPT
@@ -202,6 +204,12 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
   - 预估行数: ~10 行（在后续交互处理章节中添加自愈规则）
   - 验证点: 人工阅读确认规则可执行 + 不与其他规则冲突
   - 依赖: 步骤 5
+
+步骤 6.5. Agent prompt 瘦身（Phase 4.5）
+  - 文件: agents/binary-analysis.md + knowledge-base/gui-automation.md
+  - 预估行数: -60 行（从 Agent prompt 提取 GUI 自动化工具详细命令到 gui-automation.md，主 prompt 保留一行引用："视觉驱动 GUI 自动化方案详情见 $SCRIPTS_DIR/knowledge-base/gui-automation.md"）
+  - 验证点: `wc -l agents/binary-analysis.md` 确认 < 450 行 + gui-automation.md 自包含 + 引用路径正确
+  - 依赖: 步骤 6（先加后减，确保净行数达标）
 
 步骤 7. 升级 technology-selection.md 并行计算策略
   - 文件: knowledge-base/technology-selection.md
@@ -229,13 +237,14 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
 | F5 | Agent prompt 包含变量丢失自愈规则 | 读取 md 文件确认 |
 | F6 | technology-selection.md 并行计算策略包含线程数选择和 DP 策略 | 人工阅读 |
 | F7 | 所有知识库文件自包含 | 逐个阅读确认不依赖主 prompt 上下文 |
+| F8 | (可选) frida-hook-templates.md 包含版本兼容性说明 | 读取文件确认（如文件不存在则跳过） |
 
 ### 回归验收
 
 | 编号 | 验收项 | 验证方式 |
 |------|--------|---------|
 | R1 | binary-analysis.mjs 加载不报错 | `node --check` |
-| R2 | Agent prompt < 510 行 | `wc -l` |
+| R2 | Agent prompt < 450 行（含 Phase 4.5 瘦身提取） | `wc -l` |
 | R3 | 现有 COMPACT_RULES 规则完整保留 | diff 检查 |
 | R4 | 现有 Plugin system.transform 功能不变 | 检查代码未修改 |
 
