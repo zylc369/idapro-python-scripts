@@ -1,5 +1,5 @@
-import { readFileSync, existsSync, unlinkSync } from "fs";
-import { join } from "path";
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync, statSync } from "fs";
+import { join, dirname } from "path";
 import { homedir } from "os";
 
 const DATA_DIR = join(homedir(), "bw-ida-pro-analysis");
@@ -7,6 +7,26 @@ const CONFIG_FILE = join(DATA_DIR, "config.json");
 const ENV_CACHE_FILE = join(DATA_DIR, "env_cache.json");
 const WORKSPACE_DIR = join(DATA_DIR, "workspace");
 const TASK_SESSIONS_DIR = join(WORKSPACE_DIR, ".task_sessions");
+const DEBUG_LOG = join(DATA_DIR, "plugin_debug.log");
+const MAX_LOG_SIZE = 5 * 1024 * 1024;
+const KEEP_SIZE = 2 * 1024 * 1024;
+
+function debugLog(msg) {
+  try {
+    mkdirSync(dirname(DEBUG_LOG), { recursive: true });
+    // 超过 5MB 时截断：丢弃最早的日志，只保留最后 2MB
+    try {
+      if (existsSync(DEBUG_LOG) && statSync(DEBUG_LOG).size > MAX_LOG_SIZE) {
+        const content = readFileSync(DEBUG_LOG, "utf-8");
+        const keep = content.slice(-KEEP_SIZE);
+        const firstNewline = keep.indexOf("\n");
+        writeFileSync(DEBUG_LOG, firstNewline >= 0 ? keep.slice(firstNewline + 1) : keep);
+      }
+    } catch {}
+    const ts = new Date().toISOString();
+    writeFileSync(DEBUG_LOG, `[${ts}] ${msg}\n`, { flag: "a" });
+  } catch {}
+}
 
 const COMPACT_RULES = `## BinaryAnalysis 关键规则（压缩后恢复）
 
@@ -86,8 +106,10 @@ function removeTaskSession(sessionID) {
 const sessionStates = new Map();
 
 export const BinaryAnalysisPlugin = async ({ directory }) => {
+  debugLog(`BinaryAnalysisPlugin loaded: directory=${directory}`);
   return {
     "experimental.session.compacting": async (input, output) => {
+      debugLog(`compacting: sessionID=${input.sessionID}`);
       // 动态注入环境信息摘要（从 env_cache.json 和 config.json 实时读取）
       const config = readJsonSafe(CONFIG_FILE);
       const envData = readJsonSafe(ENV_CACHE_FILE);
@@ -126,17 +148,23 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
       if (sid) {
         const taskDir = getTaskDir(sid);
         if (taskDir) {
+          debugLog(`compacting: TASK_DIR recovered=${taskDir}`);
           output.context.push(`## TASK_DIR（不可省略 — 压缩后必须保留）
 当前会话的任务目录: ${taskDir}
 所有中间输出文件在此目录下。后续分析必须使用此路径作为 $TASK_DIR。
 如果用户明确要求使用新的任务目录，重新执行"任务目录约定"中的创建命令即可切换。`);
+        } else {
+          debugLog(`compacting: TASK_DIR not found for sessionID=${sid}`);
         }
       }
     },
 
     "experimental.chat.system.transform": async (input, output) => {
       const config = readJsonSafe(CONFIG_FILE);
-      if (!config) return;
+      if (!config) {
+        debugLog("system.transform: config.json not found, skipping");
+        return;
+      }
 
       const envData = readJsonSafe(ENV_CACHE_FILE);
       const envInfo = envData?.data;
@@ -174,6 +202,7 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
     },
 
     "tool.execute.before": async (input, output) => {
+      debugLog(`tool.execute.before: tool=${input.tool} sessionID=${input.sessionID}`);
       if (input.tool.toLowerCase() !== "bash") return;
       const cmd = output.args?.command;
       if (typeof cmd !== "string" || !cmd) return;
@@ -193,6 +222,7 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
         // cmd.exe 双引号内不需要转义单引号
         output.args.command = `set "SESSION_ID=${sid}" && ${cmd}`;
       }
+      debugLog(`injected: ${output.args.command.slice(0, 120)}`);
     },
 
     event: async (input) => {
@@ -204,19 +234,21 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
 
       if (event.type === "session.created") {
         if (sessionID) {
+          debugLog(`event: session.created id=${sessionID}`);
           sessionStates.set(sessionID, { createdAt: Date.now() });
         }
       }
 
       if (event.type === "session.deleted") {
         if (sessionID) {
+          debugLog(`event: session.deleted id=${sessionID}`);
           sessionStates.delete(sessionID);
           removeTaskSession(sessionID);
         }
       }
 
       if (event.type === "session.compacted") {
-        // reserved: 未来可在此恢复压缩前的分析状态
+        debugLog(`event: session.compacted id=${sessionID}`);
       }
     },
   };
