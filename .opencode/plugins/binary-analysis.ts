@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
+import type { Plugin } from "@opencode-ai/plugin";
 
 const DATA_DIR = join(homedir(), "bw-ida-pro-analysis");
 const CONFIG_FILE = join(DATA_DIR, "config.json");
@@ -11,7 +12,7 @@ const DEBUG_LOG = join(DATA_DIR, "plugin_debug.log");
 const MAX_LOG_SIZE = 5 * 1024 * 1024;
 const KEEP_SIZE = 2 * 1024 * 1024;
 
-function debugLog(msg) {
+function debugLog(msg: string): void {
   try {
     mkdirSync(dirname(DEBUG_LOG), { recursive: true });
     // 超过 5MB 时截断：丢弃最早的日志，只保留最后 2MB
@@ -30,7 +31,7 @@ function debugLog(msg) {
 
 const COMPACT_RULES = `## BinaryAnalysis 关键规则（压缩后恢复）
 
-① 禁止作弊式验证 — 定位验证函数→能定位: 干净用Unicorn/复杂用Hook; 不能定位→CLI用subprocess/DLL用ctypes/GUI用gui_verify.py。详见 knowledge-base/verification-patterns.md
+① 禁止作弊式验证 — 定位验证函数→能定位: 干净用Unicorn/复杂用Hook; 不能定位→CLI用subprocess/DLL用ctypes/gui_verify.py。详见 knowledge-base/verification-patterns.md
 ② 技术选型 — 计算密集型用 C/C++（见 knowledge-base/technology-selection.md）
 ③ ECDLP — 64-bit 以上必须用 C（见 knowledge-base/ecdlp-solving.md）
 ④ 环境检测 — detect_env.py 检测工具链，缓存 24h
@@ -71,28 +72,48 @@ const COMPACTION_CONTEXT_PROMPT = `## BinaryAnalysis 分析状态（压缩时必
 
 ${COMPACT_RULES}`;
 
-function readJsonSafe(filePath) {
+interface EnvData {
+  data?: {
+    venv_python?: string;
+    compiler?: {
+      available: boolean;
+      type: string;
+      path: string;
+      vcvarsall?: string;
+    };
+    packages?: Record<string, { available: boolean; version: string }>;
+  };
+}
+
+interface ConfigData {
+  scripts_dir?: string;
+  ida_path?: string;
+}
+
+interface TaskSessionMapping {
+  task_dir: string;
+}
+
+function readJsonSafe<T>(filePath: string): T | null {
   try {
     if (existsSync(filePath)) {
-      return JSON.parse(readFileSync(filePath, "utf-8"));
+      return JSON.parse(readFileSync(filePath, "utf-8")) as T;
     }
   } catch {}
   return null;
 }
 
-// --- sessionID → TASK_DIR 映射 ---
-
-function getTaskDir(sessionID) {
+function getTaskDir(sessionID: string): string | null {
   try {
     const filePath = join(TASK_SESSIONS_DIR, `${sessionID}.json`);
-    const data = readJsonSafe(filePath);
+    const data = readJsonSafe<TaskSessionMapping>(filePath);
     return data?.task_dir || null;
   } catch {
     return null;
   }
 }
 
-function removeTaskSession(sessionID) {
+function removeTaskSession(sessionID: string): void {
   try {
     const filePath = join(TASK_SESSIONS_DIR, `${sessionID}.json`);
     if (existsSync(filePath)) {
@@ -103,16 +124,20 @@ function removeTaskSession(sessionID) {
   }
 }
 
-const sessionStates = new Map();
+interface SessionState {
+  createdAt: number;
+}
 
-export const BinaryAnalysisPlugin = async ({ directory }) => {
+const sessionStates = new Map<string, SessionState>();
+
+export const BinaryAnalysisPlugin: Plugin = async ({ directory }) => {
   debugLog(`BinaryAnalysisPlugin loaded: directory=${directory}`);
   return {
     "experimental.session.compacting": async (input, output) => {
       debugLog(`compacting: sessionID=${input.sessionID}`);
       // 动态注入环境信息摘要（从 env_cache.json 和 config.json 实时读取）
-      const config = readJsonSafe(CONFIG_FILE);
-      const envData = readJsonSafe(ENV_CACHE_FILE);
+      const config = readJsonSafe<ConfigData>(CONFIG_FILE);
+      const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE);
       const envInfo = envData?.data;
       const scriptsDir = config?.scripts_dir || "";
       const idaPath = config?.ida_path || "";
@@ -160,13 +185,13 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
     },
 
     "experimental.chat.system.transform": async (input, output) => {
-      const config = readJsonSafe(CONFIG_FILE);
+      const config = readJsonSafe<ConfigData>(CONFIG_FILE);
       if (!config) {
         debugLog("system.transform: config.json not found, skipping");
         return;
       }
 
-      const envData = readJsonSafe(ENV_CACHE_FILE);
+      const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE);
       const envInfo = envData?.data;
 
       const scriptsDir = config.scripts_dir || join(directory, ".opencode", "binary-analysis");
@@ -230,7 +255,7 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
       const props = event.properties || {};
       // session.created/deleted 的 properties 是 { info: Session }，sessionID 在 info.id
       // session.compacted 的 properties 是 { sessionID: string }
-      const sessionID = props.info?.id ?? props.sessionID;
+      const sessionID: string | undefined = props.info?.id ?? props.sessionID;
 
       if (event.type === "session.created") {
         if (sessionID) {
