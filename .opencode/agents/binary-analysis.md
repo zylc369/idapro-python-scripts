@@ -1,6 +1,9 @@
 ---
 description: 二进制逆向分析 — 输入 IDA 数据库路径和分析需求，自动完成逆向分析
 mode: primary
+permission:
+  external_directory:
+    ~/bw-ida-pro-analysis/**: allow
 ---
 
 ## 角色
