@@ -30,7 +30,6 @@ const COMPACTION_CONTEXT_PROMPT = `## BinaryAnalysis 分析状态（压缩时必
 ### 1. 分析目标
 - 目标二进制文件路径
 - 文件类型（exe/dll/so）和架构
-- 任务目录路径（$TASK_DIR，包含所有中间输出文件）
 
 ### 2. 已完成的分析
 - 已识别的关键函数及其地址和用途
@@ -129,7 +128,8 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
         if (taskDir) {
           output.context.push(`## TASK_DIR（不可省略 — 压缩后必须保留）
 当前会话的任务目录: ${taskDir}
-所有中间输出文件在此目录下。后续分析必须使用此路径作为 $TASK_DIR。`);
+所有中间输出文件在此目录下。后续分析必须使用此路径作为 $TASK_DIR。
+如果用户明确要求使用新的任务目录，重新执行"任务目录约定"中的创建命令即可切换。`);
         }
       }
     },

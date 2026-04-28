@@ -421,10 +421,7 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 
 如果上下文压缩后变量丢失（$TASK_DIR、$SCRIPTS_DIR 等），按以下优先级恢复：
 1. $SCRIPTS_DIR: 从 Plugin 注入的环境信息恢复，或从 `~/bw-ida-pro-analysis/config.json` 读取
- 2. $TASK_DIR（降级链路）:
-   - **映射精确匹配**（首选）: `$SESSION_ID` 可用时，读 `~/bw-ida-pro-analysis/workspace/.task_sessions/$SESSION_ID.json` 中的 `task_dir`
-   - **LLM 总结器**: 压缩上下文中 Plugin 注入的 `## TASK_DIR` 段
-   - **问用户**: 以上均失败时，提示用户确认或创建新任务目录
+2. $TASK_DIR: `$SESSION_ID` 可用时，读 `~/bw-ida-pro-analysis/workspace/.task_sessions/$SESSION_ID.json` 中的 `task_dir`；查不到则提示用户确认或创建新任务目录
 
 ---
 
