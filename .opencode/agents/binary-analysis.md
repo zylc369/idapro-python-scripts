@@ -87,42 +87,11 @@ $IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw
 **禁止使用 `workdir` 参数。禁止在项目根目录下创建任何文件。** 所有中间文件写入 `~/bw-ida-pro-analysis/workspace/`。
 
 ```bash
-TASK_DIR=$(python3 -c "
-import os, json, random
-from datetime import datetime
-base = os.path.expanduser('~/bw-ida-pro-analysis/workspace')
-os.makedirs(base, exist_ok=True)
-name = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + format(random.randint(0, 65535), '04x')
-d = os.path.join(base, name)
-os.makedirs(d, exist_ok=True)
-# 映射注册：sessionID → TASK_DIR，压缩后精确恢复
-sid = os.environ.get('SESSION_ID', '')
-if sid:
-    tb = os.path.join(base, '.task_sessions')
-    os.makedirs(tb, exist_ok=True)
-    with open(os.path.join(tb, f'{sid}.json'), 'w') as f:
-        json.dump({'task_dir': d}, f)
-print(d)
-")
+TASK_DIR=$(python3 "$SCRIPTS_DIR/scripts/create_task_dir.py")
 ```
 
 ```powershell
-$TASK_DIR = python -c "
-import os, json, random
-from datetime import datetime
-base = os.path.expanduser('~/bw-ida-pro-analysis/workspace')
-os.makedirs(base, exist_ok=True)
-name = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + format(random.randint(0, 65535), '04x')
-d = os.path.join(base, name)
-os.makedirs(d, exist_ok=True)
-sid = os.environ.get('SESSION_ID', '')
-if sid:
-    tb = os.path.join(base, '.task_sessions')
-    os.makedirs(tb, exist_ok=True)
-    with open(os.path.join(tb, f'{sid}.json'), 'w') as f:
-        json.dump({'task_dir': d}, f)
-print(d)
-"
+$TASK_DIR = python "$SCRIPTS_DIR/scripts/create_task_dir.py"
 ```
 
 ---
@@ -419,9 +388,9 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 
 ### 变量丢失自愈（压缩恢复后执行）
 
-如果上下文压缩后变量丢失（$TASK_DIR、$SCRIPTS_DIR 等），按以下优先级恢复：
+如果上下文压缩后变量丢失：
 1. $SCRIPTS_DIR: 从 Plugin 注入的环境信息恢复，或从 `~/bw-ida-pro-analysis/config.json` 读取
-2. $TASK_DIR: `$SESSION_ID` 可用时，读 `~/bw-ida-pro-analysis/workspace/.task_sessions/$SESSION_ID.json` 中的 `task_dir`；查不到则提示用户确认或创建新任务目录
+2. $TASK_DIR: Plugin compacting hook 已通过 sessionID 映射精确注入到压缩上下文。如果仍丢失 → 直接问用户
 
 ---
 

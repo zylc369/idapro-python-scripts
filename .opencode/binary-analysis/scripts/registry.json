@@ -63,6 +63,15 @@
       "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/process_patch.py --exe TARGET.EXE --patch 0x40234C:EB --capture 0x422480:16 --signal 0x42248C:DEADBEEF --trigger click:1002 --timeout 15 --output result.json",
       "added_at": "2026-04-26",
       "verified": false
+    },
+    {
+      "name": "create_task_dir",
+      "file": "create_task_dir.py",
+      "description": "任务目录创建与映射注册：创建时间戳目录 + 注册 sessionID→task_dir 映射（压缩后精确恢复）。SESSION_ID 由 Plugin tool.execute.before hook 注入",
+      "params": [],
+      "example_call": "python3 $SCRIPTS_DIR/scripts/create_task_dir.py",
+      "added_at": "2026-04-28",
+      "verified": false
     }
   ]
 }

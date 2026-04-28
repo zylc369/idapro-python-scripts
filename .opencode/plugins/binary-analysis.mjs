@@ -173,11 +173,25 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
       output.system.push(envSection);
     },
 
-    "shell.env": async (input, output) => {
-      // 注入 SESSION_ID 到 Agent 的 bash 进程环境变量
-      // Agent Python 脚本通过 os.environ['SESSION_ID'] 读取
-      if (input.sessionID) {
-        output.env["SESSION_ID"] = input.sessionID;
+    "tool.execute.before": async (input, output) => {
+      if (input.tool.toLowerCase() !== "bash") return;
+      const cmd = output.args?.command;
+      if (typeof cmd !== "string" || !cmd) return;
+      const sid = input.sessionID;
+      if (!sid) return;
+      const isUnix = !!process.env.SHELL || !!process.env.MSYSTEM;
+      const isPowerShell = !isUnix && !!process.env.PSModulePath;
+      if (isUnix) {
+        // bash 单引号转义：' → '\''（结束引号→转义单引号→重新开始引号）
+        const safeSid = sid.replace(/'/g, "'\\''");
+        output.args.command = `SESSION_ID='${safeSid}' ${cmd}`;
+      } else if (isPowerShell) {
+        // PowerShell 单引号转义：' → ''（两个单引号）
+        const safeSid = sid.replace(/'/g, "''");
+        output.args.command = `$env:SESSION_ID='${safeSid}'; ${cmd}`;
+      } else {
+        // cmd.exe 双引号内不需要转义单引号
+        output.args.command = `set "SESSION_ID=${sid}" && ${cmd}`;
       }
     },
 

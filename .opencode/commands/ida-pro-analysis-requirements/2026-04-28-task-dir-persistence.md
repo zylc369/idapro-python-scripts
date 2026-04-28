@@ -50,7 +50,7 @@ BinaryAnalysis Agent 在分析过程中会动态创建任务目录（`$TASK_DIR`
 |------|-----------|------|---------|
 | `experimental.session.compacting` | `input.sessionID` | `string`（必填） | 每次压缩前 |
 | `experimental.chat.system.transform` | `input.sessionID` | `string?`（可选） | 每轮 LLM 调用前 |
-| `shell.env` | `input.sessionID` | `string?`（可选） | Agent 执行 bash 命令时 |
+| `tool.execute.before` | `input.sessionID` | `string`（必填） | Agent 执行工具前（含 bash） |
 | `event: session.created` | `properties.info.id` | `string` | 会话创建 |
 | `event: session.deleted` | `properties.info.id` | `string` | 会话删除 |
 | `event: session.compacted` | `properties.sessionID` | `string` | 压缩完成 |
@@ -68,17 +68,17 @@ BinaryAnalysis Agent 在分析过程中会动态创建任务目录（`$TASK_DIR`
 #### 关键结论
 
 1. **sessionID 在 compaction 前后不变** — oh-my-openagent 所有恢复逻辑都基于同一 sessionID
-2. **shell.env 可以注入环境变量到 Agent 的 bash 进程** — oh-my-openagent 没使用此 hook，但 `@opencode-ai/plugin` 接口定义了它。**风险：此 hook 未经端到端验证**，如果框架未实现或不生效，需要降级到 `tool.execute.before` hook（oh-my-openagent 的 `non-interactive-env` 已验证此方式可行：在 `output.args.command` 前添加 `SESSION_ID=xxx ` 前缀）
+2. **`tool.execute.before` 可以在命令前注入环境变量** — oh-my-openagent 的 `non-interactive-env` 已验证此方式可行：在 `output.args.command` 前添加 `SESSION_ID=xxx ` 前缀（bash）或 `$env:SESSION_ID='xxx'; ` 前缀（PowerShell）。`input.sessionID` 为 `string`（必填），比 `shell.env` 的 `string?`（可选）更可靠
 3. **oh-my-openagent 没有 "session → 工作目录" 映射** — 因为它假设所有 session 在同一项目目录下。我们需要这个映射是因为每个分析任务有独立的 TASK_DIR
 
-### 方案：sessionID 映射 + shell.env 注入 + 映射自动更新
+### 方案：sessionID 映射 + tool.execute.before 注入 + 映射自动更新
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                                                                     │
-│  A. shell.env hook（Agent 每次执行 bash 时触发）                     │
-│     → Plugin 注入 SESSION_ID=<sessionID> 到环境变量                 │
-│     → Agent 的 bash 进程中 $SESSION_ID 自动可用                     │
+│  A. tool.execute.before hook（Agent 每次执行 bash 时触发）            │
+│     → Plugin 在命令前添加 SESSION_ID=<sessionID>                     │
+│     → Agent 的 bash/PowerShell 进程中 SESSION_ID 自动可用            │
 │     → Agent 的 Python 脚本通过 os.environ['SESSION_ID'] 读取        │
 │                                                                     │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -165,7 +165,7 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 
 | 情况 | 原因 | 行为 |
 |------|------|------|
-| `shell.env` 的 sessionID 为 undefined | OpenCode 框架异常 | Agent 注册时读到空字符串 → 映射无效 → 问用户 |
+| `tool.execute.before` 的 sessionID 为空 | OpenCode 框架异常（理论上不会发生，因为 sessionID 是必填） | Agent 注册时读到空字符串 → 映射无效 → 问用户 |
 | Agent 未执行注册（sessionID 为空或跳过） | Agent 未按 prompt 执行 | compacting hook 查不到映射文件 → 问用户 |
 | 映射文件损坏/丢失 | 文件系统异常 | compacting hook 查不到 → 问用户 |
 
@@ -177,9 +177,9 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 
 ### §3.1 实施步骤
 
-**步骤 1. Plugin 新增 `shell.env` hook**
+**步骤 1. Plugin 新增 `tool.execute.before` hook**
 - 文件: `.opencode/plugins/binary-analysis.mjs`
-- 改动: 新增 `"shell.env"` hook，注入 `SESSION_ID` 到 `output.env`
+- 改动: 新增 `"tool.execute.before"` hook，在 bash 命令前添加 `SESSION_ID=xxx` 前缀（bash）或 `$env:SESSION_ID='xxx'; ` 前缀（PowerShell）。`input.sessionID` 为必填，比 `shell.env`（可选）更可靠
 - 预估行数: ~10 行
 - 验证点: `node --check` 通过
 - 依赖: 无
@@ -206,24 +206,22 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 - 验证点: `node --check` 通过 + event hook 使用 `props.info?.id ?? props.sessionID` 兼容两种格式
 - 依赖: 步骤 2
 
-**步骤 4. Agent prompt — 任务目录创建加入映射注册**
-- 文件: `.opencode/agents/binary-analysis.md`
+**步骤 4. 新增 `create_task_dir.py` 脚本 + Agent prompt 调用脚本**
+- 文件: `.opencode/binary-analysis/scripts/create_task_dir.py`（新增）+ `.opencode/agents/binary-analysis.md`（修改）
 - 改动:
-  - 修改"任务目录约定"的 TASK_DIR 创建命令，在创建目录后增加注册步骤
-  - Python 脚本通过 `os.environ.get('SESSION_ID', '')` 读取环境变量中的 sessionID
-  - 写入 `.task_sessions/{sessionID}.json`
-  - 需要同时提供 bash 和 PowerShell 两套模板
-  - 更新代码块后的注释：从"盲猜扫描 workspace"改为"通过 sessionID 映射精确匹配"
-- 预估行数: ~12 行（修改现有代码块）
-- 验证点: 行数 < 450 + Python 代码通过 `os.environ` 读取 SESSION_ID + bash/PowerShell 双模板
-- 依赖: 步骤 1（shell.env 确保 SESSION_ID 可用）
+  - 新增 `create_task_dir.py`：创建任务目录 + 读取 `SESSION_ID` 环境变量 + 注册映射到 `.task_sessions/{sessionID}.json`
+  - Agent prompt "任务目录约定"段从内联 Python 改为一行调用：`python3 "$SCRIPTS_DIR/scripts/create_task_dir.py"`
+  - 消除 bash/PowerShell 两套 Python 内联代码，只用 python3/python 调用差异
+- 预估行数: 脚本 ~70 行 + Agent prompt -30 行
+- 验证点: `python create_task_dir.py` 输出路径 + 映射文件存在 + Agent prompt < 450 行
+- 依赖: 步骤 1（tool.execute.before 确保 SESSION_ID 可用）
 
-**步骤 5. Agent prompt — 自愈规则增加映射恢复层**
+**步骤 5. Agent prompt — 自愈规则简化**
 - 文件: `.opencode/agents/binary-analysis.md`
-- 改动: 自愈规则中，$TASK_DIR 恢复增加优先级：先通过 `$SESSION_ID` 查 `.task_sessions/{sessionID}.json`，查不到则问用户
-- 预估行数: ~5 行（修改现有自愈规则）
-- 验证点: 降级链路清晰（映射文件 → 问用户）
-- 依赖: 步骤 1（shell.env 确保 SESSION_ID 可用）
+- 改动: 自愈规则中 $TASK_DIR 恢复简化为：compacting hook 已精确注入，如果仍丢失则直接问用户
+- 预估行数: ~3 行（修改现有自愈规则）
+- 验证点: 自愈规则不再重复实现映射查找逻辑（上游 compacting hook 已负责）
+- 依赖: 无
 
 ### 改动范围表
 
@@ -231,18 +229,18 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 |------|---------|---------|
 | `.opencode/plugins/binary-analysis.mjs` | 修改 | +35 |
 | `.opencode/agents/binary-analysis.md` | 修改 | +17 -5 |
+| `.opencode/binary-analysis/scripts/create_task_dir.py` | 新增 | ~70 |
 
-**不新增文件。不修改 Python 脚本。不修改知识库。**
+**不修改知识库。**
 
 ### 编码规则
 
 1. 映射文件存储在 `.task_sessions/` 目录下，每个 session 一个独立 JSON 文件
 2. 读写映射文件失败不影响主流程（静默降级）
-3. `shell.env` hook 中 sessionID 为 undefined 时不注入
+3. `tool.execute.before` hook 中 sessionID 为空时不注入（理论上不会发生，因为 sessionID 是必填）
 4. compacting hook 中查不到映射文件时不注入（静默降级）
-5. Agent prompt 中注册命令通过 `os.environ.get('SESSION_ID', '')` 读取，空字符串时不注册
-6. `SESSION_ID` 由 shell.env hook 注入到环境变量，不需要在 Agent prompt 的"变量初始化"中赋值
-7. bash 中用 `$SESSION_ID`，PowerShell 中用 `$env:SESSION_ID`
+5. `create_task_dir.py` 通过 `os.environ.get('SESSION_ID', '')` 读取，空字符串时不注册
+6. `SESSION_ID` 由 `tool.execute.before` hook 注入到命令环境变量，不需要在 Agent prompt 的"变量初始化"中赋值
 
 ---
 
@@ -252,7 +250,7 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 
 | 验收项 | 预期结果 | 验证方式 |
 |--------|---------|---------|
-| shell.env 注入 | Agent bash 进程中 `echo $SESSION_ID` 输出非空 | Agent 执行时检查 |
+| tool.execute.before 注入 | Agent bash 进程中 `echo $SESSION_ID` 输出非空 | Agent 执行时检查 |
 | 映射注册 | 创建 TASK_DIR 后 `.task_sessions/{sessionID}.json` 存在且内容正确 | 检查文件内容 |
 | 压缩注入 | compacting hook 输出中包含正确的 TASK_DIR | 日志检查 |
 | 并行隔离 | 两个会话的映射文件互不干扰 | 检查 `.task_sessions/` 目录有两个独立文件 |
@@ -272,7 +270,7 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 
 - 无循环依赖
 - Plugin 只依赖 `workspace/.task_sessions/` 目录（每个 session 一个文件）
-- Agent 只依赖 `SESSION_ID` 环境变量（由 Plugin shell.env hook 注入）
+- Agent 只依赖 `SESSION_ID` 环境变量（由 Plugin `tool.execute.before` hook 注入）
 - 整条链路不依赖 LLM 手动操作
 
 ---
@@ -281,7 +279,7 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 
 | 文档 | 关系 |
 |------|------|
-| `2026-04-22-plugin-and-architecture-improvements.md` | Plugin 架构已建立，本需求在此基础上新增 shell.env hook |
+| `2026-04-22-plugin-and-architecture-improvements.md` | Plugin 架构已建立，本需求在此基础上新增 `tool.execute.before` hook |
 | `2026-04-27-ecdlp-compression-parallel.md` | 已实现 compacting hook 的环境信息注入，本需求增加 TASK_DIR 精确恢复能力（替换盲猜逻辑） |
 
 ---
@@ -293,13 +291,13 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 ```
 session.created  → sessionID = "abc123"
     ↓
-第 1 轮对话（多轮 tool 调用，每次 shell.env 都拿到 "abc123"）
+第 1 轮对话（多轮 tool 调用，每次 tool.execute.before 都拿到 "abc123"）
     ↓
 第 1 次压缩:
   compacting hook input.sessionID = "abc123"  ← 不变
   session.compacted event.sessionID = "abc123"  ← 不变
     ↓
-第 2 轮对话（shell.env 仍然拿到 "abc123"）
+第 2 轮对话（tool.execute.before 仍然拿到 "abc123"）
     ↓
 第 2 次压缩:
   compacting hook input.sessionID = "abc123"  ← 不变
@@ -309,19 +307,23 @@ session.created  → sessionID = "abc123"
 session.deleted → sessionID = "abc123"  ← 清理映射
 ```
 
-## 附录 B: shell.env hook 类型签名
+## 附录 B: tool.execute.before hook 类型签名
 
 ```typescript
-"shell.env"?: (
+"tool.execute.before"?: (
   input: {
-    cwd: string
-    sessionID?: string
-    callID?: string
+    tool: string        // 工具名，如 "bash"
+    sessionID: string   // 必填，非可选
+    callID: string
   },
   output: {
-    env: Record<string, string>  // 注入的环境变量
+    args: any           // 可变，修改会生效。bash 的 args.command 是命令字符串
   }
 ) => Promise<void>
 ```
 
-使用方式: `output.env["SESSION_ID"] = input.sessionID`
+使用方式（bash）: `output.args.command = "export SESSION_ID=abc123; " + output.args.command`
+使用方式（PowerShell）: `output.args.command = "$env:SESSION_ID='abc123'; " + output.args.command`
+使用方式（cmd）: `output.args.command = "set SESSION_ID=abc123 && " + output.args.command`
+
+Shell 类型检测: 与 oh-my-openagent `detectShellType()` 逻辑一致 — 检测 `process.env.SHELL`/`MSYSTEM`（unix）、`process.env.PSModulePath`（powershell）、平台回退（cmd）
