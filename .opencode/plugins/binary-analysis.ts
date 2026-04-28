@@ -29,20 +29,11 @@ function debugLog(msg: string): void {
   } catch {}
 }
 
-const COMPACT_RULES = `## BinaryAnalysis 关键规则（压缩后恢复）
+const COMPACT_REMINDER = `## 压缩恢复指令（压缩时必须保留）
 
-① 禁止作弊式验证 — 定位验证函数→能定位: 干净用Unicorn/复杂用Hook; 不能定位→CLI用subprocess/DLL用ctypes/gui_verify.py。详见 knowledge-base/verification-patterns.md
-② 技术选型 — 计算密集型用 C/C++（见 knowledge-base/technology-selection.md）
-③ ECDLP — 64-bit 以上必须用 C（见 knowledge-base/ecdlp-solving.md）
-④ 环境检测 — detect_env.py 检测工具链，缓存 24h
-⑤ 静态分析 15 分钟无进展 → 立即切动态分析
-⑥ 超时监控 — idat 300s 超时，LLM 60s 无响应反思方案
-⑦ 失败快速切换 — 同一方向连续 2 次失败 → 强制换方向
-⑧ 不要执着 Python — 什么技术栈适合就用什么
-⑨ 禁止使用 workdir 参数 — 所有中间文件写入 ~/bw-ida-pro-analysis/workspace/
-⑩ 方案优先 — 未输出方案前禁止执行任何 idat 分析调用
-⑪ 数据库锁定时立即报错退出
-⑫ 分析结果必须区分事实和推测，标注置信度`;
+上下文刚被压缩。继续分析前必须：
+1. 重新读取 agent prompt（.opencode/agents/binary-analysis.md）获取完整规则
+2. 恢复 $SCRIPTS_DIR、$TASK_DIR 等关键变量（见 agent prompt 的"变量丢失自愈"章节）`;
 
 const COMPACTION_CONTEXT_PROMPT = `## BinaryAnalysis 分析状态（压缩时必须保留）
 
@@ -68,9 +59,7 @@ const COMPACTION_CONTEXT_PROMPT = `## BinaryAnalysis 分析状态（压缩时必
 
 ### 5. 显式约束（原文保留）
 - 用户明确提出的要求（如"不要修改数据库"、"先分析再绕过"）
-- 置信度声明：区分"来自 IDA 数据库的事实"和"AI 推理（标注置信度）"
-
-${COMPACT_RULES}`;
+- 置信度声明：区分"来自 IDA 数据库的事实"和"AI 推理（标注置信度）"`;
 
 interface EnvData {
   data?: {
@@ -167,6 +156,7 @@ export const BinaryAnalysisPlugin: Plugin = async ({ directory }) => {
       }
       output.context.push(envSummary);
       output.context.push(COMPACTION_CONTEXT_PROMPT);
+      output.context.push(COMPACT_REMINDER);
 
       // 精确恢复 TASK_DIR：用 sessionID 查映射文件
       const sid = input.sessionID;
