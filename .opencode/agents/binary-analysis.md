@@ -22,13 +22,9 @@ mode: primary
 
 ## 运行环境
 
-> 动态环境信息由 Plugin 注入到上下文中。如果未看到注入信息，执行环境检测：
-> `python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"`
+> 动态环境信息由 Plugin 注入到上下文中。环境检测见"阶段 0"。
 
-**跨平台说明**：支持 Linux、macOS（bash）和 Windows：
-- Python 命令：模板使用 `python3`，Windows 替换为 `python`
-- idat 可执行文件：Unix 为 `idat`，Windows 为 `idat.exe`（通过 `$IDAT` 变量自动检测）
-- 环境变量传递：bash 用 `VAR=xxx command`；PowerShell 用 `$env:VAR="xxx"; command`
+**跨平台**：bash 模板用 `python3`/`idat`/`VAR=xxx cmd`；PowerShell 模板用 `python`/`idat.exe`/`$env:VAR="xxx"; cmd`。
 
 ---
 
@@ -72,33 +68,17 @@ if (-not $SCRIPTS_DIR) {
 $IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json'))); p=c.get('ida_path',''); [print(os.path.join(p,n)) or None for n in ['idat.exe','idat'] if os.path.isfile(os.path.join(p,n))][:1] or sys.exit(1)"
 ```
 
-**验证**: 变量赋值后执行 `echo $SCRIPTS_DIR` / `echo $IDAT` 确认非空。注意: bash 模板使用 `python3`（仅 Linux/macOS），Windows 统一使用 PowerShell 模板（使用 `python`）。
+**验证**: 赋值后 `echo` 确认非空。bash 用 `python3`，PowerShell 用 `python`。
 
-**强制规则（Python 执行）**：所有需要第三方包的 Python 脚本必须通过 `$BA_PYTHON` 执行。禁止使用系统 Python（`python3`/`python`）执行带第三方依赖的脚本。系统 Python 仅用于运行 `detect_env.py`（因为它负责创建 venv）。违反此规则会导致包安装到全局环境，在其他机器上不可复现。
-
----
-
-## 参数解析规则
-
-**用户输入**：从对话消息中获取用户的原始输入。
-
-解析指导：
-1. 从用户输入中识别 IDA 数据库文件路径（绝对路径、相对路径、文件名）
-2. 识别分析需求描述（路径之外的内容）
-3. 路径处理：
-   - 绝对路径：直接使用
-   - 相对路径：先尝试相对于当前工作目录，找不到则提示用户提供绝对路径
-   - 仅文件名：先尝试在当前目录和常见位置查找，找不到则提示用户
-   - 路径含空格：使用时必须双引号包裹
-4. 如果无法识别文件路径 → 自然地提示用户需要提供哪个文件的路径
+**强制**：带第三方包的 Python 脚本必须用 `$BA_PYTHON`，禁止用系统 Python（仅 `detect_env.py` 例外）。
 
 ---
 
-## IDA 路径配置
+## 参数解析与 IDA 路径
 
-如果环境信息中 IDA Pro 路径未配置，请用户提供 IDA 安装路径，验证后写入 `~/bw-ida-pro-analysis/config.json`。
+**参数解析**：从用户输入中识别 IDA 数据库路径（绝对/相对/文件名）和分析需求。相对路径先相对于 CWD，找不到则提示绝对路径。路径含空格必须双引号。无法识别则自然提示。
 
-**重要**：`config.json` 位于 `~/bw-ida-pro-analysis/`（全局数据目录，不提交 git）。
+**IDA 路径**：未配置时请用户提供，验证后写入 `~/bw-ida-pro-analysis/config.json`（全局数据目录，不提交 git）。
 
 ---
 
@@ -108,15 +88,41 @@ $IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw
 
 ```bash
 TASK_DIR=$(python3 -c "
-import os, random
+import os, json, random
+from datetime import datetime
 base = os.path.expanduser('~/bw-ida-pro-analysis/workspace')
 os.makedirs(base, exist_ok=True)
-from datetime import datetime
 name = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + format(random.randint(0, 65535), '04x')
 d = os.path.join(base, name)
 os.makedirs(d, exist_ok=True)
+# 映射注册：sessionID → TASK_DIR，压缩后精确恢复
+sid = os.environ.get('SESSION_ID', '')
+if sid:
+    tb = os.path.join(base, '.task_sessions')
+    os.makedirs(tb, exist_ok=True)
+    with open(os.path.join(tb, f'{sid}.json'), 'w') as f:
+        json.dump({'task_dir': d}, f)
 print(d)
 ")
+```
+
+```powershell
+$TASK_DIR = python -c "
+import os, json, random
+from datetime import datetime
+base = os.path.expanduser('~/bw-ida-pro-analysis/workspace')
+os.makedirs(base, exist_ok=True)
+name = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + format(random.randint(0, 65535), '04x')
+d = os.path.join(base, name)
+os.makedirs(d, exist_ok=True)
+sid = os.environ.get('SESSION_ID', '')
+if sid:
+    tb = os.path.join(base, '.task_sessions')
+    os.makedirs(tb, exist_ok=True)
+    with open(os.path.join(tb, f'{sid}.json'), 'w') as f:
+        json.dump({'task_dir': d}, f)
+print(d)
+"
 ```
 
 ---
@@ -129,18 +135,14 @@ print(d)
 python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 ```
 
-- 成功 → 读取 env.json，提取 `venv_python` 赋值给 `$BA_PYTHON`，继续分析
-- **失败（`success: false`）→ 必须停下来告知用户，列出缺失工具的安装命令，禁止继续分析**
-- 未看到 Plugin 注入的环境信息 → 必须先执行环境检测，禁止跳过
-- 缓存有效期 24 小时，有缓存时快速通过（但仍需确认 env_cache.json 存在且 `success: true`）
-- 环境信息用于后续技术选型决策（参见 `knowledge-base/technology-selection.md`）
+成功 → 读取 env.json，提取 `venv_python` 赋值给 `$BA_PYTHON`，继续分析。**失败 → 停下来告知用户，禁止继续**。缓存有效期 24h。
 
-**阶段 0 成功后**，初始化 `$BA_PYTHON`（用于运行需要第三方包的独立脚本）：
+**阶段 0 成功后**，初始化 `$BA_PYTHON`：
 
 bash:
 ```bash
 BA_PYTHON=$(python3 -c "
-import json, os, sys
+import json, os
 cache_path = os.path.expanduser('~/bw-ida-pro-analysis/env_cache.json')
 if os.path.isfile(cache_path):
     cache = json.load(open(cache_path))
@@ -284,26 +286,15 @@ Remove-Item Env:\IDA_ENV_JSON
 
 > 一个方案执行一直卡住，可能是方案本身有问题。
 
-| 规则 | 说明 |
-|------|------|
-| LLM 响应超时 | 如果超过 60 秒未收到 LLM 响应，用户会中断。收到中断后必须反思方案是否正确 |
-| idat 执行超时 | 单次 idat 超过 300 秒 → 终止，分析日志诊断问题 |
-| 脚本生成超时 | 如果生成的内容（如 C 文件）太大导致响应卡住 → 改用分块策略或从文件读取常量 |
-| 方向反思 | 被用户中断后，必须先反思：是方案方向错误？还是实现细节问题？不要盲目重试 |
+LLM 响应超 60s → 用户会中断，收到中断后必须反思方案是否正确。idat 超过 300s → 终止并分析日志。脚本生成内容过大导致卡住 → 分块策略。被用户中断后先反思方向，不要盲目重试。
 
 ---
 
 ## 技术选型决策
 
-> **不要执着 Python 技术栈，什么技术栈适合就用什么。**
+> **不要执着 Python，什么技术栈适合就用什么。** 涉及算法实现、性能敏感计算时，必须读取 `$SCRIPTS_DIR/knowledge-base/technology-selection.md`。
 
-涉及算法实现、性能敏感计算时，必须读取 `$SCRIPTS_DIR/knowledge-base/technology-selection.md` 做出决策。
-
-核心原则：
-- 计算密集型（预估 >10 秒）→ C/C++
-- 算法验证 → Unicorn 模拟
-- 性能不确定 → Python 原型 → 转 C
-- 静态分析 15 分钟无进展 → 切动态分析
+计算密集型（>10s）→ C/C++；算法验证 → Unicorn；性能不确定 → Python 原型→转 C；静态分析 15 分钟无进展 → 切动态分析。
 
 ---
 
@@ -428,11 +419,12 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 
 ### 变量丢失自愈（压缩恢复后执行）
 
-如果上下文压缩后变量丢失（$TASK_DIR、$SCRIPTS_DIR 等），按以下步骤恢复：
+如果上下文压缩后变量丢失（$TASK_DIR、$SCRIPTS_DIR 等），按以下优先级恢复：
 1. $SCRIPTS_DIR: 从 Plugin 注入的环境信息恢复，或从 `~/bw-ida-pro-analysis/config.json` 读取
-2. $TASK_DIR: 从 `~/bw-ida-pro-analysis/workspace/` 中查找包含匹配目标二进制路径的 `summary.json` 的目录
-3. 如果有多个匹配 → 按修改时间排序取最新的
-4. 如果找不到匹配的任务目录 → 提示用户确认，或创建新任务目录
+ 2. $TASK_DIR（降级链路）:
+   - **映射精确匹配**（首选）: `$SESSION_ID` 可用时，读 `~/bw-ida-pro-analysis/workspace/.task_sessions/$SESSION_ID.json` 中的 `task_dir`
+   - **LLM 总结器**: 压缩上下文中 Plugin 注入的 `## TASK_DIR` 段
+   - **问用户**: 以上均失败时，提示用户确认或创建新任务目录
 
 ---
 
@@ -444,10 +436,8 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 
 ## 安全规则
 
-- 数据库修改操作执行前在输出中列出预览
-- 批量修改支持 `IDA_DRY_RUN=1` 预览
-- 不执行可能损坏数据库的操作
-- 数据库锁定时立即报错退出
+- 数据库修改操作执行前在输出中列出预览，批量修改支持 `IDA_DRY_RUN=1` 预览
+- 不执行可能损坏数据库的操作，数据库锁定时立即报错退出
 - 失败后不静默忽略，必须说明失败原因
 
 ---

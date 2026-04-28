@@ -2,7 +2,7 @@
 
 > 日期: 2026-04-28
 > 来源: 复盘 binary-analysis Agent 多次使用过程中，压缩后 TASK_DIR 丢失导致分析中断的问题
-> 状态: Phase 0 方案文档
+> 状态: 方案文档（待实施）
 
 ---
 
@@ -68,7 +68,7 @@ BinaryAnalysis Agent 在分析过程中会动态创建任务目录（`$TASK_DIR`
 #### 关键结论
 
 1. **sessionID 在 compaction 前后不变** — oh-my-openagent 所有恢复逻辑都基于同一 sessionID
-2. **shell.env 可以注入环境变量到 Agent 的 bash 进程** — oh-my-openagent 没使用此 hook，但 `@opencode-ai/plugin` 接口支持
+2. **shell.env 可以注入环境变量到 Agent 的 bash 进程** — oh-my-openagent 没使用此 hook，但 `@opencode-ai/plugin` 接口定义了它。**风险：此 hook 未经端到端验证**，如果框架未实现或不生效，需要降级到 `tool.execute.before` hook（oh-my-openagent 的 `non-interactive-env` 已验证此方式可行：在 `output.args.command` 前添加 `SESSION_ID=xxx ` 前缀）
 3. **oh-my-openagent 没有 "session → 工作目录" 映射** — 因为它假设所有 session 在同一项目目录下。我们需要这个映射是因为每个分析任务有独立的 TASK_DIR
 
 ### 方案：sessionID 映射 + shell.env 注入 + 映射自动更新
@@ -129,12 +129,12 @@ workspace/.task_sessions/
 
 oh-my-openagent 的 compaction 恢复模式是 `capture → compact → restore`，全用内存 Map。我们用文件持久化（`.task_sessions/{sessionID}.json`）是因为 TASK_DIR 需要跨进程（Plugin 进程 vs Agent bash 进程）共享，内存 Map 做不到。用每 session 独立文件而非单一 JSON 文件，避免并发写入数据竞争。
 
-**Q2: 当前实现是否合适**
+**Q2: 为什么不能用盲猜方案**
 
-当前 `findActiveTask` 盲猜逻辑不合适：
-- 多个 in_progress 时放弃 → 无法精确匹配
-- 用户要求新目录时无法感知 → Q4 无法解决
-- 并行会话时可能匹配到别人的任务 → Q5 无法解决
+盲猜方案（扫描 workspace 按时间/状态匹配任务目录）存在根本局限：
+- 多个任务目录时无法精确匹配
+- 用户要求新目录时无法感知
+- 并行会话时可能匹配到别人的任务
 
 **Q3: 多轮压缩后如何保证找到**
 
@@ -170,9 +170,9 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 | `shell.env` 的 sessionID 为 undefined | OpenCode 框架异常 | Agent 注册时读到空字符串 → 映射无效 → 降级 |
 | Agent 未执行注册（sessionID 为空或跳过） | Agent 未按 prompt 执行 | compacting hook 查不到映射文件 → 依赖 LLM 总结器 |
 | 映射文件损坏/丢失 | 文件系统异常 | compacting hook 查不到 → 降级到自愈 |
-| 以上全部失败 | 极端情况 | Agent 自愈规则：find_task.py + 问用户 |
+| 以上全部失败 | 极端情况 | Agent 自愈规则：提示用户手动确认 TASK_DIR |
 
-三层降级：映射精确匹配 → LLM 总结器 → find_task.py 问用户
+降级链路：映射精确匹配 → LLM 总结器 → 问用户
 
 ---
 
@@ -187,23 +187,23 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 - 验证点: `node --check` 通过
 - 依赖: 无
 
-**步骤 2. Plugin 新增映射读写函数 + compacting hook 精确查找 + 删除旧逻辑**
+**步骤 2. Plugin 新增映射读写函数 + compacting hook 精确查找**
 - 文件: `.opencode/plugins/binary-analysis.mjs`
 - 改动:
+  - 新增常量 `WORKSPACE_DIR = join(DATA_DIR, "workspace")`
   - 新增常量 `TASK_SESSIONS_DIR = join(WORKSPACE_DIR, ".task_sessions")`
   - 新增 `getTaskDir(sessionID)`: 读取 `.task_sessions/{sessionID}.json`，返回 task_dir 或 null
-  - 新增 `removeTaskSession(sessionID)`: 删除 `.task_sessions/{sessionID}.json`
+  - 新增 `removeTaskSession(sessionID)`: 删除 `.task_sessions/{sessionID}.json`，确保目录存在后删除文件
   - compacting hook 中用 `input.sessionID` 查对应映射文件，找到则注入 TASK_DIR
-  - 删除旧的 `findActiveTask()` 函数
-  - 清理不再使用的 import（`readdirSync`, `statSync`）
-- 预估行数: +25 -35（净减少 ~10 行）
-- 验证点: `node --check` 通过 + compacting hook 使用 sessionID 查文件而非盲猜
+  - 新增 import: `unlinkSync`（从 "fs"）
+- 预估行数: +25 行
+- 验证点: `node --check` 通过 + compacting hook 使用 sessionID 查文件
 - 依赖: 无
 
 **步骤 3. Plugin event hook — 修复 sessionID 取值 + session.deleted 清理映射**
 - 文件: `.opencode/plugins/binary-analysis.mjs`
 - 改动:
-  - 修复 event hook 中 sessionID 的取值：`session.created`/`session.deleted` 事件的 properties 是 `{ info: Session }`，sessionID 在 `props.info?.id` 中，而非 `props.sessionID`
+  - 修复 event hook 中 sessionID 的取值：`session.created`/`session.deleted` 事件的 properties 是 `{ info: Session }`，sessionID 在 `props.info?.id` 中，而非 `props.sessionID`。统一使用 `props.info?.id ?? props.sessionID` 兼容两种格式
   - 修复后 `session.deleted` 事件中调用 `removeTaskSession(sessionID)` 删除对应映射文件
 - 预估行数: ~5 行（修改现有 event hook）
 - 验证点: `node --check` 通过 + event hook 使用 `props.info?.id ?? props.sessionID` 兼容两种格式
@@ -216,26 +216,26 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
   - Python 脚本通过 `os.environ.get('SESSION_ID', '')` 读取环境变量中的 sessionID
   - 写入 `.task_sessions/{sessionID}.json`
   - 需要同时提供 bash 和 PowerShell 两套模板
-  - 更新注释：从"盲猜"改为"通过 sessionID 映射精确匹配"
+  - 更新代码块后的注释：从"盲猜扫描 workspace"改为"通过 sessionID 映射精确匹配"
 - 预估行数: ~12 行（修改现有代码块）
 - 验证点: 行数 < 450 + Python 代码通过 `os.environ` 读取 SESSION_ID + bash/PowerShell 双模板
 - 依赖: 步骤 1（shell.env 确保 SESSION_ID 可用）
 
 **步骤 5. Agent prompt — 自愈规则增加映射恢复层**
 - 文件: `.opencode/agents/binary-analysis.md`
-- 改动: 自愈规则中，$TASK_DIR 恢复增加优先级：先通过 `$SESSION_ID` 查 `.task_sessions/{sessionID}.json`，查不到再用 find_task.py
+- 改动: 自愈规则中，$TASK_DIR 恢复增加优先级：先通过 `$SESSION_ID` 查 `.task_sessions/{sessionID}.json`，查不到则问用户
 - 预估行数: ~5 行（修改现有自愈规则）
-- 验证点: 三层降级链路清晰（映射文件 → LLM 总结器 → find_task.py → 问用户）
+- 验证点: 降级链路清晰（映射文件 → LLM 总结器 → 问用户）
 - 依赖: 步骤 1（shell.env 确保 SESSION_ID 可用）
 
 ### 改动范围表
 
 | 文件 | 改动类型 | 预估行数 |
 |------|---------|---------|
-| `.opencode/plugins/binary-analysis.mjs` | 修改 | +35 -35 |
+| `.opencode/plugins/binary-analysis.mjs` | 修改 | +35 |
 | `.opencode/agents/binary-analysis.md` | 修改 | +17 -5 |
 
-**不新增文件。不修改 Python 脚本（find_task.py 已存在）。不修改知识库。**
+**不新增文件。不修改 Python 脚本。不修改知识库。**
 
 ### 编码规则
 

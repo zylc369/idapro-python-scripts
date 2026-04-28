@@ -1,10 +1,12 @@
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
 const DATA_DIR = join(homedir(), "bw-ida-pro-analysis");
 const CONFIG_FILE = join(DATA_DIR, "config.json");
 const ENV_CACHE_FILE = join(DATA_DIR, "env_cache.json");
+const WORKSPACE_DIR = join(DATA_DIR, "workspace");
+const TASK_SESSIONS_DIR = join(WORKSPACE_DIR, ".task_sessions");
 
 const COMPACT_RULES = `## BinaryAnalysis 关键规则（压缩后恢复）
 
@@ -59,6 +61,29 @@ function readJsonSafe(filePath) {
   return null;
 }
 
+// --- sessionID → TASK_DIR 映射 ---
+
+function getTaskDir(sessionID) {
+  try {
+    const filePath = join(TASK_SESSIONS_DIR, `${sessionID}.json`);
+    const data = readJsonSafe(filePath);
+    return data?.task_dir || null;
+  } catch {
+    return null;
+  }
+}
+
+function removeTaskSession(sessionID) {
+  try {
+    const filePath = join(TASK_SESSIONS_DIR, `${sessionID}.json`);
+    if (existsSync(filePath)) {
+      unlinkSync(filePath);
+    }
+  } catch {
+    // 静默降级：删除失败不影响主流程
+  }
+}
+
 const sessionStates = new Map();
 
 export const BinaryAnalysisPlugin = async ({ directory }) => {
@@ -96,6 +121,17 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
       }
       output.context.push(envSummary);
       output.context.push(COMPACTION_CONTEXT_PROMPT);
+
+      // 精确恢复 TASK_DIR：用 sessionID 查映射文件
+      const sid = input.sessionID;
+      if (sid) {
+        const taskDir = getTaskDir(sid);
+        if (taskDir) {
+          output.context.push(`## TASK_DIR（不可省略 — 压缩后必须保留）
+当前会话的任务目录: ${taskDir}
+所有中间输出文件在此目录下。后续分析必须使用此路径作为 $TASK_DIR。`);
+        }
+      }
     },
 
     "experimental.chat.system.transform": async (input, output) => {
@@ -137,10 +173,20 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
       output.system.push(envSection);
     },
 
+    "shell.env": async (input, output) => {
+      // 注入 SESSION_ID 到 Agent 的 bash 进程环境变量
+      // Agent Python 脚本通过 os.environ['SESSION_ID'] 读取
+      if (input.sessionID) {
+        output.env["SESSION_ID"] = input.sessionID;
+      }
+    },
+
     event: async (input) => {
       const { event } = input;
       const props = event.properties || {};
-      const sessionID = props.sessionID;
+      // session.created/deleted 的 properties 是 { info: Session }，sessionID 在 info.id
+      // session.compacted 的 properties 是 { sessionID: string }
+      const sessionID = props.info?.id ?? props.sessionID;
 
       if (event.type === "session.created") {
         if (sessionID) {
@@ -151,6 +197,7 @@ export const BinaryAnalysisPlugin = async ({ directory }) => {
       if (event.type === "session.deleted") {
         if (sessionID) {
           sessionStates.delete(sessionID);
+          removeTaskSession(sessionID);
         }
       }
 
