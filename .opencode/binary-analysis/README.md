@@ -7,7 +7,7 @@
 | 类别 | 位置 | 说明 |
 |------|------|------|
 | **代码**（本目录） | `.opencode/binary-analysis/` | 版本控制，git 管理 |
-| **数据** | `~/bw-ida-pro-analysis/` | 运行时产物，不提交 |
+| **数据** | `~/bw-security-analysis/` | 运行时产物，不提交 |
 
 ```
 .opencode/binary-analysis/

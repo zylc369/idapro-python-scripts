@@ -130,7 +130,7 @@ mode: subagent          # 可选，默认 "subagent"
 
 - **文件**: `.opencode/agents/binary-analysis.md`
 - **Mode**: `primary`（用户直接交互）
-- **动态信息**: 通过 Plugin（`binary-analysis.mjs`）的 `system.transform` hook 注入环境信息
+- **动态信息**: 通过 Plugin（`security-analysis.ts`）的 `system.transform` hook 注入环境信息
 - **规则持久化**: 通过 Plugin 的 `compacting` hook 在压缩时注入关键规则
 
 **来源文件**:

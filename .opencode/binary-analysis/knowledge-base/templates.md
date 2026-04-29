@@ -189,7 +189,7 @@ except (IOError, OSError):
 $TASK_DIR = python -c "
 import os, random
 from datetime import datetime
-base = os.path.expanduser('~/bw-ida-pro-analysis/workspace')
+base = os.path.expanduser('~/bw-security-analysis/workspace')
 os.makedirs(base, exist_ok=True)
 name = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + format(random.randint(0, 65535), '04x')
 d = os.path.join(base, name)

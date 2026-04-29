@@ -154,7 +154,7 @@ python disassembler/ai_analyze.py --rename --comment -p "main_0" -i binary.i64 -
 ```
 .opencode/
   agents/binary-analysis.md     # Agent prompt（分析编排规则）
-  plugins/binary-analysis.ts    # Plugin（上下文持久化 + 环境注入）
+  plugins/security-analysis.ts    # Plugin（上下文持久化 + 环境注入）
   binary-analysis/              # Agent 工具脚本
     _base.py                    #   公共基础模块
     _utils.py                   #   共享业务工具
@@ -196,10 +196,10 @@ test/                           # 测试
 | 类别 | 位置 | 说明 |
 |------|------|------|
 | **代码** | `.opencode/binary-analysis/`（git 管理） | 版本控制 |
-| **数据** | `~/bw-ida-pro-analysis/`（不提交） | 运行时产物 |
+| **数据** | `~/bw-security-analysis/`（不提交） | 运行时产物 |
 
 ```
-~/bw-ida-pro-analysis/
+~/bw-security-analysis/
   config.json              # IDA 路径等配置
   env_cache.json           # 环境检测缓存（24h 有效期）
   .venv/                   # Python 虚拟环境（capstone/unicorn/frida 等）

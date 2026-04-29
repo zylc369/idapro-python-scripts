@@ -3,7 +3,7 @@ description: 二进制逆向分析 — 输入 IDA 数据库路径和分析需求
 mode: primary
 permission:
   external_directory:
-    ~/bw-ida-pro-analysis/**: allow
+    ~/bw-security-analysis/**: allow
 ---
 
 ## 角色
@@ -43,13 +43,13 @@ SCRIPTS_DIR=<从环境信息中提取的脚本目录路径>
 if [ -z "$SCRIPTS_DIR" ]; then
   SCRIPTS_DIR=$(python3 -c "
 import os, json
-c = json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json')))
+c = json.load(open(os.path.expanduser('~/bw-security-analysis/config.json')))
 print(c.get('scripts_dir', os.path.join('$(pwd)', '.opencode', 'binary-analysis')))
 ")
 fi
 IDAT=$(python3 -c "
 import os, sys, json
-c = json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json')))
+c = json.load(open(os.path.expanduser('~/bw-security-analysis/config.json')))
 p = c.get('ida_path','')
 for n in ['idat','idat.exe']:
     f = os.path.join(p, n)
@@ -66,9 +66,9 @@ else:
 $SCRIPTS_DIR = "<从环境信息中提取的脚本目录路径>"
 # 如果未注入，从 config.json 回退
 if (-not $SCRIPTS_DIR) {
-  $SCRIPTS_DIR = python -c "import os,json; c=json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json'))); print(c.get('scripts_dir',os.path.join(r'$(Get-Location)','.opencode','binary-analysis')))"
+  $SCRIPTS_DIR = python -c "import os,json; c=json.load(open(os.path.expanduser('~/bw-security-analysis/config.json'))); print(c.get('scripts_dir',os.path.join(r'$(Get-Location)','.opencode','binary-analysis')))"
 }
-$IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json'))); p=c.get('ida_path',''); [print(os.path.join(p,n)) or None for n in ['idat.exe','idat'] if os.path.isfile(os.path.join(p,n))][:1] or sys.exit(1)"
+$IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw-security-analysis/config.json'))); p=c.get('ida_path',''); [print(os.path.join(p,n)) or None for n in ['idat.exe','idat'] if os.path.isfile(os.path.join(p,n))][:1] or sys.exit(1)"
 ```
 
 **验证**: 赋值后 `echo` 确认非空。bash 用 `python3`，PowerShell 用 `python`。
@@ -81,13 +81,13 @@ $IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw
 
 **参数解析**：从用户输入中识别 IDA 数据库路径（绝对/相对/文件名）和分析需求。相对路径先相对于 CWD，找不到则提示绝对路径。路径含空格必须双引号。无法识别则自然提示。
 
-**IDA 路径**：未配置时请用户提供，验证后写入 `~/bw-ida-pro-analysis/config.json`（全局数据目录，不提交 git）。
+**IDA 路径**：未配置时请用户提供，验证后写入 `~/bw-security-analysis/config.json`（全局数据目录，不提交 git）。
 
 ---
 
 ## 任务目录约定
 
-**禁止使用 `workdir` 参数。禁止在项目根目录下创建任何文件。** 所有中间文件写入 `~/bw-ida-pro-analysis/workspace/`。
+**禁止使用 `workdir` 参数。禁止在项目根目录下创建任何文件。** 所有中间文件写入 `~/bw-security-analysis/workspace/`。
 
 ```bash
 TASK_DIR=$(python3 "$SCRIPTS_DIR/scripts/create_task_dir.py")
@@ -115,7 +115,7 @@ bash:
 ```bash
 BA_PYTHON=$(python3 -c "
 import json, os
-cache_path = os.path.expanduser('~/bw-ida-pro-analysis/env_cache.json')
+cache_path = os.path.expanduser('~/bw-security-analysis/env_cache.json')
 if os.path.isfile(cache_path):
     cache = json.load(open(cache_path))
     print(cache.get('data', {}).get('venv_python', 'python3'))
@@ -126,7 +126,7 @@ else:
 
 PowerShell:
 ```powershell
-$BA_PYTHON = python -c "import json,os,sys; p=os.path.expanduser('~/bw-ida-pro-analysis/env_cache.json'); print(json.load(open(p)).get('data',{}).get('venv_python','python')) if os.path.isfile(p) else print('python')"
+$BA_PYTHON = python -c "import json,os,sys; p=os.path.expanduser('~/bw-security-analysis/env_cache.json'); print(json.load(open(p)).get('data',{}).get('venv_python','python')) if os.path.isfile(p) else print('python')"
 ```
 
 ---
@@ -144,14 +144,14 @@ $BA_PYTHON = python -c "import json,os,sys; p=os.path.expanduser('~/bw-ida-pro-a
 bash:
 ```bash
 IDA_OUTPUT="$TASK_DIR/initial.json" \
-IDA_ENV_JSON="$HOME/bw-ida-pro-analysis/env_cache.json" \
+IDA_ENV_JSON="$HOME/bw-security-analysis/env_cache.json" \
   "$IDAT" -A -S"$SCRIPTS_DIR/scripts/initial_analysis.py" -L"$TASK_DIR/initial.log" "<目标文件>"
 ```
 
 PowerShell:
 ```powershell
 $env:IDA_OUTPUT="$TASK_DIR\initial.json"
-$env:IDA_ENV_JSON="$HOME\bw-ida-pro-analysis\env_cache.json"
+$env:IDA_ENV_JSON="$HOME\bw-security-analysis\env_cache.json"
 & "$IDAT" -A "-S$SCRIPTS_DIR\scripts\initial_analysis.py" "-L$TASK_DIR\initial.log" "<目标文件>"
 Remove-Item Env:\IDA_OUTPUT
 Remove-Item Env:\IDA_ENV_JSON
@@ -378,7 +378,7 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 
 ## 执行统计
 - idat 调用: X 次 | 手写脚本: X 个 | 重试: X 次 | 耗时: Xm Xs
-- 任务目录: ~/bw-ida-pro-analysis/workspace/<task_id>/
+- 任务目录: ~/bw-security-analysis/workspace/<task_id>/
 ```
 
 ---
@@ -392,7 +392,7 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 ### 变量丢失自愈（压缩恢复后执行）
 
 如果上下文压缩后变量丢失：
-1. $SCRIPTS_DIR: 从 Plugin 注入的环境信息恢复，或从 `~/bw-ida-pro-analysis/config.json` 读取
+1. $SCRIPTS_DIR: 从 Plugin 注入的环境信息恢复，或从 `~/bw-security-analysis/config.json` 读取
 2. $TASK_DIR: Plugin compacting hook 已通过 sessionID 映射精确注入到压缩上下文。如果仍丢失 → 直接问用户
 
 ---

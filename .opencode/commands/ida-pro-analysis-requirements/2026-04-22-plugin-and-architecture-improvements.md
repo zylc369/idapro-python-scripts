@@ -29,7 +29,7 @@
 - 类型签名: `(input: { sessionID?: string; model: { id: string; providerID: string; [key: string]: unknown } }, output: { system: string[] }) => Promise<void>`
 - 参考: `oh-my-openagent/src/plugin/system-transform.ts`
 
-**改动文件**: `.opencode/plugins/binary-analysis.mjs`
+**改动文件**: `.opencode/plugins/security-analysis.ts`
 
 ### 改进 2: Plugin 增加 `event` hook + compaction prompt
 
@@ -42,7 +42,7 @@
 
 **注**: 当前 `compacting` hook 的 `output.context.push()` 调用已是类型正确的（output 类型为 `{ context: string[] }`）。本改进仅更新注入内容。
 
-**改动文件**: `.opencode/plugins/binary-analysis.mjs`
+**改动文件**: `.opencode/plugins/security-analysis.ts`
 
 **compaction prompt 内容**（参考 oh-my-openagent 的 COMPACTION_CONTEXT_PROMPT 但简化）:
 ```
@@ -113,8 +113,8 @@
 
 | 改进 | 文件 | 改动类型 | 影响范围 |
 |------|------|---------|---------|
-| 1 | `plugins/binary-analysis.mjs` | 修改 | Plugin 行为 |
-| 2 | `plugins/binary-analysis.mjs` | 修改 | Plugin 行为 |
+| 1 | `plugins/security-analysis.ts` | 修改 | Plugin 行为 |
+| 2 | `plugins/security-analysis.ts` | 修改 | Plugin 行为 |
 | 3 | `agents/binary-analysis.md` | 修改 | Agent prompt |
 | 3 | `knowledge-base/idapython-conventions.md` | 新建 | 知识库 |
 | 4 | `binary-analysis/context-persistence.md` | 重写 | 文档 |

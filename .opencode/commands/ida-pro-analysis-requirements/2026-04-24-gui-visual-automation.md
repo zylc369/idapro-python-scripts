@@ -316,7 +316,7 @@ description: GUI 自动化交互 — 截图、视觉识别、键鼠操作
 
 使用 Read 工具读取 `$SCRIPTS_DIR/knowledge-base/gui-automation.md`，按照其中的规范执行用户的 GUI 操作请求。
 
-如果 `$SCRIPTS_DIR` 未设置，从 `~/bw-ida-pro-analysis/config.json` 的 `scripts_dir` 字段读取。如果 `$TASK_DIR` 未设置，创建 `~/bw-ida-pro-analysis/workspace/gui_<timestamp>/` 作为工作目录，截图放在其中的 `view/` 子目录下。
+如果 `$SCRIPTS_DIR` 未设置，从 `~/bw-security-analysis/config.json` 的 `scripts_dir` 字段读取。如果 `$TASK_DIR` 未设置，创建 `~/bw-security-analysis/workspace/gui_<timestamp>/` 作为工作目录，截图放在其中的 `view/` 子目录下。
 ```
 
 ---
@@ -486,7 +486,7 @@ description: GUI 自动化交互 — 截图、视觉识别、键鼠操作
 | `agents/binary-analysis.md` | 更新 | B1+D | ~30 行改动 |
 | `knowledge-base/verification-patterns.md` | 更新 | B2 | ~15 行改动 |
 | `scripts/registry.json` | 更新 | C | ~30 行新增 |
-| `plugins/binary-analysis.mjs` | 无改动 | - | - |
+| `plugins/security-analysis.ts` | 无改动 | - | - |
 
 ### 编码规则
 

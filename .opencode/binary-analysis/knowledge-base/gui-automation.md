@@ -9,9 +9,9 @@
 - 脚本路径: `$SCRIPTS_DIR/scripts/gui_capture.py` / `gui_act.py` / `gui_launch.py`
 
 **环境变量说明**:
-- `$BA_PYTHON`: 带 pyautogui/pyperclip 的 venv Python 路径（从 `~/bw-ida-pro-analysis/env_cache.json` 的 `venv_python` 字段获取，或在 Binary-Analysis agent 中由环境检测阶段自动设置）
-- `$SCRIPTS_DIR`: 脚本根目录，通常为 `.opencode/binary-analysis/`（从 `~/bw-ida-pro-analysis/config.json` 的 `scripts_dir` 字段获取）
-- `$TASK_DIR`: 当前任务的工作目录（`~/bw-ida-pro-analysis/workspace/<task_id>/`），截图放在 `view/` 子目录下
+- `$BA_PYTHON`: 带 pyautogui/pyperclip 的 venv Python 路径（从 `~/bw-security-analysis/env_cache.json` 的 `venv_python` 字段获取，或在 Binary-Analysis agent 中由环境检测阶段自动设置）
+- `$SCRIPTS_DIR`: 脚本根目录，通常为 `.opencode/binary-analysis/`（从 `~/bw-security-analysis/config.json` 的 `scripts_dir` 字段获取）
+- `$TASK_DIR`: 当前任务的工作目录（`~/bw-security-analysis/workspace/<task_id>/`），截图放在 `view/` 子目录下
 
 ## 标准操作流程
 

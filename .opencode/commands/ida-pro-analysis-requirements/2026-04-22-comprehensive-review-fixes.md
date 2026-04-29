@@ -36,7 +36,7 @@ Agent prompt 中的实际文本（直接写入 binary-analysis.md）:
         SCRIPTS_DIR=<从环境信息中提取的脚本目录路径>
         IDAT=$(python3 -c "
         import os, sys, json
-        c = json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json')))
+        c = json.load(open(os.path.expanduser('~/bw-security-analysis/config.json')))
         p = c.get('ida_path','')
         for n in ['idat','idat.exe']:
             f = os.path.join(p, n)
@@ -49,7 +49,7 @@ Agent prompt 中的实际文本（直接写入 binary-analysis.md）:
     **Windows (PowerShell)**:
 
         $SCRIPTS_DIR = "<从环境信息中提取的脚本目录路径>"
-        $IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw-ida-pro-analysis/config.json'))); p=c.get('ida_path',''); [print(os.path.join(p,n)) or None for n in ['idat.exe','idat'] if os.path.isfile(os.path.join(p,n))][:1] or sys.exit(1)"
+        $IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw-security-analysis/config.json'))); p=c.get('ida_path',''); [print(os.path.join(p,n)) or None for n in ['idat.exe','idat'] if os.path.isfile(os.path.join(p,n))][:1] or sys.exit(1)"
 
     **验证**: 变量赋值后执行 `echo $SCRIPTS_DIR` / `echo $IDAT`（PowerShell 用 `echo $SCRIPTS_DIR` / `echo $IDAT`）确认非空。
 

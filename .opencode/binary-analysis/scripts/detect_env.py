@@ -3,7 +3,7 @@
 description:
   检测逆向分析所需的工具链和依赖包，输出 JSON 格式结果。
   支持 Windows/Linux/macOS。
-  自动创建专用虚拟环境（~/bw-ida-pro-analysis/.venv），在其中安装 Python 包。
+  自动创建专用虚拟环境（~/bw-security-analysis/.venv），在其中安装 Python 包。
   C/C++ 编译器缺失时通知用户。
   结果缓存 24 小时。
   必需依赖缺失时返回 success: false，Agent 应停止并提示用户安装。
@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 
-CACHE_DIR = os.path.expanduser("~/bw-ida-pro-analysis")
+CACHE_DIR = os.path.expanduser("~/bw-security-analysis")
 CACHE_FILE = os.path.join(CACHE_DIR, "env_cache.json")
 CACHE_TTL = 86400
 VENV_DIR = os.path.join(CACHE_DIR, ".venv")

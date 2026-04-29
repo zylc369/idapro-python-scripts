@@ -14,7 +14,7 @@ OpenCode 长对话中存在三类上下文丢失问题：
 ```
 .opencode/
 ├── agents/binary-analysis.md           # Agent prompt（分析编排规则）
-└── plugins/binary-analysis.mjs         # Plugin（上下文持久化）
+└── plugins/security-analysis.ts          # Plugin（上下文持久化）
 ```
 
 ### Plugin 使用的 Hooks
@@ -45,14 +45,14 @@ OpenCode 长对话中存在三类上下文丢失问题：
 
 ### 数据流
 
-1. **环境信息**（每轮）: `~/bw-ida-pro-analysis/config.json` + `env_cache.json` → Plugin 读取 → `system.transform` 注入到系统提示
+1. **环境信息**（每轮）: `~/bw-security-analysis/config.json` + `env_cache.json` → Plugin 读取 → `system.transform` 注入到系统提示
 2. **分析规则**（压缩时）: Plugin 内置 COMPACT_RULES → `compacting` hook 注入到压缩 prompt
 3. **分析状态**（压缩时）: Plugin 注入结构化提示 → 告知压缩模型保留分析结论
 4. **知识库**（按需）: Agent 通过 Read 工具按需加载 `knowledge-base/` 下的文档
 
 ### 环境数据缓存
 
-- 环境检测结果缓存到 `~/bw-ida-pro-analysis/env_cache.json`，有效期 24 小时
+- 环境检测结果缓存到 `~/bw-security-analysis/env_cache.json`，有效期 24 小时
 - 检测脚本: `scripts/detect_env.py`
 - Agent prompt 中有环境检测阶段指引
 
@@ -62,5 +62,5 @@ OpenCode 长对话中存在三类上下文丢失问题：
 
 ## 扩展方向
 
-- **分析状态持久化**: 将分析中的关键发现写入 `~/bw-ida-pro-analysis/workspace/<task_id>/findings.json`，跨 session 复用
+- **分析状态持久化**: 将分析中的关键发现写入 `~/bw-security-analysis/workspace/<task_id>/findings.json`，跨 session 复用
 - **压缩后自动恢复**: 通过 `event` hook 的 `session.compacted` 事件，自动读取 findings.json 并注入

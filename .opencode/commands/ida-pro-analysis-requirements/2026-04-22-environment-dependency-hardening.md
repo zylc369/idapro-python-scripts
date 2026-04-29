@@ -100,7 +100,7 @@ def _detect_package(name, venv_python):
   "data": {
     "compiler": {...},
     "packages": {...},
-    "venv_python": "/home/user/bw-ida-pro-analysis/.venv/bin/python"
+    "venv_python": "/home/user/bw-security-analysis/.venv/bin/python"
   }
 }
 ```
@@ -127,7 +127,7 @@ bash:
 # 阶段 0 成功后，从 env_cache.json 提取 BA_PYTHON
 BA_PYTHON=$(python3 -c "
 import json, os, sys
-cache_path = os.path.expanduser('~/bw-ida-pro-analysis/env_cache.json')
+cache_path = os.path.expanduser('~/bw-security-analysis/env_cache.json')
 if os.path.isfile(cache_path):
     cache = json.load(open(cache_path))
     print(cache.get('data', {}).get('venv_python', 'python3'))
@@ -138,12 +138,12 @@ else:
 
 PowerShell:
 ```powershell
-$BA_PYTHON = python -c "import json,os,sys; p=os.path.expanduser('~/bw-ida-pro-analysis/env_cache.json'); print(json.load(open(p)).get('data',{}).get('venv_python','python')) if os.path.isfile(p) else print('python')"
+$BA_PYTHON = python -c "import json,os,sys; p=os.path.expanduser('~/bw-security-analysis/env_cache.json'); print(json.load(open(p)).get('data',{}).get('venv_python','python')) if os.path.isfile(p) else print('python')"
 ```
 
 ### A4: 修改 Plugin — 注入 BA_PYTHON
 
-**改动文件**: `.opencode/plugins/binary-analysis.mjs`
+**改动文件**: `.opencode/plugins/security-analysis.ts`
 
 `system.transform` hook 注入 `BA_PYTHON` 路径:
 
@@ -157,13 +157,13 @@ if (envData?.data?.venv_python) {
 
 **改动文件**: `.opencode/commands/ida-pro-analysis-docs/setup-guide.md`
 
-步骤 4（环境检测）更新: 说明 venv 会自动创建在 `~/bw-ida-pro-analysis/.venv`。
+步骤 4（环境检测）更新: 说明 venv 会自动创建在 `~/bw-security-analysis/.venv`。
 
 ### A6: 更新 environment-setup.md
 
 **改动文件**: `.opencode/binary-analysis/environment-setup.md`
 
-说明 venv 策略和手动安装命令格式（`~/bw-ida-pro-analysis/.venv/bin/pip install xxx`）。
+说明 venv 策略和手动安装命令格式（`~/bw-security-analysis/.venv/bin/pip install xxx`）。
 
 ## §3 实现规范
 
@@ -173,7 +173,7 @@ if (envData?.data?.venv_python) {
 |------|---------|---------|---------|
 | `.opencode/agents/binary-analysis.md` | 修改 | Agent 行为 | 高 |
 | `.opencode/binary-analysis/scripts/detect_env.py` | 修改 | 环境检测 | 高 |
-| `.opencode/plugins/binary-analysis.mjs` | 修改 | 环境信息注入 | 中 |
+| `.opencode/plugins/security-analysis.ts` | 修改 | 环境信息注入 | 中 |
 | `.opencode/binary-analysis/knowledge-base/templates.md` | 修改 | 命令模板 | 中 |
 | `.opencode/commands/ida-pro-analysis-docs/setup-guide.md` | 修改 | 文档 | 低 |
 | `.opencode/binary-analysis/environment-setup.md` | 修改 | 文档 | 低 |
@@ -211,7 +211,7 @@ if (envData?.data?.venv_python) {
 
 ### 架构验收
 
-- [ ] venv 位于 `~/bw-ida-pro-analysis/.venv`（数据目录，不提交 git）
+- [ ] venv 位于 `~/bw-security-analysis/.venv`（数据目录，不提交 git）
 - [ ] 依赖方向不变: `_base.py ← _utils.py ← _analysis.py ← query.py / update.py / scripts/*.py`
 
 ## §5 与现有需求文档的关系

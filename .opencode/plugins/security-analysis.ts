@@ -3,7 +3,7 @@ import { join, dirname } from "path";
 import { homedir } from "os";
 import type { Plugin } from "@opencode-ai/plugin";
 
-const DATA_DIR = join(homedir(), "bw-ida-pro-analysis");
+const DATA_DIR = join(homedir(), "bw-security-analysis");
 const CONFIG_FILE = join(DATA_DIR, "config.json");
 const ENV_CACHE_FILE = join(DATA_DIR, "env_cache.json");
 const WORKSPACE_DIR = join(DATA_DIR, "workspace");
@@ -35,9 +35,9 @@ const COMPACT_REMINDER = `## 压缩恢复指令（压缩时必须保留）
 1. 重新读取 agent prompt（.opencode/agents/binary-analysis.md）获取完整规则
 2. 恢复 $SCRIPTS_DIR、$TASK_DIR 等关键变量（见 agent prompt 的"变量丢失自愈"章节）`;
 
-const COMPACTION_CONTEXT_PROMPT = `## BinaryAnalysis 分析状态（压缩时必须保留）
+const COMPACTION_CONTEXT_PROMPT = `## 分析状态（压缩时必须保留）
 
-当总结此会话时，如果包含 BinaryAnalysis 相关内容，你必须保留以下信息：
+当总结此会话时，如果包含分析相关内容，你必须保留以下信息：
 
 ### 1. 分析目标
 - 目标二进制文件路径
@@ -61,6 +61,7 @@ const COMPACTION_CONTEXT_PROMPT = `## BinaryAnalysis 分析状态（压缩时必
 - 用户明确提出的要求（如"不要修改数据库"、"先分析再绕过"）
 - 置信度声明：区分"来自 IDA 数据库的事实"和"AI 推理（标注置信度）"`;
 
+const DEFAULT_AGENT_NAME = "SecurityAnalysis";
 interface EnvData {
   data?: {
     venv_python?: string;
@@ -118,12 +119,24 @@ interface SessionState {
 }
 
 const sessionStates = new Map<string, SessionState>();
+const sessionAgentMap = new Map<string, string>();
 
-export const BinaryAnalysisPlugin: Plugin = async ({ directory }) => {
-  debugLog(`BinaryAnalysisPlugin loaded: directory=${directory}`);
+export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
+  debugLog(`SecurityAnalysisPlugin loaded: directory=${directory}`);
   return {
+    "chat.message": async (input) => {
+      const agent = (input as { agent?: string })?.agent;
+      const sessionID = (input as { sessionID?: string })?.sessionID;
+      if (agent && sessionID) {
+        sessionAgentMap.set(sessionID, agent);
+        debugLog(`chat.message: sessionID=${sessionID} agent=${agent}`);
+      }
+    },
+
     "experimental.session.compacting": async (input, output) => {
-      debugLog(`compacting: sessionID=${input.sessionID}`);
+      const sid = input?.sessionID;
+      const agentName = (sid ? sessionAgentMap.get(sid) : undefined) || DEFAULT_AGENT_NAME;
+      debugLog(`compacting: sessionID=${sid} agent=${agentName}`);
       // 动态注入环境信息摘要（从 env_cache.json 和 config.json 实时读取）
       const config = readJsonSafe<ConfigData>(CONFIG_FILE);
       const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE);
@@ -131,7 +144,7 @@ export const BinaryAnalysisPlugin: Plugin = async ({ directory }) => {
       const scriptsDir = config?.scripts_dir || "";
       const idaPath = config?.ida_path || "";
 
-      let envSummary = "## 环境信息（压缩时自动注入）\n";
+      let envSummary = `## 环境信息（压缩时自动注入）\n`;
       if (idaPath) {
         envSummary += `- IDA Pro: ${idaPath}\n`;
       }
@@ -159,7 +172,6 @@ export const BinaryAnalysisPlugin: Plugin = async ({ directory }) => {
       output.context.push(COMPACT_REMINDER);
 
       // 精确恢复 TASK_DIR：用 sessionID 查映射文件
-      const sid = input.sessionID;
       if (sid) {
         const taskDir = getTaskDir(sid);
         if (taskDir) {
@@ -187,7 +199,7 @@ export const BinaryAnalysisPlugin: Plugin = async ({ directory }) => {
       const scriptsDir = config.scripts_dir || join(directory, ".opencode", "binary-analysis");
       const idaPath = config.ida_path || "未配置";
 
-      let envSection = `\n## BinaryAnalysis 环境信息\n`;
+      let envSection = `\n## 环境信息\n`;
       envSection += `- IDA Pro: ${idaPath}\n`;
       envSection += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;
 
@@ -258,6 +270,7 @@ export const BinaryAnalysisPlugin: Plugin = async ({ directory }) => {
         if (sessionID) {
           debugLog(`event: session.deleted id=${sessionID}`);
           sessionStates.delete(sessionID);
+          sessionAgentMap.delete(sessionID);
           removeTaskSession(sessionID);
         }
       }

@@ -4,7 +4,7 @@
     python create_task_dir.py
 
 行为:
-    在 ~/bw-ida-pro-analysis/workspace/ 下创建时间戳+随机数命名的目录，
+    在 ~/bw-security-analysis/workspace/ 下创建时间戳+随机数命名的目录，
     同时注册 sessionID → task_dir 映射到 .task_sessions/{sessionID}.json，
     用于压缩后精确恢复。
 
@@ -19,7 +19,7 @@ import json
 import random
 from datetime import datetime
 
-WORKSPACE = os.path.expanduser("~/bw-ida-pro-analysis/workspace")
+WORKSPACE = os.path.expanduser("~/bw-security-analysis/workspace")
 TASK_SESSIONS = os.path.join(WORKSPACE, ".task_sessions")
 
 

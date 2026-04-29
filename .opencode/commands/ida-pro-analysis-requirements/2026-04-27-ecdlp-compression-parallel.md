@@ -66,7 +66,7 @@
 ### 方案 B: 增强压缩上下文保留
 
 **改动文件**:
-1. `.opencode/plugins/binary-analysis.mjs` — 修改 compacting hook 逻辑（动态注入环境信息）
+1. `.opencode/plugins/security-analysis.ts` — 修改 compacting hook 逻辑（动态注入环境信息）
 2. `.opencode/agents/binary-analysis.md` — 添加变量丢失自愈规则
 
 **改动 1: Plugin compacting hook 动态注入环境信息摘要**
@@ -96,7 +96,7 @@ output.context.push(COMPACTION_CONTEXT_PROMPT);
 
 如果上下文压缩后变量丢失（$TASK_DIR、$SCRIPTS_DIR 等），按以下步骤恢复：
 1. $SCRIPTS_DIR: 从 Plugin 注入的环境信息恢复，或从 config.json 读取
-2. $TASK_DIR: 从 ~/bw-ida-pro-analysis/workspace/ 中查找包含匹配目标二进制路径的 summary.json 的目录
+2. $TASK_DIR: 从 ~/bw-security-analysis/workspace/ 中查找包含匹配目标二进制路径的 summary.json 的目录
 3. 如果有多个匹配 → 按修改时间排序取最新的
 4. 如果找不到匹配的任务目录 → 提示用户确认，或创建新任务目录
 ```
@@ -155,7 +155,7 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
 | 方案 | 文件 | 改动类型 | 预估行数 |
 |------|------|---------|---------|
 | A | knowledge-base/ecdlp-solving.md | 修改 | ~160 行新增/替换 |
-| B | plugins/binary-analysis.mjs | 修改 | ~15 行新增（compacting hook 中动态拼接环境信息 + 保持原有 COMPACTION_CONTEXT_PROMPT）|
+| B | plugins/security-analysis.ts | 修改 | ~15 行新增（compacting hook 中动态拼接环境信息 + 保持原有 COMPACTION_CONTEXT_PROMPT）|
 | B | agents/binary-analysis.md | 修改 | ~10 行新增，-75 行提取（净 -65 行）|
 | B | knowledge-base/gui-automation.md | 扩充（如已存在）或新建 | ~45 行（从 Agent prompt 提取的 GUI 命令详情）|
 | B | knowledge-base/process-patch-reference.md | 无需修改 | Agent prompt 中的 Patch 命令示例已被此文件包含，只需从 Agent prompt 删除即可 |
@@ -198,9 +198,9 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
   - 依赖: 步骤 3
 
 步骤 5. 增强 Plugin compacting hook — 动态注入环境信息
-  - 文件: plugins/binary-analysis.mjs
+  - 文件: plugins/security-analysis.ts
   - 预估行数: ~15 行（在 compacting hook 中从 env_cache.json 读取实际环境信息，动态拼接后与 COMPACTION_CONTEXT_PROMPT 一起注入）
-  - 验证点: `node --check binary-analysis.mjs` 语法通过 + 确认 compacting hook 读取 env_cache.json 并拼接环境信息文本
+  - 验证点: `node --check security-analysis.ts` 语法通过 + 确认 compacting hook 读取 env_cache.json 并拼接环境信息文本
   - 依赖: 无
 
 步骤 6. Agent prompt 添加变量丢失自愈规则
@@ -247,7 +247,7 @@ MSVC 兼容性知识不再独立实现，合入方案 C 的 technology-selection
 
 | 编号 | 验收项 | 验证方式 |
 |------|--------|---------|
-| R1 | binary-analysis.mjs 加载不报错 | `node --check` |
+| R1 | security-analysis.ts 加载不报错 | `node --check` |
 | R2 | Agent prompt < 450 行（含 Phase 4.5 瘦身提取） | `wc -l` |
 | R3 | 现有 COMPACT_RULES 规则完整保留 | diff 检查 |
 | R4 | 现有 Plugin system.transform 功能不变 | 检查代码未修改 |

@@ -107,7 +107,7 @@ BinaryAnalysis Agent 在分析过程中会动态创建任务目录（`$TASK_DIR`
 
 ### 数据格式
 
-**`.task_sessions/` 目录**（位于 `~/bw-ida-pro-analysis/workspace/`）：
+**`.task_sessions/` 目录**（位于 `~/bw-security-analysis/workspace/`）：
 
 每个 session 一个独立文件，避免并发写入数据竞争：
 
@@ -178,14 +178,14 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 ### §3.1 实施步骤
 
 **步骤 1. Plugin 新增 `tool.execute.before` hook**
-- 文件: `.opencode/plugins/binary-analysis.mjs`
+- 文件: `.opencode/plugins/security-analysis.ts`
 - 改动: 新增 `"tool.execute.before"` hook，在 bash 命令前添加 `SESSION_ID=xxx` 前缀（bash）或 `$env:SESSION_ID='xxx'; ` 前缀（PowerShell）。`input.sessionID` 为必填，比 `shell.env`（可选）更可靠
 - 预估行数: ~10 行
 - 验证点: `node --check` 通过
 - 依赖: 无
 
 **步骤 2. Plugin 新增映射读写函数 + compacting hook 精确查找**
-- 文件: `.opencode/plugins/binary-analysis.mjs`
+- 文件: `.opencode/plugins/security-analysis.ts`
 - 改动:
   - 新增常量 `WORKSPACE_DIR = join(DATA_DIR, "workspace")`
   - 新增常量 `TASK_SESSIONS_DIR = join(WORKSPACE_DIR, ".task_sessions")`
@@ -198,7 +198,7 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 - 依赖: 无
 
 **步骤 3. Plugin event hook — 修复 sessionID 取值 + session.deleted 清理映射**
-- 文件: `.opencode/plugins/binary-analysis.mjs`
+- 文件: `.opencode/plugins/security-analysis.ts`
 - 改动:
   - 修复 event hook 中 sessionID 的取值：`session.created`/`session.deleted` 事件的 properties 是 `{ info: Session }`，sessionID 在 `props.info?.id` 中，而非 `props.sessionID`。统一使用 `props.info?.id ?? props.sessionID` 兼容两种格式
   - 修复后 `session.deleted` 事件中调用 `removeTaskSession(sessionID)` 删除对应映射文件
@@ -227,7 +227,7 @@ sessionID 不变 + 文件持久化 = 无限次压缩后仍然精确。
 
 | 文件 | 改动类型 | 预估行数 |
 |------|---------|---------|
-| `.opencode/plugins/binary-analysis.mjs` | 修改 | +35 |
+| `.opencode/plugins/security-analysis.ts` | 修改 | +35 |
 | `.opencode/agents/binary-analysis.md` | 修改 | +17 -5 |
 | `.opencode/binary-analysis/scripts/create_task_dir.py` | 新增 | ~70 |
 
