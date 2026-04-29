@@ -31,7 +31,7 @@
 | A2: gui_act.py | 新建 `scripts/gui_act.py` | 键鼠操作（click/type/hotkey/scroll，通过 pyautogui + pyperclip） |
 | A3: gui_launch.py | 新建 `scripts/gui_launch.py` | 进程/窗口管理（启动、查找、前台、kill，P0 Windows） |
 | A4: gui-automation.md | 新建 `knowledge-base/gui-automation.md` | GUI 自动化操作规范（单点维护知识库） |
-| A5: gui-interact.md | 新建 `commands/gui-interact.md` | OpenCode 命令（薄壳，引用知识库） |
+| A5: gui-interact-pc.md | 新建 `commands/gui-interact-pc.md` | OpenCode 命令（薄壳，引用知识库） |
 | B: 降级策略 | 更新 `agents/binary-analysis.md`（验证决策树） + `knowledge-base/verification-patterns.md` | gui_verify.py 作为 MCP 不可用时的降级路径，降级护栏 |
 | C: registry.json | 更新 `scripts/registry.json` | 新增 3 个脚本条目 |
 | D: Agent prompt | 更新 `agents/binary-analysis.md`（GUI 脚本小节 + 知识库索引） | GUI 验证脚本小节改为视觉驱动首选 + gui_verify.py 降级 |
@@ -211,13 +211,13 @@ kill:
 
 **新建文件**: `.opencode/binary-analysis/knowledge-base/gui-automation.md`
 
-**功能**: GUI 自动化操作的完整规范。`gui-interact` 命令和 Binary-Analysis agent 共享此文件（单点维护）。
+**功能**: GUI 自动化操作的完整规范。`gui-interact-pc` 命令和 Binary-Analysis agent 共享此文件（单点维护）。
 
 **内容结构**:
 ```markdown
 # GUI 自动化操作规范
 
-> Binary-Analysis agent 和 gui-interact 命令共享此规范。
+> Binary-Analysis agent 和 gui-interact-pc 命令共享此规范。
 
 ## 前提条件
 
@@ -304,9 +304,9 @@ $BA_PYTHON $SCRIPTS_DIR/scripts/gui_launch.py --action kill --pid <PID>
 
 ---
 
-### 方案 A5: gui-interact.md — OpenCode 命令
+### 方案 A5: gui-interact-pc.md — OpenCode 命令
 
-**新建文件**: `.opencode/commands/gui-interact.md`
+**新建文件**: `.opencode/commands/gui-interact-pc.md`
 
 **内容**（薄壳，约 5 行）:
 ```markdown
@@ -482,7 +482,7 @@ description: GUI 自动化交互 — 截图、视觉识别、键鼠操作
 | `scripts/gui_act.py` | 新建 | A2 | ~80 行 |
 | `scripts/gui_launch.py` | 新建 | A3 | ~120 行 |
 | `knowledge-base/gui-automation.md` | 新建 | A4 | ~120 行 |
-| `commands/gui-interact.md` | 新建 | A5 | ~10 行 |
+| `commands/gui-interact-pc.md` | 新建 | A5 | ~10 行 |
 | `agents/binary-analysis.md` | 更新 | B1+D | ~30 行改动 |
 | `knowledge-base/verification-patterns.md` | 更新 | B2 | ~15 行改动 |
 | `scripts/registry.json` | 更新 | C | ~30 行新增 |
@@ -519,8 +519,8 @@ description: GUI 自动化交互 — 截图、视觉识别、键鼠操作
 - 预估行数: ~120 行
 - 验证点: 人工审阅自包含性 + 引用路径使用 `$SCRIPTS_DIR` 相对路径
 
-**步骤 5. 新建 gui-interact.md 命令**
-- 文件: `.opencode/commands/gui-interact.md`
+**步骤 5. 新建 gui-interact-pc.md 命令**
+- 文件: `.opencode/commands/gui-interact-pc.md`
 - 预估行数: ~10 行
 - 验证点: 人工审阅格式正确
 
@@ -571,7 +571,7 @@ description: GUI 自动化交互 — 截图、视觉识别、键鼠操作
 | A1 | 新脚本不依赖 IDA 运行时（纯 Python） |
 | A2 | 新脚本不依赖 `_base.py` / `_utils.py` / `_analysis.py`（独立脚本） |
 | A3 | 依赖方向合规：知识库文件之间只做引用，不产生循环依赖 |
-| A4 | gui-interact.md 是薄壳，所有逻辑在 gui-automation.md 中单点维护 |
+| A4 | gui-interact-pc.md 是薄壳，所有逻辑在 gui-automation.md 中单点维护 |
 | A5 | gui-automation.md 被 agent 和命令共享（单点维护原则） |
 
 ## §5 与现有需求文档的关系

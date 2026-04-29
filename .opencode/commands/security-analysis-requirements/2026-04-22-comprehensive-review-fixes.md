@@ -66,7 +66,7 @@ Agent prompt 中的实际文本（直接写入 binary-analysis.md）:
 
 ### R3: 新机器配置步骤文档
 
-**改动文件**: 新增 `.opencode/commands/ida-pro-analysis-docs/setup-guide.md`
+**改动文件**: 新增 `.opencode/commands/security-analysis-docs/setup-guide.md`
 
 端到端步骤：(1) clone 仓库 (2) 初始化子模块 (3) 安装依赖 (4) 运行 detect_env.py (5) 创建 config.json (6) 在 OpenCode 中选择 Agent。
 
@@ -161,7 +161,7 @@ def classify_scene(packer_info, strings, import_names, architecture, file_type, 
 |------|---------|---------|---------|
 | `.opencode/agents/binary-analysis.md` | 修改 | Agent 行为 | 高 |
 | `.opencode/binary-analysis/knowledge-base/templates.md` | 修改 | 命令构造 | 中 |
-| `.opencode/commands/ida-pro-analysis-docs/setup-guide.md` | 新增 | 文档 | 低 |
+| `.opencode/commands/security-analysis-docs/setup-guide.md` | 新增 | 文档 | 低 |
 | `.opencode/binary-analysis/_analysis.py` | 修改 | 场景分类 | 中 |
 | `.opencode/binary-analysis/scripts/initial_analysis.py` | 修改 | 初始分析 | 中 |
 | `.opencode/binary-analysis/knowledge-base/unicorn-templates.md` | 新增 | 知识库 | 低 |
@@ -206,7 +206,7 @@ def classify_scene(packer_info, strings, import_names, architecture, file_type, 
 
 - [ ] 依赖方向不变: `_base.py ← _utils.py ← _analysis.py ← query.py / update.py / scripts/*.py`
 - [ ] 新增知识库文件在 knowledge-base 目录下
-- [ ] setup-guide.md 在 ida-pro-analysis-docs 目录下
+- [ ] setup-guide.md 在 security-analysis-docs 目录下
 
 ## §5 与现有需求文档的关系
 

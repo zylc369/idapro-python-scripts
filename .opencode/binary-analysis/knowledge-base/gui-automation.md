@@ -1,6 +1,6 @@
 # GUI 自动化操作规范
 
-> Binary-Analysis agent 和 gui-interact 命令共享此规范。
+> Binary-Analysis agent 和 gui-interact-pc 命令共享此规范。
 
 ## 前提条件
 

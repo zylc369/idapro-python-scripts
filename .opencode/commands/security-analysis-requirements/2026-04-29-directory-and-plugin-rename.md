@@ -34,9 +34,9 @@
 | 活跃文档 | `knowledge-base/templates.md` | 1 |
 | 活跃文档 | `knowledge-base/gui-automation.md` | 3 |
 | 活跃文档 | `knowledge-base/opencode-plugin-debugging.md` | 5 |
-| 命令文档 | `commands/gui-interact.md` | 1 |
-| 命令文档 | `commands/ida-pro-analysis-docs/setup-guide.md` | ~13 |
-| 命令文档 | `commands/ida-pro-analysis-evolve.md` | 1 |
+| 命令文档 | `commands/gui-interact-pc.md` | 1 |
+| 命令文档 | `commands/security-analysis-docs/setup-guide.md` | ~13 |
+| 命令文档 | `commands/security-analysis-evolve.md` | 1 |
 | 需求历史 | `requirements/2026-04-22-comprehensive-review-fixes.md` | 2 |
 | 需求历史 | `requirements/2026-04-22-environment-dependency-hardening.md` | 6 |
 | 需求历史 | `requirements/2026-04-24-gui-visual-automation.md` | 1 |
@@ -55,7 +55,7 @@
 | 文件 | 需替换内容 |
 |------|-----------|
 | `knowledge-base/opencode-plugin-debugging.md` | `BinaryAnalysisPlugin` → `SecurityAnalysisPlugin`（~5 处）, `binary-analysis.ts` → `security-analysis.ts` |
-| `commands/ida-pro-analysis-evolve.md` | `binary-analysis.mjs` → `security-analysis.ts`（架构图 + 验证表，~10 处）, `BinaryAnalysis` agent 引用保留 |
+| `commands/security-analysis-evolve.md` | `binary-analysis.mjs` → `security-analysis.ts`（架构图 + 验证表，~10 处）, `BinaryAnalysis` agent 引用保留 |
 | `binary-analysis/context-persistence.md` | `binary-analysis.mjs` → `security-analysis.ts`（1 处） |
 | `binary-analysis/knowledge-base/opencode-agent-format.md` | `binary-analysis.mjs` → `security-analysis.ts`（1 处，line 133） |
 | `README.md` | `binary-analysis.ts` → `security-analysis.ts`（如有） |
@@ -106,9 +106,9 @@
 | `binary-analysis/README.md` | 路径替换 | 低 |
 | `binary-analysis/environment-setup.md` | 路径替换 | 低 |
 | `binary-analysis/context-persistence.md` | 路径替换 + 插件名替换 | 低 |
-| `commands/gui-interact.md` | 路径替换 | 低 |
-| `commands/ida-pro-analysis-docs/setup-guide.md` | 路径替换 | 低 |
-| `commands/ida-pro-analysis-evolve.md` | 路径替换 + 插件名替换 | 中 |
+| `commands/gui-interact-pc.md` | 路径替换 | 低 |
+| `commands/security-analysis-docs/setup-guide.md` | 路径替换 | 低 |
+| `commands/security-analysis-evolve.md` | 路径替换 + 插件名替换 | 中 |
 | `README.md` | 路径替换 | 低 |
 | 6 个需求历史文档 | 路径替换 + 插件名替换 | 低 |
 
@@ -147,7 +147,7 @@
   - 文件:
     - `knowledge-base/opencode-plugin-debugging.md`（~5 处 `BinaryAnalysisPlugin` → `SecurityAnalysisPlugin`）
     - `knowledge-base/opencode-agent-format.md`（1 处 `binary-analysis.mjs` → `security-analysis.ts`）
-    - `commands/ida-pro-analysis-evolve.md`（~10 处 `binary-analysis.mjs` → `security-analysis.ts`，架构图 + 验证表）
+    - `commands/security-analysis-evolve.md`（~10 处 `binary-analysis.mjs` → `security-analysis.ts`，架构图 + 验证表）
     - `binary-analysis/context-persistence.md`（1 处 `binary-analysis.mjs` → `security-analysis.ts`）
     - 6 个需求历史文档中的 `binary-analysis.mjs` → `security-analysis.ts`
     - `README.md`（如有插件文件名引用）

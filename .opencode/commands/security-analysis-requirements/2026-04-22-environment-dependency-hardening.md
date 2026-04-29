@@ -155,7 +155,7 @@ if (envData?.data?.venv_python) {
 
 ### A5: 更新 setup-guide.md
 
-**改动文件**: `.opencode/commands/ida-pro-analysis-docs/setup-guide.md`
+**改动文件**: `.opencode/commands/security-analysis-docs/setup-guide.md`
 
 步骤 4（环境检测）更新: 说明 venv 会自动创建在 `~/bw-security-analysis/.venv`。
 
@@ -175,7 +175,7 @@ if (envData?.data?.venv_python) {
 | `.opencode/binary-analysis/scripts/detect_env.py` | 修改 | 环境检测 | 高 |
 | `.opencode/plugins/security-analysis.ts` | 修改 | 环境信息注入 | 中 |
 | `.opencode/binary-analysis/knowledge-base/templates.md` | 修改 | 命令模板 | 中 |
-| `.opencode/commands/ida-pro-analysis-docs/setup-guide.md` | 修改 | 文档 | 低 |
+| `.opencode/commands/security-analysis-docs/setup-guide.md` | 修改 | 文档 | 低 |
 | `.opencode/binary-analysis/environment-setup.md` | 修改 | 文档 | 低 |
 
 ### 编码规则

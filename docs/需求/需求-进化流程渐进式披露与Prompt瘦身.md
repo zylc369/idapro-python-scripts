@@ -11,7 +11,7 @@
 
 ### 1.2 目标
 
-1. **进化命令增加瘦身机制**：在 `ida-pro-analysis-evolve.md` 中增加"Prompt 瘦身检查"环节，自动检测并提取可外置的内容
+1. **进化命令增加瘦身机制**：在 `security-analysis-evolve.md` 中增加"Prompt 瘦身检查"环节，自动检测并提取可外置的内容
 2. **对当前 prompt 执行首次瘦身**：将加壳策略（~124 行）和脚本生成规则（~70 行）提取到知识库文件
 
 ### 1.3 评估维度
@@ -79,7 +79,7 @@
 
 ### 2.4 evolve 命令变更
 
-在 `ida-pro-analysis-evolve.md` 中：
+在 `security-analysis-evolve.md` 中：
 
 1. **更新架构图**：增加 `ida-pro-analysis-knowledge-base/` 目录
 2. **在 Phase 4 和 Phase 5 之间插入 Phase 4.5**：Prompt 瘦身检查
@@ -93,14 +93,14 @@
 
 | 文件 | 修改类型 | 说明 |
 |------|---------|------|
-| `ida-pro-analysis-evolve.md` | 修改 | 增加架构图 + Phase 4.5 + 反模式 |
+| `security-analysis-evolve.md` | 修改 | 增加架构图 + Phase 4.5 + 反模式 |
 | `ida-pro-analysis.md` | 修改 | 替换加壳策略和脚本生成章节为引用 |
 | `ida-pro-analysis-knowledge-base/packer-handling.md` | 新建 | 从主 prompt 提取的加壳处理策略 |
 | `ida-pro-analysis-knowledge-base/script-generation.md` | 新建 | 从主 prompt 提取的脚本生成规则 |
 
 ### 3.2 执行顺序
 
-1. 先更新 `ida-pro-analysis-evolve.md`（增加瘦身机制）
+1. 先更新 `security-analysis-evolve.md`（增加瘦身机制）
 2. 创建知识库目录和文件
 3. 瘦身 `ida-pro-analysis.md`
 
@@ -110,8 +110,8 @@
 
 ### 4.1 功能验收
 
-- [ ] `ida-pro-analysis-evolve.md` 包含 Phase 4.5 瘦身检查环节
-- [ ] `ida-pro-analysis-evolve.md` 架构图包含知识库目录
+- [ ] `security-analysis-evolve.md` 包含 Phase 4.5 瘦身检查环节
+- [ ] `security-analysis-evolve.md` 架构图包含知识库目录
 - [ ] `ida-pro-analysis.md` 行数 < 450 行
 - [ ] `packer-handling.md` 包含完整的三阶段流程、常见模式表、脱壳机模板
 - [ ] `script-generation.md` 包含骨架模板、编码规则表、质量保障清单
