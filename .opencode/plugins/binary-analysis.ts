@@ -41,7 +41,7 @@ const COMPACTION_CONTEXT_PROMPT = `## BinaryAnalysis 分析状态（压缩时必
 
 ### 1. 分析目标
 - 目标二进制文件路径
-- 文件类型（exe/dll/so）和架构
+- 文件类型（exe/dll/so/移动端app等）和架构
 
 ### 2. 已完成的分析
 - 已识别的关键函数及其地址和用途
