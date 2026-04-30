@@ -28,7 +28,7 @@ function debugLog(msg: string): void {
         writeFileSync(DEBUG_LOG, firstNewline >= 0 ? keep.slice(firstNewline + 1) : keep);
       }
     } catch {}
-    const ts = new Date().toISOString();
+    const ts = new Date().toLocaleString("zh-CN", { hour12: false });
     writeFileSync(DEBUG_LOG, `[${ts}] ${msg}\n`, { flag: "a" });
   } catch {}
 }
@@ -69,7 +69,9 @@ function readJsonSafe<T>(filePath: string): T | null {
     if (existsSync(filePath)) {
       return JSON.parse(readFileSync(filePath, "utf-8")) as T;
     }
-  } catch {}
+  } catch (e) {
+    debugLog(`readJsonSafe failed: ${filePath} error=${e}`);
+  }
   return null;
 }
 
@@ -77,7 +79,9 @@ function getTaskDir(sessionID: string): string | null {
   try {
     const filePath = join(TASK_SESSIONS_DIR, `${sessionID}.json`);
     const data = readJsonSafe<TaskSessionMapping>(filePath);
-    return data?.task_dir || null;
+    const result = data?.task_dir || null;
+    debugLog(`getTaskDir: sessionID=${sessionID} file=${filePath} result=${result}`);
+    return result;
   } catch {
     return null;
   }
@@ -87,9 +91,11 @@ function removeTaskSession(sessionID: string): void {
   try {
     const filePath = join(TASK_SESSIONS_DIR, `${sessionID}.json`);
     if (existsSync(filePath)) {
+      debugLog(`removeTaskSession: deleting ${filePath}`);
       unlinkSync(filePath);
     }
-  } catch {
+  } catch (e) {
+    debugLog(`removeTaskSession failed: sessionID=${sessionID} error=${e}`);
   }
 }
 
@@ -111,8 +117,10 @@ function getScriptDir(agentName: string | undefined): string {
 const AGENTS_DIR = join(OPENCODE_ROOT, "agents");
 
 function getCompactionReminder(agentName: string | undefined): string {
+  debugLog(`getCompactionReminder: agentName=${agentName}`);
   if (agentName) {
     const promptPath = join(AGENTS_DIR, `${agentName}.md`);
+    debugLog(`getCompactionReminder: promptPath=${promptPath}`);
     return `## 压缩恢复指令（压缩时必须保留）
 
 上下文刚被压缩。继续分析前必须：
@@ -226,7 +234,18 @@ const sessionStates = new Map<string, SessionState>();
 const sessionAgentMap = new Map<string, string>();
 
 export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
-  debugLog(`SecurityAnalysisPlugin loaded: directory=${directory}`);
+  debugLog(`=== SecurityAnalysisPlugin loaded ===`);
+  debugLog(`  PLUGIN_DIR: ${PLUGIN_DIR}`);
+  debugLog(`  OPENCODE_ROOT: ${OPENCODE_ROOT}`);
+  debugLog(`  DATA_DIR: ${DATA_DIR}`);
+  debugLog(`  CONFIG_FILE: ${CONFIG_FILE}`);
+  debugLog(`  ENV_CACHE_FILE: ${ENV_CACHE_FILE}`);
+  debugLog(`  WORKSPACE_DIR: ${WORKSPACE_DIR}`);
+  debugLog(`  TASK_SESSIONS_DIR: ${TASK_SESSIONS_DIR}`);
+  debugLog(`  DEBUG_LOG: ${DEBUG_LOG}`);
+  debugLog(`  directory param: ${directory}`);
+  debugLog(`  config exists: ${existsSync(CONFIG_FILE)}`);
+  debugLog(`  env_cache exists: ${existsSync(ENV_CACHE_FILE)}`);
   return {
     "chat.message": async (input) => {
       const agent = (input as { agent?: string })?.agent;
@@ -271,8 +290,15 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
         }
       }
       output.context.push(envSummary);
-      output.context.push(getCompactionContext(agentName));
-      output.context.push(getCompactionReminder(agentName));
+      const compactionCtx = getCompactionContext(agentName);
+      const compactionReminder = getCompactionReminder(agentName);
+      debugLog(`=== [Start] SecurityAnalysisPlugin compacting append prompt ===`);
+      debugLog(`envSummary:\n${envSummary}\n`)
+      debugLog(`compactionCtx:\n${compactionCtx}\n`)
+      debugLog(`compactionReminder:\n${compactionReminder}`)
+      debugLog(`=== [End] SecurityAnalysisPlugin compacting append prompt ===`);
+      output.context.push(compactionCtx);
+      output.context.push(compactionReminder);
 
       if (sid) {
         const taskDir = getTaskDir(sid);
@@ -303,6 +329,7 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       debugLog(`system.transform: sessionID=${sessionID} agent=${agentName}`);
 
       const envSection = buildEnvSection(agentName, config, envInfo);
+      debugLog(`system.transform: envSection length=${envSection.length} first 200 chars: ${envSection.slice(0, 200)}`);
       output.system.push(envSection);
     },
 
