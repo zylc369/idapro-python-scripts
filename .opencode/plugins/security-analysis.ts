@@ -24,7 +24,11 @@ const DEFAULT_LOG = join(LOGS_DIR, "plugin_debug.log");
 const MAX_LOG_SIZE = 5 * 1024 * 1024;
 const KEEP_SIZE = 2 * 1024 * 1024;
 
-const PRIMARY_AGENTS = ["binary-analysis", "mobile-analysis"];
+const PRIMARY_AGENTS = [
+  "binary-analysis",
+  "mobile-analysis",
+  "security-analysis-evolve",
+];
 
 function getLogFilePath(primaryAgent: string | undefined): string {
   if (primaryAgent && PRIMARY_AGENTS.includes(primaryAgent)) {
@@ -139,11 +143,11 @@ function getToolsForAgent(
 }
 
 // 根据实际 agent 名获取脚本目录；子 agent（如 "general"）不在映射表中时，
-// 回退到 primaryAgent 对应的目录，最终回退到 binary-analysis
+// 回退到 primaryAgent 对应的目录；均无映射则返回 undefined
 function getScriptDir(
   agentName: string | undefined,
   fallbackAgent?: string,
-): string {
+): string | undefined {
   const AGENT_SCRIPT_DIRS: Record<string, string> = {
     "binary-analysis": join(OPENCODE_ROOT, "binary-analysis"),
     "mobile-analysis": join(OPENCODE_ROOT, "mobile-analysis"),
@@ -151,7 +155,7 @@ function getScriptDir(
   return (
     AGENT_SCRIPT_DIRS[agentName || ""] ||
     AGENT_SCRIPT_DIRS[fallbackAgent || ""] ||
-    AGENT_SCRIPT_DIRS["binary-analysis"]
+    undefined
   );
 }
 
@@ -219,13 +223,17 @@ function buildEnvSection(
 ): string {
   const fallbackAgent = getPrimaryAgent(sessionID);
   const scriptsDir = getScriptDir(agentName, fallbackAgent);
-  const idaScriptsDir = join(OPENCODE_ROOT, "binary-analysis");
-  const idaPath = config.ida_path || "未配置";
 
   let envSection = `\n## 环境信息\n`;
-  envSection += `- IDA Pro: ${idaPath}\n`;
-  envSection += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;
+
+  if (scriptsDir) {
+    envSection += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;
+  }
+
+  const idaScriptsDir = join(OPENCODE_ROOT, "binary-analysis");
   envSection += `- IDA 通用脚本目录 ($IDA_SCRIPTS_DIR): ${idaScriptsDir}\n`;
+  const idaPath = config.ida_path || "未配置";
+  envSection += `- IDA Pro: ${idaPath}\n`;
 
   if (envInfo) {
     const compiler = envInfo.compiler;
