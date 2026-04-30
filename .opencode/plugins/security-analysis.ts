@@ -267,12 +267,20 @@ function buildEnvSection(
   return envSection;
 }
 
-// session 统一数据结构
-// - createdAt:   session 创建时间（session.created 设置）
-// - agentName:   当前实际使用的 agent 名（chat.message 设置，如 "general"）
+// ─── session 管理 ──────────────────────────────────────────────────────
+//
+// 数据结构
+// - createdAt:   session 初始化时间（ensureSession 设置）
+// - agentName:   当前实际使用的 agent 名（chat.message 设置，如 "binary-analysis"）
 // - primaryAgent: 所属主 agent 名（用于日志路由和工具目录回退）
 //                主 session: chat.message 中根据 PRIMARY_AGENTS 设置
-//                子 session: session.created 中从父 session 继承
+//                子 session: ensureSession 从父 session 继承
+//
+// 恢复策略
+// 插件重启后内存 Map 清空，OpenCode 不会为已有 session 重发 session.created 事件。
+// ensureSession 通过 client API 按需查询 session info（含 parentID），
+// 递归解析父链恢复 primaryAgent。每个 session 在每个进程生命周期内最多触发
+// 一次 API 调用，后续访问纯内存读取，零开销。
 interface SessionData {
   createdAt: number;
   agentName?: string;
@@ -280,6 +288,22 @@ interface SessionData {
 }
 
 const sessions = new Map<string, SessionData>();
+
+// OpenCode client，在 Plugin 函数中初始化
+let opencodeClient: {
+  session: {
+    get: (options: {
+      path: { id: string };
+      query?: { directory?: string };
+    }) => Promise<{
+      data?: { id: string; parentID?: string; [k: string]: unknown };
+      error?: unknown;
+    }>;
+  };
+} | null = null;
+
+// 并发去重：同一 sessionID 的并发 ensureSession 调用共享同一个 Promise
+const pendingEnsures = new Map<string, Promise<SessionData | undefined>>();
 
 function getPrimaryAgent(sessionID?: string): string | undefined {
   return sessionID ? sessions.get(sessionID)?.primaryAgent : undefined;
@@ -290,33 +314,103 @@ function debugLog(msg: string, sessionID?: string): void {
   writeLog(logFile, msg);
 }
 
-function requirePrimaryAgent(
-  hookName: string,
-  sessionID?: string,
-): string | undefined {
-  const primary = getPrimaryAgent(sessionID);
-  if (!primary) {
-    debugLog(
-      `${hookName}: 跳过 — sessionID=${sessionID} 无 primaryAgent（非 PRIMARY_AGENTS session）`,
-      sessionID,
-    );
-    return undefined;
+/**
+ * 确保指定 session 的数据可用。
+ * - 已在 Map 中 → 直接返回（零开销）
+ * - 不在 Map 中 → 调用 OpenCode client API 查询 session info，
+ *   递归解析父链继承 primaryAgent，写入 Map 后返回。
+ * - 同一 session 的并发调用共享同一个 Promise，避免重复 API 请求。
+ */
+async function ensureSession(
+  sessionID: string,
+): Promise<SessionData | undefined> {
+  const existing = sessions.get(sessionID);
+  if (existing) return existing;
+
+  const pending = pendingEnsures.get(sessionID);
+  if (pending) return pending;
+
+  const promise = doEnsureSession(sessionID);
+  pendingEnsures.set(sessionID, promise);
+  try {
+    return await promise;
+  } finally {
+    pendingEnsures.delete(sessionID);
   }
-  return primary;
 }
 
-function requireSession(
+async function doEnsureSession(
+  sessionID: string,
+): Promise<SessionData | undefined> {
+  if (!opencodeClient) {
+    debugLog(`ensureSession: client 未初始化, sessionID=${sessionID}`);
+    return undefined;
+  }
+
+  try {
+    const response = await opencodeClient.session.get({
+      path: { id: sessionID },
+    });
+    if (response.error) {
+      debugLog(
+        `ensureSession: API 错误 sessionID=${sessionID} error=${JSON.stringify(response.error)}`,
+      );
+      return undefined;
+    }
+    const sessionInfo = response.data;
+    if (!sessionInfo) {
+      debugLog(`ensureSession: API 返回空数据 sessionID=${sessionID}`);
+      return undefined;
+    }
+
+    // 递归解析父链
+    let primaryAgent: string | undefined;
+    if (sessionInfo.parentID) {
+      const parent = await ensureSession(sessionInfo.parentID);
+      primaryAgent = parent?.primaryAgent;
+    }
+
+    const session: SessionData = {
+      createdAt: Date.now(),
+      primaryAgent,
+    };
+    sessions.set(sessionID, session);
+    debugLog(
+      `ensureSession: 恢复 sessionID=${sessionID} primaryAgent=${primaryAgent || "无"} parentID=${sessionInfo.parentID || "无"}`,
+      sessionID,
+    );
+    return session;
+  } catch (e) {
+    debugLog(`ensureSession: 异常 sessionID=${sessionID} error=${e}`);
+    return undefined;
+  }
+}
+
+/**
+ * 统一的 hook 入口守卫：
+ * 1. 确保 session 数据可用（必要时通过 API 恢复）
+ * 2. 验证 primaryAgent 存在
+ * 3. 任一条件不满足 → 记录日志并返回 undefined
+ */
+async function requireSessionWithPrimary(
   hookName: string,
   sessionID?: string,
-): SessionData | undefined {
+): Promise<SessionData | undefined> {
   if (!sessionID) {
     debugLog(`${hookName}: 跳过 — 无 sessionID`);
     return undefined;
   }
-  const session = sessions.get(sessionID);
+  const session = await ensureSession(sessionID);
   if (!session) {
     debugLog(
-      `${hookName}: 跳过 — sessionID=${sessionID} 不存在于 sessions Map`,
+      `${hookName}: 跳过 — sessionID=${sessionID} 无法初始化`,
+      sessionID,
+    );
+    return undefined;
+  }
+  if (!session.primaryAgent) {
+    debugLog(
+      `${hookName}: 跳过 — sessionID=${sessionID} 无 primaryAgent（非 PRIMARY_AGENTS session）`,
       sessionID,
     );
     return undefined;
@@ -324,7 +418,10 @@ function requireSession(
   return session;
 }
 
-export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
+export const SecurityAnalysisPlugin: Plugin = async (input) => {
+  const { client, directory } = input;
+  opencodeClient = client;
+
   debugLog(`=== SecurityAnalysisPlugin loaded ===`);
   debugLog(`  PLUGIN_DIR: ${PLUGIN_DIR}`);
   debugLog(`  OPENCODE_ROOT: ${OPENCODE_ROOT}`);
@@ -338,11 +435,12 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
   debugLog(`  directory param: ${directory}`);
   debugLog(`  config exists: ${existsSync(CONFIG_FILE)}`);
   debugLog(`  env_cache exists: ${existsSync(ENV_CACHE_FILE)}`);
+  debugLog(`  opencodeClient: ${!!opencodeClient}`);
   return {
     // 用户发送消息时触发（awaited，宿主等待完成）
     // 职责：记录 agentName + 设置主 session 的 primaryAgent
     // 注意：这是唯一能获取 input.agent 的 hook 点
-    //       session.created 没有 agent 信息，system.transform 也没有
+    //       system.transform / tool.execute.before 没有 agent 信息
     "chat.message": async (input) => {
       const agent = (input as { agent?: string })?.agent;
       const sessionID = (input as { sessionID?: string })?.sessionID;
@@ -361,8 +459,11 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
         );
         return;
       }
-      const session = requireSession("chat.message", sessionID);
+
+      // 确保 session 存在（重启后懒恢复）
+      const session = await ensureSession(sessionID);
       if (!session) return;
+
       session.agentName = agent;
       session.primaryAgent = agent;
       debugLog(
@@ -375,13 +476,11 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
     // 职责：注入环境摘要 + 分析状态保留提示 + TASK_DIR，防止压缩丢失关键信息
     "experimental.session.compacting": async (input, output) => {
       const sid = input?.sessionID;
-      const primary = requirePrimaryAgent("compacting", sid);
-      if (!primary) return;
-      const session = requireSession("compacting", sid);
+      const session = await requireSessionWithPrimary("compacting", sid);
       if (!session) return;
       const agentName = session.agentName;
       debugLog(
-        `compacting: sessionID=${sid} agent=${agentName} primaryAgent=${primary}`,
+        `compacting: sessionID=${sid} agent=${agentName} primaryAgent=${session.primaryAgent}`,
         sid,
       );
       const config = readJsonSafe<ConfigData>(CONFIG_FILE, sid);
@@ -427,8 +526,11 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
     //       所以必须每次都 push，不会累积
     "experimental.chat.system.transform": async (input, output) => {
       const sessionID = (input as { sessionID?: string })?.sessionID;
-      const primary = requirePrimaryAgent("system.transform", sessionID);
-      if (!primary) return;
+      const session = await requireSessionWithPrimary(
+        "system.transform",
+        sessionID,
+      );
+      if (!session) return;
 
       const config = readJsonSafe<ConfigData>(CONFIG_FILE, sessionID);
       if (!config) {
@@ -441,13 +543,12 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
 
       const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE, sessionID);
       const envInfo = envData?.data;
-      const session = sessions.get(sessionID!);
-      const agentName = session?.agentName;
+      const agentName = session.agentName;
 
       const envSection = buildEnvSection(agentName, config, envInfo, sessionID);
       output.system.push(envSection);
       debugLog(
-        `system.transform: sessionID=${sessionID} agent=${agentName} primaryAgent=${primary} length=${envSection.length}, envSection=\n${envSection}`,
+        `system.transform: sessionID=${sessionID} agent=${agentName} primaryAgent=${session.primaryAgent} length=${envSection.length}, envSection=\n${envSection}`,
         sessionID,
       );
     },
@@ -456,8 +557,11 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
     // 职责：为 bash 命令注入 SESSION_ID 环境变量
     "tool.execute.before": async (input, output) => {
       const sid = input.sessionID;
-      const primary = requirePrimaryAgent("tool.execute.before", sid);
-      if (!primary) return;
+      const session = await requireSessionWithPrimary(
+        "tool.execute.before",
+        sid,
+      );
+      if (!session) return;
       debugLog(`tool.execute.before: tool=${input.tool} sessionID=${sid}`, sid);
 
       if (input.tool.toLowerCase() !== "bash") return;
@@ -481,41 +585,21 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
     },
 
     // session 生命周期事件（fire-and-forget，宿主不等待完成）
-    // 职责：创建/清理 session 数据
-    // 注意：session.created 虽然是 fire-and-forget，但实际时序安全：
-    //       - 主 session：用户操作间隔秒级，不存在竞态
-    //       - 子 session：sync-task.ts 有 200ms 延迟保障 session.created 先于 chat.message
+    // 职责：清理 session 数据 + 记录生命周期日志
+    // 注意：session.created 不再做 session 初始化（由 ensureSession 按需完成），
+    //       但仍记录日志以保持可观测性
     event: async (input) => {
       const { event } = input;
       const props = event.properties || {};
       const sessionID: string | undefined = props.info?.id ?? props.sessionID;
 
-      // 创建 session：初始化 SessionData，子 session 从父 session 继承 primaryAgent
       if (event.type === "session.created") {
-        if (sessionID) {
-          const sessionInfo = props?.info as
-            | { id?: string; parentID?: string }
-            | undefined;
-          const parentID = sessionInfo?.parentID;
-          const parentPrimary = parentID
-            ? getPrimaryAgent(parentID)
-            : undefined;
-          sessions.set(sessionID, {
-            createdAt: Date.now(),
-            primaryAgent: parentPrimary,
-          });
-          if (parentPrimary) {
-            debugLog(
-              `event: session.created 子 session=${sessionID} 继承父 session=${parentID} 的 primaryAgent=${parentPrimary}`,
-              sessionID,
-            );
-          } else {
-            debugLog(
-              `event: session.created 主 session=${sessionID} (无 parentID)`,
-              sessionID,
-            );
-          }
-        }
+        const parentID = (props?.info as { parentID?: string } | undefined)
+          ?.parentID;
+        debugLog(
+          `event: session.created id=${sessionID} parentID=${parentID || "无"}`,
+          sessionID,
+        );
       }
 
       // 删除 session：统一清理所有状态 + task session 文件
