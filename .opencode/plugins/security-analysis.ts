@@ -12,25 +12,43 @@ const CONFIG_FILE = join(DATA_DIR, "config.json");
 const ENV_CACHE_FILE = join(DATA_DIR, "env_cache.json");
 const WORKSPACE_DIR = join(DATA_DIR, "workspace");
 const TASK_SESSIONS_DIR = join(WORKSPACE_DIR, ".task_sessions");
-const DEBUG_LOG = join(DATA_DIR, "plugin_debug.log");
+const LOGS_DIR = join(DATA_DIR, "logs");
+const DEFAULT_LOG = join(LOGS_DIR, "plugin_debug.log");
 const MAX_LOG_SIZE = 5 * 1024 * 1024;
 const KEEP_SIZE = 2 * 1024 * 1024;
 
-function debugLog(msg: string): void {
+const PRIMARY_AGENTS = ["binary-analysis", "mobile-analysis"];
+
+function getLogFilePath(primaryAgent: string | undefined): string {
+  if (primaryAgent && PRIMARY_AGENTS.includes(primaryAgent)) {
+    return join(LOGS_DIR, `${primaryAgent}.log`);
+  }
+  return DEFAULT_LOG;
+}
+
+function trimLogFile(logFile: string): void {
   try {
-    mkdirSync(dirname(DEBUG_LOG), { recursive: true });
-    // 超过 5MB 时截断：丢弃最早的日志，只保留最后 2MB
-    try {
-      if (existsSync(DEBUG_LOG) && statSync(DEBUG_LOG).size > MAX_LOG_SIZE) {
-        const content = readFileSync(DEBUG_LOG, "utf-8");
-        const keep = content.slice(-KEEP_SIZE);
-        const firstNewline = keep.indexOf("\n");
-        writeFileSync(DEBUG_LOG, firstNewline >= 0 ? keep.slice(firstNewline + 1) : keep);
-      }
-    } catch {}
-    const ts = new Date().toLocaleString("zh-CN", { hour12: false });
-    writeFileSync(DEBUG_LOG, `[${ts}] ${msg}\n`, { flag: "a" });
+    if (existsSync(logFile) && statSync(logFile).size > MAX_LOG_SIZE) {
+      const content = readFileSync(logFile, "utf-8");
+      const keep = content.slice(-KEEP_SIZE);
+      const firstNewline = keep.indexOf("\n");
+      writeFileSync(logFile, firstNewline >= 0 ? keep.slice(firstNewline + 1) : keep);
+    }
   } catch {}
+}
+
+function writeLog(logFile: string, msg: string): void {
+  try {
+    mkdirSync(dirname(logFile), { recursive: true });
+    trimLogFile(logFile);
+    const ts = new Date().toLocaleString("zh-CN", { hour12: false });
+    writeFileSync(logFile, `[${ts}] ${msg}\n`, { flag: "a" });
+  } catch {}
+}
+
+function debugLog(msg: string, sessionID?: string): void {
+  const logFile = getLogFilePath(sessionID ? sessionPrimaryAgent.get(sessionID) : undefined);
+  writeLog(logFile, msg);
 }
 
 interface ToolConfig {
@@ -64,13 +82,13 @@ interface TaskSessionMapping {
   task_dir: string;
 }
 
-function readJsonSafe<T>(filePath: string): T | null {
+function readJsonSafe<T>(filePath: string, sessionID?: string): T | null {
   try {
     if (existsSync(filePath)) {
       return JSON.parse(readFileSync(filePath, "utf-8")) as T;
     }
   } catch (e) {
-    debugLog(`readJsonSafe failed: ${filePath} error=${e}`);
+    debugLog(`readJsonSafe failed: ${filePath} error=${e}`, sessionID);
   }
   return null;
 }
@@ -78,9 +96,9 @@ function readJsonSafe<T>(filePath: string): T | null {
 function getTaskDir(sessionID: string): string | null {
   try {
     const filePath = join(TASK_SESSIONS_DIR, `${sessionID}.json`);
-    const data = readJsonSafe<TaskSessionMapping>(filePath);
+    const data = readJsonSafe<TaskSessionMapping>(filePath, sessionID);
     const result = data?.task_dir || null;
-    debugLog(`getTaskDir: sessionID=${sessionID} file=${filePath} result=${result}`);
+    debugLog(`getTaskDir: sessionID=${sessionID} file=${filePath} result=${result}`, sessionID);
     return result;
   } catch {
     return null;
@@ -91,11 +109,11 @@ function removeTaskSession(sessionID: string): void {
   try {
     const filePath = join(TASK_SESSIONS_DIR, `${sessionID}.json`);
     if (existsSync(filePath)) {
-      debugLog(`removeTaskSession: deleting ${filePath}`);
+      debugLog(`removeTaskSession: deleting ${filePath}`, sessionID);
       unlinkSync(filePath);
     }
   } catch (e) {
-    debugLog(`removeTaskSession failed: sessionID=${sessionID} error=${e}`);
+    debugLog(`removeTaskSession failed: sessionID=${sessionID} error=${e}`, sessionID);
   }
 }
 
@@ -117,10 +135,8 @@ function getScriptDir(agentName: string | undefined): string {
 const AGENTS_DIR = join(OPENCODE_ROOT, "agents");
 
 function getCompactionReminder(agentName: string | undefined): string {
-  debugLog(`getCompactionReminder: agentName=${agentName}`);
   if (agentName) {
     const promptPath = join(AGENTS_DIR, `${agentName}.md`);
-    debugLog(`getCompactionReminder: promptPath=${promptPath}`);
     return `## 压缩恢复指令（压缩时必须保留）
 
 上下文刚被压缩。继续分析前必须：
@@ -233,6 +249,9 @@ interface SessionState {
 const sessionStates = new Map<string, SessionState>();
 const sessionAgentMap = new Map<string, string>();
 
+// sessionID → 该 session 所属的主 agent 名（子 agent session 继承父 session 的主 agent）
+const sessionPrimaryAgent = new Map<string, string>();
+
 export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
   debugLog(`=== SecurityAnalysisPlugin loaded ===`);
   debugLog(`  PLUGIN_DIR: ${PLUGIN_DIR}`);
@@ -242,7 +261,8 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
   debugLog(`  ENV_CACHE_FILE: ${ENV_CACHE_FILE}`);
   debugLog(`  WORKSPACE_DIR: ${WORKSPACE_DIR}`);
   debugLog(`  TASK_SESSIONS_DIR: ${TASK_SESSIONS_DIR}`);
-  debugLog(`  DEBUG_LOG: ${DEBUG_LOG}`);
+  debugLog(`  LOGS_DIR: ${LOGS_DIR}`);
+  debugLog(`  DEFAULT_LOG: ${DEFAULT_LOG}`);
   debugLog(`  directory param: ${directory}`);
   debugLog(`  config exists: ${existsSync(CONFIG_FILE)}`);
   debugLog(`  env_cache exists: ${existsSync(ENV_CACHE_FILE)}`);
@@ -252,16 +272,22 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       const sessionID = (input as { sessionID?: string })?.sessionID;
       if (agent && sessionID) {
         sessionAgentMap.set(sessionID, agent);
-        debugLog(`chat.message: sessionID=${sessionID} agent=${agent}`);
+        debugLog(`chat.message: sessionID=${sessionID} agent=${agent}`, sessionID);
+
+        // 主 agent 首次出现时，直接作为该 session 的 primaryAgent
+        if (PRIMARY_AGENTS.includes(agent) && !sessionPrimaryAgent.has(sessionID)) {
+          sessionPrimaryAgent.set(sessionID, agent);
+          debugLog(`chat.message: 设置主 agent: sessionID=${sessionID} primaryAgent=${agent}`, sessionID);
+        }
       }
     },
 
     "experimental.session.compacting": async (input, output) => {
       const sid = input?.sessionID;
       const agentName = sid ? sessionAgentMap.get(sid) : undefined;
-      debugLog(`compacting: sessionID=${sid} agent=${agentName}`);
-      const config = readJsonSafe<ConfigData>(CONFIG_FILE);
-      const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE);
+      debugLog(`compacting: sessionID=${sid} agent=${agentName}`, sid);
+      const config = readJsonSafe<ConfigData>(CONFIG_FILE, sid);
+      const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE, sid);
       const envInfo = envData?.data;
       const idaPath = config?.ida_path || "";
 
@@ -295,24 +321,24 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       output.context.push(compactionCtx);
       output.context.push(compactionReminder);
 
-      debugLog(`=== compacting 注入内容开始 ===`);
-      debugLog(`sid:${sid}\n`);
-      debugLog(`agent:${agentName}\n`);
-      debugLog(`envSummary:\n${envSummary}\n`);
-      debugLog(`compactionCtx:\n${compactionCtx}\n`);
-      debugLog(`compactionReminder:\n${compactionReminder}`);
-      debugLog(`=== compacting 注入内容结束 ===`);
+      debugLog(`=== compacting 注入内容开始 ===`, sid);
+      debugLog(`sid:${sid}\n`, sid);
+      debugLog(`agent:${agentName}\n`, sid);
+      debugLog(`envSummary:\n${envSummary}\n`, sid);
+      debugLog(`compactionCtx:\n${compactionCtx}\n`, sid);
+      debugLog(`compactionReminder:\n${compactionReminder}`, sid);
+      debugLog(`=== compacting 注入内容结束 ===`, sid);
 
       if (sid) {
         const taskDir = getTaskDir(sid);
         if (taskDir) {
-          debugLog(`compacting: TASK_DIR recovered=${taskDir}`);
+          debugLog(`compacting: TASK_DIR recovered=${taskDir}`, sid);
           output.context.push(`## TASK_DIR（不可省略 — 压缩后必须保留）
 当前会话的任务目录: ${taskDir}
 所有中间输出文件在此目录下。后续分析必须使用此路径作为 $TASK_DIR。
 如果用户明确要求使用新的任务目录，重新执行"任务目录约定"中的创建命令即可切换。`);
         } else {
-          debugLog(`compacting: TASK_DIR not found for sessionID=${sid}`);
+          debugLog(`compacting: TASK_DIR not found for sessionID=${sid}`, sid);
         }
       }
     },
@@ -329,19 +355,20 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       const sessionID = (input as { sessionID?: string })?.sessionID;
       const agentName = sessionID ? sessionAgentMap.get(sessionID) : undefined;
 
-      debugLog(`system.transform: sessionID=${sessionID} agent=${agentName}`);
+      debugLog(`system.transform: sessionID=${sessionID} agent=${agentName}`, sessionID);
 
       const envSection = buildEnvSection(agentName, config, envInfo);
-      debugLog(`system.transform: envSection length=${envSection.length} first 200 chars: ${envSection.slice(0, 200)}`);
+      debugLog(`system.transform: envSection length=${envSection.length} first 200 chars: ${envSection.slice(0, 200)}`, sessionID);
       output.system.push(envSection);
     },
 
     "tool.execute.before": async (input, output) => {
-      debugLog(`tool.execute.before: tool=${input.tool} sessionID=${input.sessionID}`);
+      const sid = input.sessionID;
+      debugLog(`tool.execute.before: tool=${input.tool} sessionID=${sid}`, sid);
+
       if (input.tool.toLowerCase() !== "bash") return;
       const cmd = output.args?.command;
       if (typeof cmd !== "string" || !cmd) return;
-      const sid = input.sessionID;
       if (!sid) return;
       const isUnix = !!process.env.SHELL || !!process.env.MSYSTEM;
       const isPowerShell = !isUnix && !!process.env.PSModulePath;
@@ -357,7 +384,7 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
         // cmd.exe 双引号内不需要转义单引号
         output.args.command = `set "SESSION_ID=${sid}" && ${cmd}`;
       }
-      debugLog(`injected: ${output.args.command.slice(0, 120)}`);
+      debugLog(`injected: ${output.args.command.slice(0, 120)}`, sid);
     },
 
     event: async (input) => {
@@ -367,22 +394,36 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
 
       if (event.type === "session.created") {
         if (sessionID) {
-          debugLog(`event: session.created id=${sessionID}`);
           sessionStates.set(sessionID, { createdAt: Date.now() });
+
+          const sessionInfo = props?.info as { id?: string; parentID?: string } | undefined;
+          const parentID = sessionInfo?.parentID;
+          if (parentID) {
+            const parentPrimary = sessionPrimaryAgent.get(parentID);
+            if (parentPrimary) {
+              sessionPrimaryAgent.set(sessionID, parentPrimary);
+              debugLog(`event: session.created 子 session=${sessionID} 继承父 session=${parentID} 的 primaryAgent=${parentPrimary}`, sessionID);
+            } else {
+              debugLog(`event: session.created 子 session=${sessionID} 父 session=${parentID} 无 primaryAgent`, sessionID);
+            }
+          } else {
+            debugLog(`event: session.created 主 session=${sessionID} (无 parentID)`, sessionID);
+          }
         }
       }
 
       if (event.type === "session.deleted") {
         if (sessionID) {
-          debugLog(`event: session.deleted id=${sessionID}`);
+          debugLog(`event: session.deleted id=${sessionID}`, sessionID);
           sessionStates.delete(sessionID);
           sessionAgentMap.delete(sessionID);
+          sessionPrimaryAgent.delete(sessionID);
           removeTaskSession(sessionID);
         }
       }
 
       if (event.type === "session.compacted") {
-        debugLog(`event: session.compacted id=${sessionID}`);
+        debugLog(`event: session.compacted id=${sessionID}`, sessionID);
       }
     },
   };
