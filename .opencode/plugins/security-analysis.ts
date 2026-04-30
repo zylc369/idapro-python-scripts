@@ -164,18 +164,22 @@ const AGENTS_DIR = join(OPENCODE_ROOT, "agents");
 function getCompactionReminder(agentName: string | undefined): string {
   if (agentName) {
     const promptPath = join(AGENTS_DIR, `${agentName}.md`);
+    const scriptsDir = getScriptDir(agentName);
+    const restoreVars = scriptsDir
+      ? `$OPENCODE_ROOT、$SCRIPTS_DIR、$IDA_SCRIPTS_DIR、$TASK_DIR`
+      : `$OPENCODE_ROOT、$TASK_DIR`;
     return `## 压缩恢复指令（压缩时必须保留）
 
 上下文刚被压缩。继续分析前必须：
 1. 重新读取 agent prompt（${promptPath}）获取完整规则
-2. 恢复 $SCRIPTS_DIR、$IDA_SCRIPTS_DIR、$TASK_DIR 等关键变量（见 agent prompt 的"变量丢失自愈"章节）`;
+2. 恢复 ${restoreVars} 等关键变量（见 agent prompt 的"变量丢失自愈"章节）`;
   }
   return `## 压缩恢复指令（压缩时必须保留）
 
 上下文刚被压缩。继续分析前必须：
 1. 请告知当前使用的是哪个 Agent（如 binary-analysis、mobile-analysis）
 2. 根据 Agent 名读取 ${AGENTS_DIR}/<agent-name>.md
-3. 恢复 $SCRIPTS_DIR、$IDA_SCRIPTS_DIR、$TASK_DIR 等关键变量`;
+3. 恢复 $OPENCODE_ROOT、$SCRIPTS_DIR、$IDA_SCRIPTS_DIR、$TASK_DIR 等关键变量`;
 }
 
 function getCompactionContext(agentName: string | undefined): string {
@@ -225,6 +229,7 @@ function buildEnvSection(
   const scriptsDir = getScriptDir(agentName, fallbackAgent);
 
   let envSection = `\n## 环境信息\n`;
+  envSection += `- 配置根目录 ($OPENCODE_ROOT): ${OPENCODE_ROOT}\n`;
 
   if (scriptsDir) {
     envSection += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;

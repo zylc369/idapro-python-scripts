@@ -13,7 +13,7 @@ permission:
 Security Analysis 的完整架构（你必须理解并遵守这个分层）:
 
 ```
-.opencode/                                # 或 ~/.config/opencode/
+$OPENCODE_ROOT/                              # 由插件注入，项目级 .opencode/ 或全局 ~/.config/opencode/
 ├── agents/
 │   ├── binary-analysis.md                # 二进制逆向 Agent（主 prompt，AI 编排器）
 │   ├── mobile-analysis.md                # 移动端分析 Agent
@@ -93,7 +93,7 @@ Plugin hooks:
 ┌──────────────────────────────────────────────────────────┐
 │ Phase 2: 生成需求文档                                       │
 │                                                            │
-│ 写入 .opencode/commands/security-analysis-requirements/ 目录，必须包含:
+│ 写入 $OPENCODE_ROOT/commands/security-analysis-requirements/ 目录，必须包含:
 │   §1 背景与目标（来源: 哪次复盘、哪个痛点、预期收益）          │
 │   §2 技术方案（改动文件、函数签名、数据格式、架构影响）         │
 │   §3 实现规范（改动范围表、编码规则）                          │
@@ -134,8 +134,8 @@ Plugin hooks:
 │ 2. 主 prompt 保留: 触发条件 + 核心规则（3-10 行）            │
 │ 3. 详细内容移到 knowledge-base/<文件名>                      │
 │ 4. 引用格式: "使用 Read 工具读取                             │
-│    $SCRIPTS_DIR/knowledge-base/<文件名>"                     │
-│ 5. 路径必须使用相对路径（禁止绝对路径，无法移植）             │
+│    $OPENCODE_ROOT/binary-analysis/knowledge-base/<文件名>"   │
+│ 5. 禁止硬编码绝对路径，必须使用 $OPENCODE_ROOT 变量（保证可移植性） │
 │ 6. 知识库文件必须自包含（不依赖主 prompt 上下文即可理解）     │
 │                                                            │
 │ 提取后验证:                                                 │
@@ -383,7 +383,7 @@ Plugin hooks:
 | `opencode-plugin-debugging.md` | 排查 Plugin 问题、测试验证方法 |
 | `idapython-conventions.md` | 生成 IDAPython 脚本时的编码规范 |
 
-路径: `$SCRIPTS_DIR/knowledge-base/<文件名>`
+路径: `$OPENCODE_ROOT/binary-analysis/knowledge-base/<文件名>`
 
 ### 源码参考（知识库不足时）
 
