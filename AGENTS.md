@@ -11,12 +11,15 @@
 
 ## 目录结构
 
+Plugin 和 Agent 位于 OpenCode 扩展目录（项目级 `.opencode/` 或全局 `~/.config/opencode/`）：
+
 ```
-.opencode/
-├── agents/                    # Agent prompt（Tab 切换时加载）
-├── plugins/security-analysis.ts  # 上下文持久化 Plugin
-├── binary-analysis/           # 逆向分析核心工具与知识库（IDA 脚本 + 共享工具，mobile-analysis 通过 $IDA_SCRIPTS_DIR 引用）
-└── mobile-analysis/           # 移动端工具与知识库（knowledge-base/）
+.opencode/                                # 或 ~/.config/opencode/
+├── agents/                               # Agent prompt（Tab 切换时加载）
+├── plugins/security-analysis.ts          # 上下文持久化 Plugin
+├── binary-analysis/                      # 逆向分析核心工具与知识库
+│   └── scripts/detect_env.py             # 环境检测脚本
+└── mobile-analysis/                      # 移动端工具与知识库（knowledge-base/）
 ```
 
 ## 测试

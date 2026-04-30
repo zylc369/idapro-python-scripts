@@ -17,10 +17,10 @@ mobile-analysis/
 
 ## 变量约定
 
-| 变量 | 含义 | 值 |
-|------|------|-----|
-| `$SCRIPTS_DIR` | 本 Agent 的工具目录 | `.opencode/mobile-analysis/` |
-| `$IDA_SCRIPTS_DIR` | 共享 IDA Pro 通用脚本目录 | `.opencode/binary-analysis/` |
+| 变量 | 含义 | 说明 |
+|------|------|------|
+| `$SCRIPTS_DIR` | 本 Agent 的工具目录 | 由 Plugin 注入，指向 mobile-analysis 所在目录 |
+| `$IDA_SCRIPTS_DIR` | 共享 IDA Pro 通用脚本目录 | 由 Plugin 注入，指向 binary-analysis 所在目录 |
 
 **依赖方向**: `$SCRIPTS_DIR/` 只读引用 `$IDA_SCRIPTS_DIR/` 下的文件，不修改。
 

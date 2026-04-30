@@ -108,9 +108,11 @@ function getScriptDir(agentName: string | undefined): string {
   return AGENT_SCRIPT_DIRS[agentName || ""] || AGENT_SCRIPT_DIRS["binary-analysis"];
 }
 
+const AGENTS_DIR = join(OPENCODE_ROOT, "agents");
+
 function getCompactionReminder(agentName: string | undefined): string {
   if (agentName) {
-    const promptPath = `.opencode/agents/${agentName}.md`;
+    const promptPath = join(AGENTS_DIR, `${agentName}.md`);
     return `## 压缩恢复指令（压缩时必须保留）
 
 上下文刚被压缩。继续分析前必须：
@@ -121,7 +123,7 @@ function getCompactionReminder(agentName: string | undefined): string {
 
 上下文刚被压缩。继续分析前必须：
 1. 请告知当前使用的是哪个 Agent（如 binary-analysis、mobile-analysis）
-2. 根据 Agent 名读取对应的 agent prompt（.opencode/agents/<agent-name>.md）
+2. 根据 Agent 名读取 ${AGENTS_DIR}/<agent-name>.md
 3. 恢复 $SCRIPTS_DIR、$IDA_SCRIPTS_DIR、$TASK_DIR 等关键变量`;
 }
 

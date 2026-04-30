@@ -11,15 +11,21 @@ OpenCode 长对话中存在三类上下文丢失问题：
 
 ### 架构
 
+安装位置（二选一）：
+- **项目级**: `<项目根>/.opencode/`
+- **全局**: `~/.config/opencode/`
+
+以下结构以项目级为例，全局安装时将 `.opencode/` 替换为 `~/.config/opencode/` 即可。
+
 ```
-.opencode/
+.opencode/                             # 或 ~/.config/opencode/
 ├── agents/
-│   ├── binary-analysis.md        # IDA Pro 逆向分析 Agent
-│   └── mobile-analysis.md        # 移动端分析 Agent
+│   ├── binary-analysis.md            # IDA Pro 逆向分析 Agent
+│   └── mobile-analysis.md            # 移动端分析 Agent
 ├── plugins/
-│   └── security-analysis.ts       # Plugin（按 Agent 注入 + 动态 compacting）
-├── binary-analysis/               # IDA Pro 工具与知识库
-└── mobile-analysis/               # 移动端工具与知识库
+│   └── security-analysis.ts          # Plugin（按 Agent 注入 + 动态 compacting）
+├── binary-analysis/                   # IDA Pro 工具与知识库
+└── mobile-analysis/                   # 移动端工具与知识库
 ```
 
 ### Plugin 使用的 Hooks
@@ -50,7 +56,7 @@ OpenCode 长对话中存在三类上下文丢失问题：
 
 ### 路径自定位机制
 
-Plugin 通过 `import.meta.url` 自定位：插件文件位于 `.opencode/plugins/security-analysis.ts`，由此推导 `PLUGIN_DIR`（plugins/）和 `OPENCODE_ROOT`（.opencode/）。Agent 脚本目录由 Plugin 根据映射表（如 `binary-analysis` → `OPENCODE_ROOT/binary-analysis`）推导并注入到系统提示，不依赖 config.json 中的路径配置。
+Plugin 通过 `import.meta.url` 自定位：插件文件位于扩展目录下的 `plugins/security-analysis.ts`，由此推导 `PLUGIN_DIR`（plugins/）和扩展根目录（Plugin 的父目录）。Agent 脚本目录由 Plugin 根据映射表（如 `binary-analysis` → `<扩展根>/binary-analysis`）推导并注入到系统提示，不依赖 config.json 中的路径配置。此机制同时支持项目级（`.opencode/`）和全局（`~/.config/opencode/`）安装。
 
 ### 数据流
 
