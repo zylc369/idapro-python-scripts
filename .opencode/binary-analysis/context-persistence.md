@@ -32,13 +32,25 @@ OpenCode 长对话中存在三类上下文丢失问题：
 
 | Hook | 作用 | 触发时机 |
 |------|------|---------|
+| `chat.message` | 追踪 session 的当前 agent 和主 agent（primaryAgent），支持子 session 继承 | 用户发送消息时 |
 | `experimental.session.compacting` | 按Agent注入分析状态保留提示 + 动态COMPACT_REMINDER | 上下文压缩前 |
 | `experimental.chat.system.transform` | 按Agent注入环境信息（IDA路径、编译器、工具包、外部工具） | 每轮对话 |
-| `event` | 管理 session 生命周期（created/deleted/compacted） | session 状态变化 |
+| `tool.execute.before` | 注入 SESSION_ID 环境变量到 bash 命令 | 工具执行前 |
+| `event` | 管理 session 生命周期（created/deleted/compacted），子 session primaryAgent 继承 | session 状态变化 |
 
 ### Hook API 签名（基于 oh-my-openagent 源码确认）
 
 ```typescript
+// chat.message: 追踪 agent 映射
+async (input: {
+  sessionID: string;
+  agent?: string;
+  model?: { providerID: string; modelID: string };
+}, output: {
+  message: Record<string, unknown>;
+  parts: Array<{ type: string; text?: string }>;
+}) => Promise<void>
+
 // system.transform: 修改系统提示
 (input: { sessionID?: string; model: { id: string; providerID: string; [key: string]: unknown } },
  output: { system: string[] }) => Promise<void>
@@ -48,6 +60,10 @@ OpenCode 长对话中存在三类上下文丢失问题：
 (input: { sessionID: string },
  output: { context: string[] }) => Promise<void>
 // 使用 output.context.push(content) 注入
+
+// tool.execute.before: 工具执行前拦截
+(input: { tool: string; sessionID?: string; args: Record<string, unknown> },
+ output: { args: Record<string, unknown> }) => Promise<void>
 
 // event: 响应 session 生命周期事件
 (input: { event: { type: string; properties?: Record<string, unknown> } }) => Promise<void>

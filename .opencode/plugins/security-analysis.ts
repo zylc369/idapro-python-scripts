@@ -56,13 +56,6 @@ function writeLog(logFile: string, msg: string): void {
   } catch {}
 }
 
-function debugLog(msg: string, sessionID?: string): void {
-  const logFile = getLogFilePath(
-    sessionID ? sessionPrimaryAgent.get(sessionID) : undefined,
-  );
-  writeLog(logFile, msg);
-}
-
 interface ToolConfig {
   path: string;
   agents?: string[];
@@ -145,6 +138,8 @@ function getToolsForAgent(
     .map(([name, tool]) => ({ name, ...tool }));
 }
 
+// 根据实际 agent 名获取脚本目录；子 agent（如 "general"）不在映射表中时，
+// 回退到 primaryAgent 对应的目录，最终回退到 binary-analysis
 function getScriptDir(
   agentName: string | undefined,
   fallbackAgent?: string,
@@ -222,9 +217,7 @@ function buildEnvSection(
   envInfo: EnvData["data"],
   sessionID?: string,
 ): string {
-  const fallbackAgent = sessionID
-    ? sessionPrimaryAgent.get(sessionID)
-    : undefined;
+  const fallbackAgent = getPrimaryAgent(sessionID);
   const scriptsDir = getScriptDir(agentName, fallbackAgent);
   const idaScriptsDir = join(OPENCODE_ROOT, "binary-analysis");
   const idaPath = config.ida_path || "未配置";
@@ -274,15 +267,28 @@ function buildEnvSection(
   return envSection;
 }
 
-interface SessionState {
+// session 统一数据结构
+// - createdAt:   session 创建时间（session.created 设置）
+// - agentName:   当前实际使用的 agent 名（chat.message 设置，如 "general"）
+// - primaryAgent: 所属主 agent 名（用于日志路由和工具目录回退）
+//                主 session: chat.message 中根据 PRIMARY_AGENTS 设置
+//                子 session: session.created 中从父 session 继承
+interface SessionData {
   createdAt: number;
+  agentName?: string;
+  primaryAgent?: string;
 }
 
-const sessionStates = new Map<string, SessionState>();
-const sessionAgentMap = new Map<string, string>();
+const sessions = new Map<string, SessionData>();
 
-// sessionID → 该 session 所属的主 agent 名（子 agent session 继承父 session 的主 agent）
-const sessionPrimaryAgent = new Map<string, string>();
+function getPrimaryAgent(sessionID?: string): string | undefined {
+  return sessionID ? sessions.get(sessionID)?.primaryAgent : undefined;
+}
+
+function debugLog(msg: string, sessionID?: string): void {
+  const logFile = getLogFilePath(getPrimaryAgent(sessionID));
+  writeLog(logFile, msg);
+}
 
 export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
   debugLog(`=== SecurityAnalysisPlugin loaded ===`);
@@ -299,66 +305,48 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
   debugLog(`  config exists: ${existsSync(CONFIG_FILE)}`);
   debugLog(`  env_cache exists: ${existsSync(ENV_CACHE_FILE)}`);
   return {
+    // 用户发送消息时触发（awaited，宿主等待完成）
+    // 职责：记录 agentName + 设置主 session 的 primaryAgent
+    // 注意：这是唯一能获取 input.agent 的 hook 点
+    //       session.created 没有 agent 信息，system.transform 也没有
     "chat.message": async (input) => {
       const agent = (input as { agent?: string })?.agent;
       const sessionID = (input as { sessionID?: string })?.sessionID;
       if (agent && sessionID) {
-        sessionAgentMap.set(sessionID, agent);
+        const session = sessions.get(sessionID);
+        if (session) {
+          session.agentName = agent;
+          if (!session.primaryAgent && PRIMARY_AGENTS.includes(agent)) {
+            session.primaryAgent = agent;
+            debugLog(
+              `chat.message: 设置主 agent: sessionID=${sessionID} primaryAgent=${agent}`,
+              sessionID,
+            );
+          }
+        }
         debugLog(
           `chat.message: sessionID=${sessionID} agent=${agent}`,
           sessionID,
         );
-
-        // 主 agent 首次出现时，直接作为该 session 的 primaryAgent
-        if (
-          PRIMARY_AGENTS.includes(agent) &&
-          !sessionPrimaryAgent.has(sessionID)
-        ) {
-          sessionPrimaryAgent.set(sessionID, agent);
-          debugLog(
-            `chat.message: 设置主 agent: sessionID=${sessionID} primaryAgent=${agent}`,
-            sessionID,
-          );
-        }
       }
     },
 
+    // 上下文压缩前触发（awaited）
+    // 职责：注入环境摘要 + 分析状态保留提示 + TASK_DIR，防止压缩丢失关键信息
     "experimental.session.compacting": async (input, output) => {
       const sid = input?.sessionID;
-      const agentName = sid ? sessionAgentMap.get(sid) : undefined;
+      const session = sid ? sessions.get(sid) : undefined;
+      const agentName = session?.agentName;
       debugLog(`compacting: sessionID=${sid} agent=${agentName}`, sid);
       const config = readJsonSafe<ConfigData>(CONFIG_FILE, sid);
       const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE, sid);
       const envInfo = envData?.data;
-      const idaPath = config?.ida_path || "";
 
-      let envSummary = `## 环境信息（压缩时自动注入）\n`;
-      if (idaPath) {
-        envSummary += `- IDA Pro: ${idaPath}\n`;
-      }
-      const scriptsDir = getScriptDir(
-        agentName,
-        sid ? sessionPrimaryAgent.get(sid) : undefined,
+      const envSection = buildEnvSection(agentName, config || {}, envInfo, sid);
+      const envSummary = envSection.replace(
+        "\n## 环境信息\n",
+        "## 环境信息（压缩时自动注入）\n",
       );
-      const idaScriptsDir = join(OPENCODE_ROOT, "binary-analysis");
-      envSummary += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;
-      envSummary += `- IDA 通用脚本目录 ($IDA_SCRIPTS_DIR): ${idaScriptsDir}\n`;
-      if (envInfo) {
-        if (envInfo.venv_python) {
-          envSummary += `- BA_PYTHON: ${envInfo.venv_python}\n`;
-        }
-        const compiler = envInfo.compiler;
-        if (compiler?.available) {
-          envSummary += `- 编译器: ${compiler.type} (${compiler.path})\n`;
-        }
-        if (envInfo.packages) {
-          const pkgs = Object.entries(envInfo.packages)
-            .filter(([, v]) => v.available)
-            .map(([k, v]) => `${k}@${v.version}`)
-            .join(", ");
-          if (pkgs) envSummary += `- Python 包: ${pkgs}\n`;
-        }
-      }
       output.context.push(envSummary);
       const compactionCtx = getCompactionContext(agentName);
       const compactionReminder = getCompactionReminder(agentName);
@@ -387,6 +375,10 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       }
     },
 
+    // 每次 LLM 请求前触发（awaited）
+    // 职责：按 agent 注入环境信息到系统提示
+    // 注意：output.system 每次请求都重建（const system: string[] = []），
+    //       所以必须每次都 push，不会累积
     "experimental.chat.system.transform": async (input, output) => {
       const config = readJsonSafe<ConfigData>(CONFIG_FILE);
       if (!config) {
@@ -397,7 +389,7 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE);
       const envInfo = envData?.data;
       const sessionID = (input as { sessionID?: string })?.sessionID;
-      const agentName = sessionID ? sessionAgentMap.get(sessionID) : undefined;
+      const agentName = sessionID ? sessions.get(sessionID)?.agentName : undefined;
 
       const envSection = buildEnvSection(agentName, config, envInfo, sessionID);
       output.system.push(envSection);
@@ -407,6 +399,8 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       );
     },
 
+    // 工具执行前触发（awaited）
+    // 职责：为 bash 命令注入 SESSION_ID 环境变量
     "tool.execute.before": async (input, output) => {
       const sid = input.sessionID;
       debugLog(`tool.execute.before: tool=${input.tool} sessionID=${sid}`, sid);
@@ -432,33 +426,33 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       debugLog(`injected: ${output.args.command.slice(0, 120)}`, sid);
     },
 
+    // session 生命周期事件（fire-and-forget，宿主不等待完成）
+    // 职责：创建/清理 session 数据
+    // 注意：session.created 虽然是 fire-and-forget，但实际时序安全：
+    //       - 主 session：用户操作间隔秒级，不存在竞态
+    //       - 子 session：sync-task.ts 有 200ms 延迟保障 session.created 先于 chat.message
     event: async (input) => {
       const { event } = input;
       const props = event.properties || {};
       const sessionID: string | undefined = props.info?.id ?? props.sessionID;
 
+      // 创建 session：初始化 SessionData，子 session 从父 session 继承 primaryAgent
       if (event.type === "session.created") {
         if (sessionID) {
-          sessionStates.set(sessionID, { createdAt: Date.now() });
-
           const sessionInfo = props?.info as
             | { id?: string; parentID?: string }
             | undefined;
           const parentID = sessionInfo?.parentID;
-          if (parentID) {
-            const parentPrimary = sessionPrimaryAgent.get(parentID);
-            if (parentPrimary) {
-              sessionPrimaryAgent.set(sessionID, parentPrimary);
-              debugLog(
-                `event: session.created 子 session=${sessionID} 继承父 session=${parentID} 的 primaryAgent=${parentPrimary}`,
-                sessionID,
-              );
-            } else {
-              debugLog(
-                `event: session.created 子 session=${sessionID} 父 session=${parentID} 无 primaryAgent`,
-                sessionID,
-              );
-            }
+          const parentPrimary = parentID ? getPrimaryAgent(parentID) : undefined;
+          sessions.set(sessionID, {
+            createdAt: Date.now(),
+            primaryAgent: parentPrimary,
+          });
+          if (parentPrimary) {
+            debugLog(
+              `event: session.created 子 session=${sessionID} 继承父 session=${parentID} 的 primaryAgent=${parentPrimary}`,
+              sessionID,
+            );
           } else {
             debugLog(
               `event: session.created 主 session=${sessionID} (无 parentID)`,
@@ -468,16 +462,16 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
         }
       }
 
+      // 删除 session：统一清理所有状态 + task session 文件
       if (event.type === "session.deleted") {
         if (sessionID) {
           debugLog(`event: session.deleted id=${sessionID}`, sessionID);
-          sessionStates.delete(sessionID);
-          sessionAgentMap.delete(sessionID);
-          sessionPrimaryAgent.delete(sessionID);
+          sessions.delete(sessionID);
           removeTaskSession(sessionID);
         }
       }
 
+      // 压缩完成：仅记录日志（状态恢复由 compacting hook 在压缩前注入）
       if (event.type === "session.compacted") {
         debugLog(`event: session.compacted id=${sessionID}`, sessionID);
       }
