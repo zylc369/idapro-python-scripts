@@ -290,23 +290,35 @@ function debugLog(msg: string, sessionID?: string): void {
   writeLog(logFile, msg);
 }
 
-function requirePrimaryAgent(hookName: string, sessionID?: string): string | undefined {
+function requirePrimaryAgent(
+  hookName: string,
+  sessionID?: string,
+): string | undefined {
   const primary = getPrimaryAgent(sessionID);
   if (!primary) {
-    debugLog(`${hookName}: 跳过 — sessionID=${sessionID} 无 primaryAgent（非 PRIMARY_AGENTS session）`, sessionID);
+    debugLog(
+      `${hookName}: 跳过 — sessionID=${sessionID} 无 primaryAgent（非 PRIMARY_AGENTS session）`,
+      sessionID,
+    );
     return undefined;
   }
   return primary;
 }
 
-function requireSession(hookName: string, sessionID?: string): SessionData | undefined {
+function requireSession(
+  hookName: string,
+  sessionID?: string,
+): SessionData | undefined {
   if (!sessionID) {
     debugLog(`${hookName}: 跳过 — 无 sessionID`);
     return undefined;
   }
   const session = sessions.get(sessionID);
   if (!session) {
-    debugLog(`${hookName}: 跳过 — sessionID=${sessionID} 不存在于 sessions Map`, sessionID);
+    debugLog(
+      `${hookName}: 跳过 — sessionID=${sessionID} 不存在于 sessions Map`,
+      sessionID,
+    );
     return undefined;
   }
   return session;
@@ -343,7 +355,10 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
         return;
       }
       if (!PRIMARY_AGENTS.includes(agent)) {
-        debugLog(`chat.message: 跳过 — agent=${agent} 不在 PRIMARY_AGENTS 中, sessionID=${sessionID}`, sessionID);
+        debugLog(
+          `chat.message: 跳过 — agent=${agent} 不在 PRIMARY_AGENTS 中, sessionID=${sessionID}`,
+          sessionID,
+        );
         return;
       }
       const session = requireSession("chat.message", sessionID);
@@ -365,7 +380,10 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       const session = requireSession("compacting", sid);
       if (!session) return;
       const agentName = session.agentName;
-      debugLog(`compacting: sessionID=${sid} agent=${agentName} primaryAgent=${primary}`, sid);
+      debugLog(
+        `compacting: sessionID=${sid} agent=${agentName} primaryAgent=${primary}`,
+        sid,
+      );
       const config = readJsonSafe<ConfigData>(CONFIG_FILE, sid);
       const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE, sid);
       const envInfo = envData?.data;
@@ -414,7 +432,10 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
 
       const config = readJsonSafe<ConfigData>(CONFIG_FILE, sessionID);
       if (!config) {
-        debugLog("system.transform: config.json not found, skipping", sessionID);
+        debugLog(
+          "system.transform: config.json not found, skipping",
+          sessionID,
+        );
         return;
       }
 
@@ -426,7 +447,7 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       const envSection = buildEnvSection(agentName, config, envInfo, sessionID);
       output.system.push(envSection);
       debugLog(
-        `system.transform: sessionID=${sessionID} agent=${agentName} primaryAgent=${primary} length=${envSection.length}`,
+        `system.transform: sessionID=${sessionID} agent=${agentName} primaryAgent=${primary} length=${envSection.length}, envSection=\n${envSection}`,
         sessionID,
       );
     },
@@ -476,7 +497,9 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
             | { id?: string; parentID?: string }
             | undefined;
           const parentID = sessionInfo?.parentID;
-          const parentPrimary = parentID ? getPrimaryAgent(parentID) : undefined;
+          const parentPrimary = parentID
+            ? getPrimaryAgent(parentID)
+            : undefined;
           sessions.set(sessionID, {
             createdAt: Date.now(),
             primaryAgent: parentPrimary,
