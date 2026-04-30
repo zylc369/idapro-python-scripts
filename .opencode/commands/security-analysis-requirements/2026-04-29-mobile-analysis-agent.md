@@ -604,7 +604,7 @@ IPA 分析需求
        - 非默认端口（从 6655 起动态分配）
        - adb push + chmod 755 → 通过 adb shell 启动
     2. 设备连接（adb forward + frida.get_device()）
-     3. **device.json 规范**：参照 §2.3.4 定义的任务级设备快照结构（device_id + device_type + frida_server），设备选择和校验逻辑
+    3. **device.json 规范**：参照 §2.3.4 定义的任务级设备快照结构（device_id + device_type + frida_server），设备选择和校验逻辑
     4. 设备失联处理（中断执行 → 提醒用户 → adb devices 列出可用设备 → 用户选择）
     5. Java Bridge Hook 模板 + Objective-C Bridge Hook 模板
     6. **防检测技术**：frida-server 重命名、端口随机、Magisk/KernelSU 隐藏、Xposed 检测绕过
