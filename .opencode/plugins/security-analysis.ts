@@ -285,6 +285,7 @@ interface SessionData {
   createdAt: number;
   agentName?: string;
   primaryAgent?: string;
+  systemTransformCount: number;
 }
 
 const sessions = new Map<string, SessionData>();
@@ -378,6 +379,7 @@ async function doEnsureSession(
     const session: SessionData = {
       createdAt: Date.now(),
       primaryAgent,
+      systemTransformCount: 0,
     };
     sessions.set(sessionID, session);
     debugLog(
@@ -526,8 +528,8 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
     // 每次 LLM 请求前触发（awaited）
     // 职责：按 agent 注入环境信息到系统提示
-    // 注意：output.system 每次请求都重建（const system: string[] = []），
-    //       所以必须每次都 push，不会累积
+    // 注意：output.system 每次请求都重建，不会累积
+    //       每 10 次 LLM 请求注入一次完整环境信息，中间请求由 LLM 从对话历史获取路径值
     "experimental.chat.system.transform": async (input, output) => {
       const sessionID = (input as { sessionID?: string })?.sessionID;
       const session = await requireSessionWithPrimary(
@@ -535,6 +537,11 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         sessionID,
       );
       if (!session) return;
+
+      session.systemTransformCount++;
+      const shouldInject = session.systemTransformCount % 10 === 1;
+
+      if (!shouldInject) return;
 
       const config = readJsonSafe<ConfigData>(CONFIG_FILE, sessionID);
       if (!config) {
@@ -552,7 +559,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       const envSection = buildEnvSection(agentName, config, envInfo, sessionID);
       output.system.push(envSection);
       debugLog(
-        `system.transform: sessionID=${sessionID} agent=${agentName} primaryAgent=${session.primaryAgent} length=${envSection.length}, envSection=\n${envSection}`,
+        `system.transform: #${session.systemTransformCount} 注入环境信息 sessionID=${sessionID}, agent=${agentName}, primaryAgent=${session.primaryAgent}, length=${envSection.length}, envSection=\n${envSection}`,
         sessionID,
       );
     },
