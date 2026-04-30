@@ -370,6 +370,8 @@ Plugin hooks:
 
 ## OpenCode 开发知识库
 
+### 知识库文档（优先查找）
+
 进化过程中涉及 Plugin 和 Agent 开发时，按需读取以下知识库文件:
 
 | 文档 | 触发条件 |
@@ -382,6 +384,20 @@ Plugin hooks:
 | `idapython-conventions.md` | 生成 IDAPython 脚本时的编码规范 |
 
 路径: `$SCRIPTS_DIR/knowledge-base/<文件名>`
+
+### 源码参考（知识库不足时）
+
+当知识库文档无法解答 OpenCode 相关问题时，直接查阅 vendor 下的源码:
+
+| 源码 | 用途 |
+|------|------|
+| `vendor/opencode/packages/opencode/src/` | OpenCode 核心源码：session 管理、plugin 调度、LLM 交互、agent 加载 |
+| `vendor/oh-my-openagent/src/` | 社区参考插件：完整 Plugin 实现示例（context collector、message transform、event 处理） |
+
+**查阅流程**:
+1. 先搜索知识库文档
+2. 知识库无答案 → 用 Grep/Glob 在 `vendor/` 中搜索相关关键词（如 hook 名、函数名、类型签名）
+3. 找到答案后，将新知识补充到知识库文档中（下次不用再查源码）
 
 ---
 
