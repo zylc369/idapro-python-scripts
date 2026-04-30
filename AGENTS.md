@@ -8,6 +8,7 @@
 |-------|-------------------|------|
 | `binary-analysis` | Tab 选择 | IDA Pro 二进制逆向（PC 端 exe/dll/so） |
 | `mobile-analysis` | Tab 选择 | 移动端应用分析（APK/IPA） |
+| `security-analysis-evolve` | Tab 选择 / Task 调用 | 体系进化（复盘、需求生成、代码实施、审计） |
 
 ## 目录结构
 

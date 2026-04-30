@@ -228,9 +228,11 @@ const sessionPrimaryAgent = new Map<string, string>();       // 主 agent 名（
 
 | Map | 设置位置 | 设置时机 |
 |-----|---------|---------|
-| `sessionPrimaryAgent` | `chat.message` | 主 session 首次出现 PRIMARY_AGENTS 时 |
-| `sessionPrimaryAgent` | `event: session.created` | 子 session 从 parentID 继承 |
-| `sessionAgentMap` | `chat.message` | 每条消息时更新 |
+| `primaryAgent` | `chat.message` | 主 session 首次出现 PRIMARY_AGENTS 时 |
+| `primaryAgent` | `ensureSession` | 子 session 从父链递归继承（通过 client API 查询 parentID） |
+| `agentName` | `chat.message` | 每条消息时更新 |
+
+> 注意：旧版本在 `event: session.created` 中做继承，当前版本改为 `ensureSession` 按需懒恢复（插件重启后也能恢复）。
 
 ### 清理时机
 
