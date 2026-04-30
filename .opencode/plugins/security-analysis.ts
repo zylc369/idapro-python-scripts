@@ -292,13 +292,16 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       output.context.push(envSummary);
       const compactionCtx = getCompactionContext(agentName);
       const compactionReminder = getCompactionReminder(agentName);
-      debugLog(`=== [Start] SecurityAnalysisPlugin compacting append prompt ===`);
-      debugLog(`envSummary:\n${envSummary}\n`)
-      debugLog(`compactionCtx:\n${compactionCtx}\n`)
-      debugLog(`compactionReminder:\n${compactionReminder}`)
-      debugLog(`=== [End] SecurityAnalysisPlugin compacting append prompt ===`);
       output.context.push(compactionCtx);
       output.context.push(compactionReminder);
+
+      debugLog(`=== compacting 注入内容开始 ===`);
+      debugLog(`sid:${sid}\n`);
+      debugLog(`agent:${agentName}\n`);
+      debugLog(`envSummary:\n${envSummary}\n`);
+      debugLog(`compactionCtx:\n${compactionCtx}\n`);
+      debugLog(`compactionReminder:\n${compactionReminder}`);
+      debugLog(`=== compacting 注入内容结束 ===`);
 
       if (sid) {
         const taskDir = getTaskDir(sid);
