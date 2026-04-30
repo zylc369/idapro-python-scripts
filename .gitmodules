@@ -7,3 +7,6 @@
 [submodule "vendor/opencode"]
 	path = vendor/opencode
 	url = git@github.com:anomalyco/opencode.git
+[submodule "vendor/frida"]
+	path = vendor/frida
+	url = git@github.com:frida/frida.git
