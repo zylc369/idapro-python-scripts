@@ -290,6 +290,28 @@ function debugLog(msg: string, sessionID?: string): void {
   writeLog(logFile, msg);
 }
 
+function requirePrimaryAgent(hookName: string, sessionID?: string): string | undefined {
+  const primary = getPrimaryAgent(sessionID);
+  if (!primary) {
+    debugLog(`${hookName}: 跳过 — sessionID=${sessionID} 无 primaryAgent（非 PRIMARY_AGENTS session）`, sessionID);
+    return undefined;
+  }
+  return primary;
+}
+
+function requireSession(hookName: string, sessionID?: string): SessionData | undefined {
+  if (!sessionID) {
+    debugLog(`${hookName}: 跳过 — 无 sessionID`);
+    return undefined;
+  }
+  const session = sessions.get(sessionID);
+  if (!session) {
+    debugLog(`${hookName}: 跳过 — sessionID=${sessionID} 不存在于 sessions Map`, sessionID);
+    return undefined;
+  }
+  return session;
+}
+
 export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
   debugLog(`=== SecurityAnalysisPlugin loaded ===`);
   debugLog(`  PLUGIN_DIR: ${PLUGIN_DIR}`);
@@ -312,32 +334,38 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
     "chat.message": async (input) => {
       const agent = (input as { agent?: string })?.agent;
       const sessionID = (input as { sessionID?: string })?.sessionID;
-      if (agent && sessionID) {
-        const session = sessions.get(sessionID);
-        if (session) {
-          session.agentName = agent;
-          if (!session.primaryAgent && PRIMARY_AGENTS.includes(agent)) {
-            session.primaryAgent = agent;
-            debugLog(
-              `chat.message: 设置主 agent: sessionID=${sessionID} primaryAgent=${agent}`,
-              sessionID,
-            );
-          }
-        }
-        debugLog(
-          `chat.message: sessionID=${sessionID} agent=${agent}`,
-          sessionID,
-        );
+      if (!agent) {
+        debugLog("chat.message: 跳过 — 无 agent", sessionID);
+        return;
       }
+      if (!sessionID) {
+        debugLog(`chat.message: 跳过 — 无 sessionID, agent=${agent}`);
+        return;
+      }
+      if (!PRIMARY_AGENTS.includes(agent)) {
+        debugLog(`chat.message: 跳过 — agent=${agent} 不在 PRIMARY_AGENTS 中, sessionID=${sessionID}`, sessionID);
+        return;
+      }
+      const session = requireSession("chat.message", sessionID);
+      if (!session) return;
+      session.agentName = agent;
+      session.primaryAgent = agent;
+      debugLog(
+        `chat.message: sessionID=${sessionID} agent=${agent} primaryAgent=${agent}`,
+        sessionID,
+      );
     },
 
     // 上下文压缩前触发（awaited）
     // 职责：注入环境摘要 + 分析状态保留提示 + TASK_DIR，防止压缩丢失关键信息
     "experimental.session.compacting": async (input, output) => {
       const sid = input?.sessionID;
-      const session = sid ? sessions.get(sid) : undefined;
-      const agentName = session?.agentName;
-      debugLog(`compacting: sessionID=${sid} agent=${agentName}`, sid);
+      const primary = requirePrimaryAgent("compacting", sid);
+      if (!primary) return;
+      const session = requireSession("compacting", sid);
+      if (!session) return;
+      const agentName = session.agentName;
+      debugLog(`compacting: sessionID=${sid} agent=${agentName} primaryAgent=${primary}`, sid);
       const config = readJsonSafe<ConfigData>(CONFIG_FILE, sid);
       const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE, sid);
       const envInfo = envData?.data;
@@ -380,21 +408,25 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
     // 注意：output.system 每次请求都重建（const system: string[] = []），
     //       所以必须每次都 push，不会累积
     "experimental.chat.system.transform": async (input, output) => {
-      const config = readJsonSafe<ConfigData>(CONFIG_FILE);
+      const sessionID = (input as { sessionID?: string })?.sessionID;
+      const primary = requirePrimaryAgent("system.transform", sessionID);
+      if (!primary) return;
+
+      const config = readJsonSafe<ConfigData>(CONFIG_FILE, sessionID);
       if (!config) {
-        debugLog("system.transform: config.json not found, skipping");
+        debugLog("system.transform: config.json not found, skipping", sessionID);
         return;
       }
 
-      const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE);
+      const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE, sessionID);
       const envInfo = envData?.data;
-      const sessionID = (input as { sessionID?: string })?.sessionID;
-      const agentName = sessionID ? sessions.get(sessionID)?.agentName : undefined;
+      const session = sessions.get(sessionID!);
+      const agentName = session?.agentName;
 
       const envSection = buildEnvSection(agentName, config, envInfo, sessionID);
       output.system.push(envSection);
       debugLog(
-        `system.transform: sessionID=${sessionID} agent=${agentName} length=${envSection.length}`,
+        `system.transform: sessionID=${sessionID} agent=${agentName} primaryAgent=${primary} length=${envSection.length}`,
         sessionID,
       );
     },
@@ -403,12 +435,13 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
     // 职责：为 bash 命令注入 SESSION_ID 环境变量
     "tool.execute.before": async (input, output) => {
       const sid = input.sessionID;
+      const primary = requirePrimaryAgent("tool.execute.before", sid);
+      if (!primary) return;
       debugLog(`tool.execute.before: tool=${input.tool} sessionID=${sid}`, sid);
 
       if (input.tool.toLowerCase() !== "bash") return;
       const cmd = output.args?.command;
       if (typeof cmd !== "string" || !cmd) return;
-      if (!sid) return;
       const isUnix = !!process.env.SHELL || !!process.env.MSYSTEM;
       const isPowerShell = !isUnix && !!process.env.PSModulePath;
       if (isUnix) {
