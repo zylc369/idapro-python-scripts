@@ -393,9 +393,8 @@ async function doEnsureSession(
 
 /**
  * 统一的 hook 入口守卫：
- * 1. 确保 session 数据可用（必要时通过 API 恢复）
- * 2. 验证 primaryAgent 存在
- * 3. 任一条件不满足 → 记录日志并返回 undefined
+ * 仅从 Map 中同步查找 session。session 的创建和删除完全由 chat.message 控制。
+ * Map 中无数据 → 意味着当前 agent 不是 PRIMARY_AGENT → 跳过。
  */
 async function requireSessionWithPrimary(
   hookName: string,
@@ -405,22 +404,16 @@ async function requireSessionWithPrimary(
     debugLog(`${hookName}: 跳过 — 无 sessionID`);
     return undefined;
   }
-  const session = await ensureSession(sessionID);
-  if (!session) {
-    debugLog(
-      `${hookName}: 跳过 — sessionID=${sessionID} 无法初始化`,
-      sessionID,
-    );
-    return undefined;
-  }
-  if (!session.primaryAgent) {
-    debugLog(
-      `${hookName}: 跳过 — sessionID=${sessionID} 无 primaryAgent（非 PRIMARY_AGENTS session）`,
-      sessionID,
-    );
-    return undefined;
-  }
-  return session;
+
+  const existing = sessions.get(sessionID);
+  if (existing) return existing;
+
+  debugLog(
+    `${hookName}: 跳过 — sessionID=${sessionID} 无 session 数据，意味着这不是我们要处理的 agent`,
+    sessionID,
+  );
+
+  return undefined;
 }
 
 export const SecurityAnalysisPlugin: Plugin = async (input) => {
@@ -449,19 +442,25 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
     "chat.message": async (input) => {
       const agent = (input as { agent?: string })?.agent;
       const sessionID = (input as { sessionID?: string })?.sessionID;
-      if (!agent) {
-        debugLog("chat.message: 跳过 — 无 agent", sessionID);
-        return;
-      }
       if (!sessionID) {
         debugLog(`chat.message: 跳过 — 无 sessionID, agent=${agent}`);
         return;
       }
-      if (!PRIMARY_AGENTS.includes(agent)) {
+
+      let isValidAgent = true;
+      if (!agent) {
+        debugLog("chat.message: 跳过 — 无 agent", sessionID);
+        isValidAgent = false;
+      } else if (!PRIMARY_AGENTS.includes(agent)) {
         debugLog(
           `chat.message: 跳过 — agent=${agent} 不在 PRIMARY_AGENTS 中, sessionID=${sessionID}`,
           sessionID,
         );
+        isValidAgent = false;
+      }
+
+      if (!isValidAgent) {
+        sessions.delete(sessionID);
         return;
       }
 
