@@ -153,7 +153,14 @@ clang --version && ~/bw-security-analysis/.venv/bin/python -c "import capstone; 
 所有平台统一使用环境检测脚本：
 
 ```bash
+# 检测全部工具（默认）
 python3 detect_env.py --force
+
+# 仅检测 binary-analysis 需要的工具
+python3 detect_env.py --force --agent binary-analysis
+
+# 仅检测 mobile-analysis 需要的工具
+python3 detect_env.py --force --agent mobile-analysis
 ```
 
 成功输出：
@@ -162,3 +169,26 @@ python3 detect_env.py --force
 ```
 
 如有缺失工具，脚本会给出具体安装指引。
+
+## 配置文件结构
+
+`~/bw-security-analysis/config.json` 结构：
+
+```json
+{
+  "ida_path": "<IDA Pro 安装路径>",
+  "tools": {
+    "tool_name": {
+      "path": "<可执行文件路径或裸名>",
+      "agents": ["agent-name"],
+      "required": true,
+      "version_cmd": ["--version"],
+      "description": "工具描述"
+    }
+  }
+}
+```
+
+- `tools` 字段为可选，仅移动端分析需要配置
+- `path` 支持裸名（如 `apktool`，通过 PATH 查找）或绝对路径
+- `agents` 指定哪些 Agent 需要此工具，`detect_env.py --agent` 按此过滤

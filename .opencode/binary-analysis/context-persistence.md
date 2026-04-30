@@ -7,22 +7,27 @@ OpenCode 长对话中存在三类上下文丢失问题：
 2. **知识丢失**: 压缩后之前发现的分析结论（如"二进制有 bug，需要 r==1"）丢失
 3. **环境丢失**: 每轮对话无法感知 IDA 路径、编译器、工具包等环境信息
 
-## 当前方案：Plugin + Agent 架构
+## 当前方案：Plugin + 多 Agent 架构
 
 ### 架构
 
 ```
 .opencode/
-├── agents/binary-analysis.md           # Agent prompt（分析编排规则）
-└── plugins/security-analysis.ts          # Plugin（上下文持久化）
+├── agents/
+│   ├── binary-analysis.md        # IDA Pro 逆向分析 Agent
+│   └── mobile-analysis.md        # 移动端分析 Agent
+├── plugins/
+│   └── security-analysis.ts       # Plugin（按 Agent 注入 + 动态 compacting）
+├── binary-analysis/               # IDA Pro 工具与知识库
+└── mobile-analysis/               # 移动端工具与知识库
 ```
 
 ### Plugin 使用的 Hooks
 
 | Hook | 作用 | 触发时机 |
 |------|------|---------|
-| `experimental.session.compacting` | 注入分析状态保留提示 + 关键规则 | 上下文压缩前 |
-| `experimental.chat.system.transform` | 注入环境信息（IDA路径、编译器、工具包） | 每轮对话 |
+| `experimental.session.compacting` | 按Agent注入分析状态保留提示 + 动态COMPACT_REMINDER | 上下文压缩前 |
+| `experimental.chat.system.transform` | 按Agent注入环境信息（IDA路径、编译器、工具包、外部工具） | 每轮对话 |
 | `event` | 管理 session 生命周期（created/deleted/compacted） | session 状态变化 |
 
 ### Hook API 签名（基于 oh-my-openagent 源码确认）
@@ -43,11 +48,15 @@ OpenCode 长对话中存在三类上下文丢失问题：
 // 事件类型: session.created, session.deleted, session.compacted
 ```
 
+### 路径自定位机制
+
+Plugin 通过 `import.meta.url` 自定位：插件文件位于 `.opencode/plugins/security-analysis.ts`，由此推导 `PLUGIN_DIR`（plugins/）和 `OPENCODE_ROOT`（.opencode/）。Agent 脚本目录由 Plugin 根据映射表（如 `binary-analysis` → `OPENCODE_ROOT/binary-analysis`）推导并注入到系统提示，不依赖 config.json 中的路径配置。
+
 ### 数据流
 
-1. **环境信息**（每轮）: `~/bw-security-analysis/config.json` + `env_cache.json` → Plugin 读取 → `system.transform` 注入到系统提示
-2. **分析规则**（压缩时）: Plugin 内置 COMPACT_RULES → `compacting` hook 注入到压缩 prompt
-3. **分析状态**（压缩时）: Plugin 注入结构化提示 → 告知压缩模型保留分析结论
+1. **环境信息**（每轮）: `~/bw-security-analysis/config.json`（ida_path + tools）+ `env_cache.json` → Plugin 读取，按 Agent 过滤 tools → `system.transform` 注入到系统提示
+2. **分析规则**（压缩时）: Plugin 动态生成 COMPACT_REMINDER（按 agentName） → `compacting` hook 注入
+3. **分析状态**（压缩时）: Plugin 动态生成 compaction context（通用部分 + 按 agent 追加） → 告知压缩模型保留分析结论
 4. **知识库**（按需）: Agent 通过 Read 工具按需加载 `knowledge-base/` 下的文档
 
 ### 环境数据缓存

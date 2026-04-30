@@ -1,7 +1,11 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
+import { fileURLToPath } from "url";
 import type { Plugin } from "@opencode-ai/plugin";
+
+const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
+const OPENCODE_ROOT = dirname(PLUGIN_DIR);
 
 const DATA_DIR = join(homedir(), "bw-security-analysis");
 const CONFIG_FILE = join(DATA_DIR, "config.json");
@@ -29,39 +33,19 @@ function debugLog(msg: string): void {
   } catch {}
 }
 
-const COMPACT_REMINDER = `## 压缩恢复指令（压缩时必须保留）
+interface ToolConfig {
+  path: string;
+  agents?: string[];
+  required?: boolean;
+  version_cmd?: string[];
+  description?: string;
+}
 
-上下文刚被压缩。继续分析前必须：
-1. 重新读取 agent prompt（.opencode/agents/binary-analysis.md）获取完整规则
-2. 恢复 $SCRIPTS_DIR、$TASK_DIR 等关键变量（见 agent prompt 的"变量丢失自愈"章节）`;
+interface ConfigData {
+  ida_path?: string;
+  tools?: Record<string, ToolConfig>;
+}
 
-const COMPACTION_CONTEXT_PROMPT = `## 分析状态（压缩时必须保留）
-
-当总结此会话时，如果包含分析相关内容，你必须保留以下信息：
-
-### 1. 分析目标
-- 目标二进制文件路径
-- 文件类型（exe/dll/so/移动端app等）和架构
-
-### 2. 已完成的分析
-- 已识别的关键函数及其地址和用途
-- 已发现的分析结论（如 bug、特殊条件、算法特征）
-- 已执行的 idat 查询和结果摘要
-
-### 3. 当前状态
-- 当前分析阶段（信息收集/分析规划/执行/验证）
-- 待完成的分析步骤
-- 失败记录（什么方向已尝试并失败，避免重复）
-
-### 4. 验证状态
-- 验证结果和置信度评估
-- 是否有待验证的假设
-
-### 5. 显式约束（原文保留）
-- 用户明确提出的要求（如"不要修改数据库"、"先分析再绕过"）
-- 置信度声明：区分"来自 IDA 数据库的事实"和"AI 推理（标注置信度）"`;
-
-const DEFAULT_AGENT_NAME = "SecurityAnalysis";
 interface EnvData {
   data?: {
     venv_python?: string;
@@ -72,12 +56,8 @@ interface EnvData {
       vcvarsall?: string;
     };
     packages?: Record<string, { available: boolean; version: string }>;
+    tools?: Record<string, { available: boolean; version: string | null }>;
   };
-}
-
-interface ConfigData {
-  scripts_dir?: string;
-  ida_path?: string;
 }
 
 interface TaskSessionMapping {
@@ -110,8 +90,130 @@ function removeTaskSession(sessionID: string): void {
       unlinkSync(filePath);
     }
   } catch {
-    // 静默降级：删除失败不影响主流程
   }
+}
+
+function getToolsForAgent(agentName: string, config: ConfigData): Array<ToolConfig & { name: string }> {
+  if (!config.tools) return [];
+  return Object.entries(config.tools)
+    .filter(([, tool]) => !tool.agents || tool.agents.includes(agentName))
+    .map(([name, tool]) => ({ name, ...tool }));
+}
+
+function getScriptDir(agentName: string | undefined): string {
+  const AGENT_SCRIPT_DIRS: Record<string, string> = {
+    "binary-analysis": join(OPENCODE_ROOT, "binary-analysis"),
+    "mobile-analysis": join(OPENCODE_ROOT, "mobile-analysis"),
+  };
+  return AGENT_SCRIPT_DIRS[agentName || ""] || AGENT_SCRIPT_DIRS["binary-analysis"];
+}
+
+function getCompactionReminder(agentName: string | undefined): string {
+  if (agentName) {
+    const promptPath = `.opencode/agents/${agentName}.md`;
+    return `## 压缩恢复指令（压缩时必须保留）
+
+上下文刚被压缩。继续分析前必须：
+1. 重新读取 agent prompt（${promptPath}）获取完整规则
+2. 恢复 $SCRIPTS_DIR、$IDA_SCRIPTS_DIR、$TASK_DIR 等关键变量（见 agent prompt 的"变量丢失自愈"章节）`;
+  }
+  return `## 压缩恢复指令（压缩时必须保留）
+
+上下文刚被压缩。继续分析前必须：
+1. 请告知当前使用的是哪个 Agent（如 binary-analysis、mobile-analysis）
+2. 根据 Agent 名读取对应的 agent prompt（.opencode/agents/<agent-name>.md）
+3. 恢复 $SCRIPTS_DIR、$IDA_SCRIPTS_DIR、$TASK_DIR 等关键变量`;
+}
+
+function getCompactionContext(agentName: string | undefined): string {
+  let context = `## 分析状态（压缩时必须保留）
+
+当总结此会话时，如果包含分析相关内容，你必须保留以下信息：
+
+### 1. 分析目标
+- 目标文件路径和类型
+- 文件架构
+
+### 2. 已完成的分析
+- 已识别的关键函数/类及其地址/名称和用途
+- 已发现的分析结论
+- 当前分析阶段和待完成步骤
+- 失败记录（已尝试方向，避免重复）
+- 验证结果和置信度
+- 用户显式约束`;
+
+  if (agentName === "binary-analysis") {
+    context += `
+
+### IDA 分析状态
+- IDA 数据库路径
+- 已执行的 idat 查询和结果摘要`;
+  }
+
+  if (agentName === "mobile-analysis") {
+    context += `
+
+### 移动端分析状态
+- 已解包路径
+- 已识别的 native 库列表（.so / .dylib）
+- 当前设备连接状态（device_id、frida_server 运行/端口）`;
+  }
+
+  return context;
+}
+
+function buildEnvSection(
+  agentName: string | undefined,
+  config: ConfigData,
+  envInfo: EnvData["data"],
+): string {
+  const scriptsDir = getScriptDir(agentName);
+  const idaScriptsDir = join(OPENCODE_ROOT, "binary-analysis");
+  const idaPath = config.ida_path || "未配置";
+
+  let envSection = `\n## 环境信息\n`;
+  envSection += `- IDA Pro: ${idaPath}\n`;
+  envSection += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;
+  envSection += `- IDA 通用脚本目录 ($IDA_SCRIPTS_DIR): ${idaScriptsDir}\n`;
+
+  if (envInfo) {
+    const compiler = envInfo.compiler;
+    if (compiler?.available) {
+      envSection += `- 编译器: ${compiler.type} (${compiler.path})\n`;
+      if (compiler.vcvarsall) {
+        envSection += `- vcvarsall: ${compiler.vcvarsall}\n`;
+      }
+    } else {
+      envSection += `- 编译器: 未检测到\n`;
+    }
+    if (envInfo.venv_python) {
+      envSection += `- BA_PYTHON: ${envInfo.venv_python}\n`;
+    }
+    if (envInfo.packages) {
+      const pkgs = Object.entries(envInfo.packages)
+        .filter(([, v]) => v.available)
+        .map(([k, v]) => `${k}@${v.version}`)
+        .join(", ");
+      envSection += `- Python 包: ${pkgs}\n`;
+    }
+  }
+
+  // 注入外部工具（按 agent 过滤；agent 未知时不过滤，注入全部）
+  if (config.tools) {
+    const tools = agentName
+      ? getToolsForAgent(agentName, config)
+      : Object.entries(config.tools).map(([name, tool]) => ({ name, ...tool }));
+    const envTools = envInfo?.tools || {};
+    for (const tool of tools) {
+      const toolStatus = envTools[tool.name];
+      if (toolStatus?.available) {
+        const ver = toolStatus.version || "可用";
+        envSection += `- ${tool.description || tool.name}: ${tool.path} (${ver})\n`;
+      }
+    }
+  }
+
+  return envSection;
 }
 
 interface SessionState {
@@ -135,22 +237,21 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
 
     "experimental.session.compacting": async (input, output) => {
       const sid = input?.sessionID;
-      const agentName = (sid ? sessionAgentMap.get(sid) : undefined) || DEFAULT_AGENT_NAME;
+      const agentName = sid ? sessionAgentMap.get(sid) : undefined;
       debugLog(`compacting: sessionID=${sid} agent=${agentName}`);
-      // 动态注入环境信息摘要（从 env_cache.json 和 config.json 实时读取）
       const config = readJsonSafe<ConfigData>(CONFIG_FILE);
       const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE);
       const envInfo = envData?.data;
-      const scriptsDir = config?.scripts_dir || "";
       const idaPath = config?.ida_path || "";
 
       let envSummary = `## 环境信息（压缩时自动注入）\n`;
       if (idaPath) {
         envSummary += `- IDA Pro: ${idaPath}\n`;
       }
-      if (scriptsDir) {
-        envSummary += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;
-      }
+      const scriptsDir = getScriptDir(agentName);
+      const idaScriptsDir = join(OPENCODE_ROOT, "binary-analysis");
+      envSummary += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;
+      envSummary += `- IDA 通用脚本目录 ($IDA_SCRIPTS_DIR): ${idaScriptsDir}\n`;
       if (envInfo) {
         if (envInfo.venv_python) {
           envSummary += `- BA_PYTHON: ${envInfo.venv_python}\n`;
@@ -168,10 +269,9 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
         }
       }
       output.context.push(envSummary);
-      output.context.push(COMPACTION_CONTEXT_PROMPT);
-      output.context.push(COMPACT_REMINDER);
+      output.context.push(getCompactionContext(agentName));
+      output.context.push(getCompactionReminder(agentName));
 
-      // 精确恢复 TASK_DIR：用 sessionID 查映射文件
       if (sid) {
         const taskDir = getTaskDir(sid);
         if (taskDir) {
@@ -195,36 +295,12 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
 
       const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE);
       const envInfo = envData?.data;
+      const sessionID = (input as { sessionID?: string })?.sessionID;
+      const agentName = sessionID ? sessionAgentMap.get(sessionID) : undefined;
 
-      const scriptsDir = config.scripts_dir || join(directory, ".opencode", "binary-analysis");
-      const idaPath = config.ida_path || "未配置";
+      debugLog(`system.transform: sessionID=${sessionID} agent=${agentName}`);
 
-      let envSection = `\n## 环境信息\n`;
-      envSection += `- IDA Pro: ${idaPath}\n`;
-      envSection += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;
-
-      if (envInfo) {
-        const compiler = envInfo.compiler;
-        if (compiler?.available) {
-          envSection += `- 编译器: ${compiler.type} (${compiler.path})\n`;
-          if (compiler.vcvarsall) {
-            envSection += `- vcvarsall: ${compiler.vcvarsall}\n`;
-          }
-        } else {
-          envSection += `- 编译器: 未检测到\n`;
-        }
-        if (envInfo.venv_python) {
-          envSection += `- BA_PYTHON: ${envInfo.venv_python}\n`;
-        }
-        if (envInfo.packages) {
-          const pkgs = Object.entries(envInfo.packages)
-            .filter(([, v]) => v.available)
-            .map(([k, v]) => `${k}@${v.version}`)
-            .join(", ");
-          envSection += `- Python 包: ${pkgs}\n`;
-        }
-      }
-
+      const envSection = buildEnvSection(agentName, config, envInfo);
       output.system.push(envSection);
     },
 
@@ -255,8 +331,6 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
     event: async (input) => {
       const { event } = input;
       const props = event.properties || {};
-      // session.created/deleted 的 properties 是 { info: Session }，sessionID 在 info.id
-      // session.compacted 的 properties 是 { sessionID: string }
       const sessionID: string | undefined = props.info?.id ?? props.sessionID;
 
       if (event.type === "session.created") {

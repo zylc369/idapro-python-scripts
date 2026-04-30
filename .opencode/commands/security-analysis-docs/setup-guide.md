@@ -71,14 +71,13 @@ python .opencode\binary-analysis\scripts\detect_env.py --force
 mkdir -p ~/bw-security-analysis
 cat > ~/bw-security-analysis/config.json << 'EOF'
 {
-  "ida_path": "<IDA Pro 安装路径>",
-  "scripts_dir": "<项目绝对路径>/.opencode/binary-analysis"
+  "ida_path": "<IDA Pro 安装路径>"
 }
 EOF
 
 # Windows (PowerShell)
 mkdir ~/bw-security-analysis -Force
-Set-Content -Path ~/bw-security-analysis/config.json -Value '{"ida_path": "<IDA Pro 安装路径>", "scripts_dir": "<项目绝对路径>\.opencode\binary-analysis"}' -Encoding UTF8
+Set-Content -Path ~/bw-security-analysis/config.json -Value '{"ida_path": "<IDA Pro 安装路径>"}' -Encoding UTF8
 ```
 
 **ida_path 示例**:
@@ -86,9 +85,24 @@ Set-Content -Path ~/bw-security-analysis/config.json -Value '{"ida_path": "<IDA 
 - Linux: `/opt/ida-9.0`
 - macOS: `/Applications/IDA Pro 9.0`
 
-**scripts_dir 示例**:
-- Windows: `C:\\Codes\\idapro-python-scripts\\.opencode\\binary-analysis`
-- Linux: `/home/user/idapro-python-scripts/.opencode/binary-analysis`
+**移动端分析工具配置（可选）**: 如果需要使用 mobile-analysis Agent，在 config.json 中添加 `tools` 字段：
+
+```json
+{
+  "ida_path": "<IDA Pro 安装路径>",
+  "tools": {
+    "apktool": {
+      "path": "apktool",
+      "agents": ["mobile-analysis"],
+      "required": true,
+      "version_cmd": ["--version"],
+      "description": "APK 解包+反汇编工具"
+    }
+  }
+}
+```
+
+> 脚本目录由 Plugin 自动定位（通过插件自身安装位置推导），无需手动配置。
 
 ### 6. 在 OpenCode 中使用
 
@@ -102,9 +116,9 @@ Set-Content -Path ~/bw-security-analysis/config.json -Value '{"ida_path": "<IDA 
 - [ ] `python detect_env.py --force` 输出 `success: true`
 - [ ] `~/bw-security-analysis/.venv/` 虚拟环境已创建
 - [ ] `~/bw-security-analysis/config.json` 存在且 `ida_path` 指向正确的 IDA 安装目录
-- [ ] `~/bw-security-analysis/config.json` 中 `scripts_dir` 指向项目的 `.opencode/binary-analysis/` 目录
-- [ ] OpenCode 启动后按 Tab 能看到 `binary-analysis` Agent
-- [ ] 切换到 binary-analysis Agent 后，对话中能看到"BinaryAnalysis 环境信息"段（包含 BA_PYTHON 路径）
+- [ ] OpenCode 启动后按 Tab 能看到 `binary-analysis` 和 `mobile-analysis` Agent
+- [ ] 切换到 binary-analysis Agent 后，对话中能看到环境信息段（包含 BA_PYTHON 路径）
+- [ ] （可选）`python detect_env.py --agent mobile-analysis` 检测移动端工具
 
 ## 常见问题
 

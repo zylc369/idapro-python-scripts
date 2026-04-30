@@ -33,45 +33,14 @@ permission:
 
 ## 变量初始化（每轮对话首次执行前）
 
-从 Plugin 注入的环境信息中提取关键路径。如果环境信息段包含 `脚本目录 ($SCRIPTS_DIR): <路径>` 和 `IDA Pro: <路径>`，直接使用这些值赋值。如果环境信息未注入，从 config.json 读取。
+环境信息由 Plugin 在每轮注入（见系统提示中的"环境信息"段）。在首次需要执行脚本的 bash 命令中，从环境信息提取路径赋值：
 
-**Linux/macOS (bash)**:
-
-```bash
-SCRIPTS_DIR=<从环境信息中提取的脚本目录路径>
-# 如果未注入，从 config.json 回退
-if [ -z "$SCRIPTS_DIR" ]; then
-  SCRIPTS_DIR=$(python3 -c "
-import os, json
-c = json.load(open(os.path.expanduser('~/bw-security-analysis/config.json')))
-print(c.get('scripts_dir', os.path.join('$(pwd)', '.opencode', 'binary-analysis')))
-")
-fi
-IDAT=$(python3 -c "
-import os, sys, json
-c = json.load(open(os.path.expanduser('~/bw-security-analysis/config.json')))
-p = c.get('ida_path','')
-for n in ['idat','idat.exe']:
-    f = os.path.join(p, n)
-    if os.path.isfile(f):
-        print(f); break
-else:
-    print(''); sys.exit(1)
-")
-```
-
-**Windows (PowerShell)**:
-
-```powershell
-$SCRIPTS_DIR = "<从环境信息中提取的脚本目录路径>"
-# 如果未注入，从 config.json 回退
-if (-not $SCRIPTS_DIR) {
-  $SCRIPTS_DIR = python -c "import os,json; c=json.load(open(os.path.expanduser('~/bw-security-analysis/config.json'))); print(c.get('scripts_dir',os.path.join(r'$(Get-Location)','.opencode','binary-analysis')))"
-}
-$IDAT = python -c "import os,sys,json; c=json.load(open(os.path.expanduser('~/bw-security-analysis/config.json'))); p=c.get('ida_path',''); [print(os.path.join(p,n)) or None for n in ['idat.exe','idat'] if os.path.isfile(os.path.join(p,n))][:1] or sys.exit(1)"
-```
-
-**验证**: 赋值后 `echo` 确认非空。bash 用 `python3`，PowerShell 用 `python`。
+| 变量 | 来源 | 说明 |
+|------|------|------|
+| `$SCRIPTS_DIR` | 环境信息"脚本目录 ($SCRIPTS_DIR)" | 本 Agent 的工具目录 |
+| `$IDA_SCRIPTS_DIR` | 等于 `$SCRIPTS_DIR`（binary-analysis 两个变量指向同一目录） | IDA 通用脚本目录 |
+| `$IDAT` | 环境信息"IDA Pro"路径 + `/idat` | 需检查文件存在性 |
+| `$BA_PYTHON` | 阶段 0 env.json 的 `venv_python` | 带第三方包的 venv Python |
 
 **强制**：带第三方包的 Python 脚本必须用 `$BA_PYTHON`，禁止用系统 Python（仅 `detect_env.py` 例外）。
 
@@ -391,9 +360,7 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 
 ### 变量丢失自愈（压缩恢复后执行）
 
-如果上下文压缩后变量丢失：
-1. $SCRIPTS_DIR: 从 Plugin 注入的环境信息恢复，或从 `~/bw-security-analysis/config.json` 读取
-2. $TASK_DIR: Plugin compacting hook 已通过 sessionID 映射精确注入到压缩上下文。如果仍丢失 → 直接问用户
+如果上下文压缩后变量丢失，从 Plugin 注入的环境信息段重新提取（compacting hook 会重新注入完整环境信息）。$TASK_DIR 通过 sessionID 映射精确恢复，如仍丢失则直接问用户。
 
 ---
 

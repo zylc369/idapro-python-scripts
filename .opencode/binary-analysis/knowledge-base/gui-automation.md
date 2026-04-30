@@ -10,7 +10,7 @@
 
 **环境变量说明**:
 - `$BA_PYTHON`: 带 pyautogui/pyperclip 的 venv Python 路径（从 `~/bw-security-analysis/env_cache.json` 的 `venv_python` 字段获取，或在 Binary-Analysis agent 中由环境检测阶段自动设置）
-- `$SCRIPTS_DIR`: 脚本根目录，通常为 `.opencode/binary-analysis/`（从 `~/bw-security-analysis/config.json` 的 `scripts_dir` 字段获取）
+- `$SCRIPTS_DIR`: 脚本根目录（由 Plugin 环境信息注入，见系统提示"环境信息"段）
 - `$TASK_DIR`: 当前任务的工作目录（`~/bw-security-analysis/workspace/<task_id>/`），截图放在 `view/` 子目录下
 
 ## 标准操作流程

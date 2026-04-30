@@ -9,7 +9,7 @@ description:
   必需依赖缺失时返回 success: false，Agent 应停止并提示用户安装。
 
 usage:
-  python detect_env.py [--output PATH] [--force] [--skip-install]
+  python detect_env.py [--output PATH] [--force] [--skip-install] [--agent AGENT_NAME]
 
 level: intermediate
 
@@ -247,7 +247,60 @@ def _detect_ida_pro():
     return {"available": False, "path": None}
 
 
-def run_detection(skip_install=False):
+def _resolve_tool_path(path):
+    """解析工具路径：绝对路径检查文件存在性，裸名通过 which 查找。
+    跨平台：Windows 上 shutil.which 自动处理 PATHEXT。"""
+    if os.path.isabs(path):
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return (path, True)
+        if os.name == "nt":
+            for ext in os.environ.get("PATHEXT", ".exe;.cmd;.bat").split(";"):
+                candidate = path + ext
+                if os.path.isfile(candidate):
+                    return (candidate, True)
+        return (path, False)
+    resolved = shutil.which(path)
+    if resolved:
+        return (resolved, True)
+    return (path, False)
+
+
+def _get_tool_version(resolved_path, version_cmd):
+    """执行 version_cmd 获取版本字符串。version_cmd 为空列表时返回 None。"""
+    if not version_cmd:
+        return None
+    try:
+        r = subprocess.run([resolved_path] + version_cmd, capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return (r.stdout.strip() or r.stderr.strip()).split("\n")[0] or None
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def _detect_tools(config, agent=None, errors=None):
+    """从 config.json 读取 tools 配置，逐个检测可用性。"""
+    if errors is None:
+        errors = []
+    tools = config.get("tools", {})
+    result = {}
+    for name, cfg in tools.items():
+        if agent and cfg.get("agents") and agent not in cfg.get("agents", []):
+            continue
+        path = cfg.get("path", "")
+        version_cmd = cfg.get("version_cmd", [])
+        resolved, found = _resolve_tool_path(path)
+        if found:
+            version = _get_tool_version(resolved, version_cmd)
+            result[name] = {"available": True, "version": version}
+        else:
+            result[name] = {"available": False, "version": None}
+            if cfg.get("required", False):
+                errors.append(f"必需工具 {name} 未找到: {path}")
+    return result
+
+
+def run_detection(skip_install=False, agent=None):
     errors = []
 
     print("[*] 正在创建/检测虚拟环境...")
@@ -314,12 +367,32 @@ def run_detection(skip_install=False):
     else:
         print("[!] IDA Pro 未配置")
 
+    print("[*] 正在检测外部工具...")
+    config_file = os.path.join(CACHE_DIR, "config.json")
+    tools = {}
+    if os.path.isfile(config_file):
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            tools = _detect_tools(config, agent=agent, errors=errors)
+            for name, info in tools.items():
+                if info["available"]:
+                    ver = info["version"] or "未知版本"
+                    print(f"[+] {name}: {ver}")
+                else:
+                    print(f"[!] {name}: 未找到")
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"[!] 读取工具配置失败: {e}")
+    else:
+        print("[*] config.json 不存在，跳过外部工具检测")
+
     data = {
         "compiler": compiler,
         "python_arch": python_arch,
         "packages": packages,
         "ida_pro": ida_pro,
         "venv_python": venv_python,
+        "tools": tools,
     }
 
     success = len(errors) == 0
@@ -335,7 +408,10 @@ def main():
     parser.add_argument("--output", "-o", help="输出 JSON 文件路径")
     parser.add_argument("--force", "-f", action="store_true", help="强制重新检测（忽略缓存）")
     parser.add_argument("--skip-install", action="store_true", help="跳过自动安装缺失的包")
+    parser.add_argument("--agent", help="仅检测指定 Agent 需要的工具（如 binary-analysis, mobile-analysis）")
     args = parser.parse_args()
+
+    agent = args.agent
 
     cached = _load_cache(force=args.force)
     if cached and not args.force:
@@ -348,7 +424,7 @@ def main():
             cached = None
 
     if not cached or args.force:
-        result = run_detection(skip_install=args.skip_install)
+        result = run_detection(skip_install=args.skip_install, agent=agent)
 
     output_json = json.dumps(result, indent=2, ensure_ascii=False)
 
