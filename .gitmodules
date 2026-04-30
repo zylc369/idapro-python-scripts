@@ -4,3 +4,6 @@
 [submodule "vendor/oh-my-openagent"]
 	path = vendor/oh-my-openagent
 	url = https://github.com/code-yeongyu/oh-my-openagent.git
+[submodule "vendor/opencode"]
+	path = vendor/opencode
+	url = git@github.com:anomalyco/opencode.git

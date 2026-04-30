@@ -358,7 +358,7 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       debugLog(`system.transform: sessionID=${sessionID} agent=${agentName}`, sessionID);
 
       const envSection = buildEnvSection(agentName, config, envInfo);
-      debugLog(`system.transform: envSection length=${envSection.length} first 200 chars: ${envSection.slice(0, 200)}`, sessionID);
+      debugLog(`system.transform: envSection length=${envSection.length}\n${envSection}`, sessionID);
       output.system.push(envSection);
     },
 
