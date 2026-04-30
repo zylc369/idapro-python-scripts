@@ -343,7 +343,7 @@ async function doEnsureSession(
   sessionID: string,
 ): Promise<SessionData | undefined> {
   if (!opencodeClient) {
-    debugLog(`ensureSession: client 未初始化, sessionID=${sessionID}`);
+    debugLog(`doEnsureSession: client 未初始化, sessionID=${sessionID}`);
     return undefined;
   }
 
@@ -351,15 +351,20 @@ async function doEnsureSession(
     const response = await opencodeClient.session.get({
       path: { id: sessionID },
     });
+
+    debugLog(
+      `doEnsureSession: client 响应 response=${JSON.stringify(response)}`,
+    );
+
     if (response.error) {
       debugLog(
-        `ensureSession: API 错误 sessionID=${sessionID} error=${JSON.stringify(response.error)}`,
+        `doEnsureSession: API 错误 sessionID=${sessionID} error=${JSON.stringify(response.error)}`,
       );
       return undefined;
     }
     const sessionInfo = response.data;
     if (!sessionInfo) {
-      debugLog(`ensureSession: API 返回空数据 sessionID=${sessionID}`);
+      debugLog(`doEnsureSession: API 返回空数据 sessionID=${sessionID}`);
       return undefined;
     }
 
@@ -376,12 +381,12 @@ async function doEnsureSession(
     };
     sessions.set(sessionID, session);
     debugLog(
-      `ensureSession: 恢复 sessionID=${sessionID} primaryAgent=${primaryAgent || "无"} parentID=${sessionInfo.parentID || "无"}`,
+      `doEnsureSession: 恢复 sessionID=${sessionID} primaryAgent=${primaryAgent || "无"} parentID=${sessionInfo.parentID || "无"}`,
       sessionID,
     );
     return session;
   } catch (e) {
-    debugLog(`ensureSession: 异常 sessionID=${sessionID} error=${e}`);
+    debugLog(`doEnsureSession: 异常 sessionID=${sessionID} error=${e}`);
     return undefined;
   }
 }
