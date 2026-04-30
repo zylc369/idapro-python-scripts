@@ -1,4 +1,11 @@
-import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync, statSync } from "fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  unlinkSync,
+  mkdirSync,
+  statSync,
+} from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
@@ -32,7 +39,10 @@ function trimLogFile(logFile: string): void {
       const content = readFileSync(logFile, "utf-8");
       const keep = content.slice(-KEEP_SIZE);
       const firstNewline = keep.indexOf("\n");
-      writeFileSync(logFile, firstNewline >= 0 ? keep.slice(firstNewline + 1) : keep);
+      writeFileSync(
+        logFile,
+        firstNewline >= 0 ? keep.slice(firstNewline + 1) : keep,
+      );
     }
   } catch {}
 }
@@ -47,7 +57,9 @@ function writeLog(logFile: string, msg: string): void {
 }
 
 function debugLog(msg: string, sessionID?: string): void {
-  const logFile = getLogFilePath(sessionID ? sessionPrimaryAgent.get(sessionID) : undefined);
+  const logFile = getLogFilePath(
+    sessionID ? sessionPrimaryAgent.get(sessionID) : undefined,
+  );
   writeLog(logFile, msg);
 }
 
@@ -98,7 +110,10 @@ function getTaskDir(sessionID: string): string | null {
     const filePath = join(TASK_SESSIONS_DIR, `${sessionID}.json`);
     const data = readJsonSafe<TaskSessionMapping>(filePath, sessionID);
     const result = data?.task_dir || null;
-    debugLog(`getTaskDir: sessionID=${sessionID} file=${filePath} result=${result}`, sessionID);
+    debugLog(
+      `getTaskDir: sessionID=${sessionID} file=${filePath} result=${result}`,
+      sessionID,
+    );
     return result;
   } catch {
     return null;
@@ -113,23 +128,36 @@ function removeTaskSession(sessionID: string): void {
       unlinkSync(filePath);
     }
   } catch (e) {
-    debugLog(`removeTaskSession failed: sessionID=${sessionID} error=${e}`, sessionID);
+    debugLog(
+      `removeTaskSession failed: sessionID=${sessionID} error=${e}`,
+      sessionID,
+    );
   }
 }
 
-function getToolsForAgent(agentName: string, config: ConfigData): Array<ToolConfig & { name: string }> {
+function getToolsForAgent(
+  agentName: string,
+  config: ConfigData,
+): Array<ToolConfig & { name: string }> {
   if (!config.tools) return [];
   return Object.entries(config.tools)
     .filter(([, tool]) => !tool.agents || tool.agents.includes(agentName))
     .map(([name, tool]) => ({ name, ...tool }));
 }
 
-function getScriptDir(agentName: string | undefined): string {
+function getScriptDir(
+  agentName: string | undefined,
+  fallbackAgent?: string,
+): string {
   const AGENT_SCRIPT_DIRS: Record<string, string> = {
     "binary-analysis": join(OPENCODE_ROOT, "binary-analysis"),
     "mobile-analysis": join(OPENCODE_ROOT, "mobile-analysis"),
   };
-  return AGENT_SCRIPT_DIRS[agentName || ""] || AGENT_SCRIPT_DIRS["binary-analysis"];
+  return (
+    AGENT_SCRIPT_DIRS[agentName || ""] ||
+    AGENT_SCRIPT_DIRS[fallbackAgent || ""] ||
+    AGENT_SCRIPT_DIRS["binary-analysis"]
+  );
 }
 
 const AGENTS_DIR = join(OPENCODE_ROOT, "agents");
@@ -192,8 +220,12 @@ function buildEnvSection(
   agentName: string | undefined,
   config: ConfigData,
   envInfo: EnvData["data"],
+  sessionID?: string,
 ): string {
-  const scriptsDir = getScriptDir(agentName);
+  const fallbackAgent = sessionID
+    ? sessionPrimaryAgent.get(sessionID)
+    : undefined;
+  const scriptsDir = getScriptDir(agentName, fallbackAgent);
   const idaScriptsDir = join(OPENCODE_ROOT, "binary-analysis");
   const idaPath = config.ida_path || "未配置";
 
@@ -272,12 +304,21 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       const sessionID = (input as { sessionID?: string })?.sessionID;
       if (agent && sessionID) {
         sessionAgentMap.set(sessionID, agent);
-        debugLog(`chat.message: sessionID=${sessionID} agent=${agent}`, sessionID);
+        debugLog(
+          `chat.message: sessionID=${sessionID} agent=${agent}`,
+          sessionID,
+        );
 
         // 主 agent 首次出现时，直接作为该 session 的 primaryAgent
-        if (PRIMARY_AGENTS.includes(agent) && !sessionPrimaryAgent.has(sessionID)) {
+        if (
+          PRIMARY_AGENTS.includes(agent) &&
+          !sessionPrimaryAgent.has(sessionID)
+        ) {
           sessionPrimaryAgent.set(sessionID, agent);
-          debugLog(`chat.message: 设置主 agent: sessionID=${sessionID} primaryAgent=${agent}`, sessionID);
+          debugLog(
+            `chat.message: 设置主 agent: sessionID=${sessionID} primaryAgent=${agent}`,
+            sessionID,
+          );
         }
       }
     },
@@ -295,7 +336,10 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       if (idaPath) {
         envSummary += `- IDA Pro: ${idaPath}\n`;
       }
-      const scriptsDir = getScriptDir(agentName);
+      const scriptsDir = getScriptDir(
+        agentName,
+        sid ? sessionPrimaryAgent.get(sid) : undefined,
+      );
       const idaScriptsDir = join(OPENCODE_ROOT, "binary-analysis");
       envSummary += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;
       envSummary += `- IDA 通用脚本目录 ($IDA_SCRIPTS_DIR): ${idaScriptsDir}\n`;
@@ -355,11 +399,12 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
       const sessionID = (input as { sessionID?: string })?.sessionID;
       const agentName = sessionID ? sessionAgentMap.get(sessionID) : undefined;
 
-      debugLog(`system.transform: sessionID=${sessionID} agent=${agentName}`, sessionID);
-
-      const envSection = buildEnvSection(agentName, config, envInfo);
-      debugLog(`system.transform: envSection length=${envSection.length}\n${envSection}`, sessionID);
+      const envSection = buildEnvSection(agentName, config, envInfo, sessionID);
       output.system.push(envSection);
+      debugLog(
+        `system.transform: sessionID=${sessionID} agent=${agentName} length=${envSection.length}`,
+        sessionID,
+      );
     },
 
     "tool.execute.before": async (input, output) => {
@@ -396,18 +441,29 @@ export const SecurityAnalysisPlugin: Plugin = async ({ directory }) => {
         if (sessionID) {
           sessionStates.set(sessionID, { createdAt: Date.now() });
 
-          const sessionInfo = props?.info as { id?: string; parentID?: string } | undefined;
+          const sessionInfo = props?.info as
+            | { id?: string; parentID?: string }
+            | undefined;
           const parentID = sessionInfo?.parentID;
           if (parentID) {
             const parentPrimary = sessionPrimaryAgent.get(parentID);
             if (parentPrimary) {
               sessionPrimaryAgent.set(sessionID, parentPrimary);
-              debugLog(`event: session.created 子 session=${sessionID} 继承父 session=${parentID} 的 primaryAgent=${parentPrimary}`, sessionID);
+              debugLog(
+                `event: session.created 子 session=${sessionID} 继承父 session=${parentID} 的 primaryAgent=${parentPrimary}`,
+                sessionID,
+              );
             } else {
-              debugLog(`event: session.created 子 session=${sessionID} 父 session=${parentID} 无 primaryAgent`, sessionID);
+              debugLog(
+                `event: session.created 子 session=${sessionID} 父 session=${parentID} 无 primaryAgent`,
+                sessionID,
+              );
             }
           } else {
-            debugLog(`event: session.created 主 session=${sessionID} (无 parentID)`, sessionID);
+            debugLog(
+              `event: session.created 主 session=${sessionID} (无 parentID)`,
+              sessionID,
+            );
           }
         }
       }
