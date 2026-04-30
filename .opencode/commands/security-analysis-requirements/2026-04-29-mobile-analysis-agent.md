@@ -13,7 +13,7 @@
 当前 BinaryAnalysis Agent 完全围绕 IDA Pro 设计，无法处理移动端特有的分析需求：
 
 1. **APK 分析**：需要 apktool 解包+反汇编（DEX→smali）→ jadx 反编译（DEX→Java）→ IDA Pro 分析 .so native 层。且存在多种分析路径：纯 Java/Kotlin 逻辑、smali 级精读（混淆严重时）、native 层、Hybrid/WebView 前端、Java↔Native 跨层调用，当前 Agent 不编排这些工具也无法选择路径
-2. **IPA 分析**：需要 class-dump 提取 ObjC 头 → IDA Pro 分析 .dylib/Mach-O，当前无相关能力
+2. **IPA 分析**：需要 otool/nm 分析 Mach-O 符号 → IDA Pro 分析 .dylib/Mach-O，当前无相关能力
 3. **移动端 Frida**：需要设备端 frida-server 部署（安全安装：随机名+随机路径+非默认端口）→ 主机端连接，与 PC 端 Frida 用法差异大
 4. **多 Agent 架构缺失**：Plugin 无差别注入环境信息，config.json 无移动端工具配置，detect_env.py 不检测移动端工具，无设备状态管理
 
@@ -61,7 +61,7 @@
 │   ├── query.py                  # 通用 IDA 脚本，mobile-analysis 通过 $IDA_SCRIPTS_DIR 引用
 │   ├── update.py
 │   ├── scripts/
-    │   │   ├── detect_env.py         # 改造：新增从 config.json 读取工具配置
+│   │   ├── detect_env.py         # 改造：新增从 config.json 读取工具配置
 │   │   ├── create_task_dir.py    # 通用，mobile-analysis 通过 $IDA_SCRIPTS_DIR 引用
 │   │   ├── gui_*.py              # PC 专用，仅 binary-analysis 使用
 │   │   └── process_patch.py      # PC 专用
@@ -133,13 +133,6 @@
       "version_cmd": ["version"],
       "description": "Android Debug Bridge"
     },
-    "class-dump": {
-      "path": "class-dump",
-      "agents": ["mobile-analysis"],
-      "required": false,
-      "version_cmd": [],
-      "description": "Objective-C 头文件提取"
-    },
     "otool": {
       "path": "otool",
       "agents": ["mobile-analysis"],
@@ -165,7 +158,7 @@
 | `path` | string | 工具可执行文件路径。支持两种形式：**裸名**（如 `"apktool"`）→ 通过 `shutil.which()` 在 PATH 中查找，跨平台兼容；**绝对路径**（如 `"/opt/homebrew/bin/apktool"`）→ 直接检查文件存在性。推荐使用裸名，避免升级工具后路径失效 |
 | `agents` | string[] | 哪些 Agent 需要此工具（Plugin 按此字段过滤注入） |
 | `required` | boolean | 缺失时是否阻止 Agent 继续（true → detect_env.py 标记 error） |
-| `version_cmd` | string[] | 用于检测版本的 CLI 参数数组（**不含工具名本身**，仅参数部分，如 `["version"]`、`["--version"]`）；为空数组 `[]` 时表示该工具不支持版本查询，仅检测命令存在性，版本字段写入 `null` |
+| `version_cmd` | string[] | 用于检测版本的 CLI 参数数组（**不含工具名本身**，仅参数部分，如 `["version"]`、`["--version"]`）；为空数组 `[]` 时表示该工具不支持版本查询，仅检测命令存在性，版本字段写入 `null`（JSON null，非字符串 `"null"`） |
 | `description` | string | 人类可读描述，用于环境信息展示 |
 
 **删除 `scripts_dir`**：脚本目录由 Plugin 从 agent 名动态推导，不再手动配置。
@@ -488,7 +481,7 @@ APP 分析需求
 ```
 IPA 分析需求
   │
-  ├── 路径：unzip 解包 → class-dump 提取 ObjC/Swift 头 → IDA Pro 分析 Mach-O/dylib
+  ├── 路径：unzip 解包 → otool/nm 分析符号 → IDA Pro 分析 Mach-O/dylib
   │
   └── 路径：解包 → 检查 Frameworks/ → otool/nm 分析符号 → IDA Pro 深度分析
 ```
@@ -516,7 +509,7 @@ IPA 分析需求
 | `mobile-analysis/README.md` | **新增** | 移动端工具目录结构说明 |
 | `mobile-analysis/scripts/registry.json` | **新增** | 脚本注册表（初始空数组） |
 | `mobile-analysis/knowledge-base/android-tools.md` | **新增** | Android 工具安装 + CLI 参考（apktool 解包反汇编、jadx 反编译、adb） |
-| `mobile-analysis/knowledge-base/ios-tools.md` | **新增** | iOS 工具安装 + CLI 参考（class-dump、otool、ldid、insert_dylib） |
+| `mobile-analysis/knowledge-base/ios-tools.md` | **新增** | iOS 工具安装 + CLI 参考（otool、ldid、insert_dylib，class-dump 作为可选工具提及） |
 | `mobile-analysis/knowledge-base/mobile-methodology.md` | **新增** | 移动端分析方法论（APK/IPA 结构、多路径分析决策树、场景→路径映射） |
 | `mobile-analysis/knowledge-base/mobile-frida.md` | **新增** | 移动端 Frida：安全部署（随机名+随机路径+非默认端口）、设备连接、Java/ObjC Bridge Hook、防检测技术 |
 | `mobile-analysis/knowledge-base/mobile-patterns.md` | **新增** | 常见安全模式（证书固定绕过、root/越狱检测、混淆识别） |
@@ -583,11 +576,11 @@ IPA 分析需求
   - 文件: mobile-analysis/knowledge-base/ios-tools.md
   - 预估行数: ~150
   - 内容要点:
-    1. class-dump 安装 + CLI 参考（提取 Objective-C 头文件）
-    2. otool/nm 用法（Mach-O 分析、符号表查看）
-    3. ldid 安装 + 用法（伪签名）
-    4. insert_dylib/optool 安装 + 用法（动态库注入）
-    5. macOS 自带工具（codesign、security）
+    1. otool/nm 用法（Mach-O 分析、符号表查看）
+    2. ldid 安装 + 用法（伪签名）
+    3. insert_dylib/optool 安装 + 用法（动态库注入）
+    4. macOS 自带工具（codesign、security）
+    5. class-dump（可选，brew 无包，需从 GitHub releases 手动安装）
   - 验证点: 文件存在，内容自包含可独立理解
   - 依赖: 无
 
@@ -770,7 +763,7 @@ IPA 分析需求
 | F1 | mobile-analysis Agent 可用 | OpenCode Tab 切换可见，Agent 加载无报错，环境信息含 $SCRIPTS_DIR + $IDA_SCRIPTS_DIR |
 | F2 | APK 初始分析 | 提供 APK 文件，Agent 能编排 apktool 解包+反汇编 + jadx 反编译 + 识别 native libs |
 | F3 | APK 多路径选择 | Agent 能根据分析需求选择正确路径（Java 逻辑 / smali / native / Hybrid） |
-| F4 | IPA 初始分析 | 提供 IPA 文件，Agent 能编排解包 + class-dump + 识别 frameworks |
+| F4 | IPA 初始分析 | 提供 IPA 文件，Agent 能编排解包 + otool/nm 分析 + 识别 frameworks |
 | F5 | IDA Pro 联动 | 识别到 .so/.dylib 时，Agent 通过 $IDA_SCRIPTS_DIR 调用 query.py/initial_analysis.py |
 | F6 | 知识库按需加载 | Agent 在不同场景下加载对应知识库（mobile + binary-analysis 共享知识库） |
 | F7 | 环境检测按 Agent | detect_env.py --agent mobile-analysis 仅检测 mobile tools，--agent binary-analysis 不加移动端工具 |
