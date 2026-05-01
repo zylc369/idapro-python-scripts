@@ -54,49 +54,15 @@ permission:
 
 ---
 
-## 任务目录约定
+## 阶段 0：任务初始化（强制 — 每次分析前，不可跳过）
 
-**禁止使用 `workdir` 参数。禁止在项目根目录下创建任何文件。** 所有中间文件写入 `~/bw-security-analysis/workspace/`。
+在阶段 A 之前必须按顺序执行以下 3 步。详细流程见 `$SHARED_DIR/knowledge-base/task-initialization.md`。
 
-```bash
-TASK_DIR=$(python3 "$AGENT_DIR/scripts/create_task_dir.py")
-```
+1. **创建任务目录**：`TASK_DIR=$(python3 "$SHARED_DIR/scripts/create_task_dir.py")`
+2. **环境检测**：`python3 "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"`
+3. **初始化 $BA_PYTHON**：从 `~/bw-security-analysis/env_cache.json` 提取 `venv_python`
 
-```powershell
-$TASK_DIR = python "$AGENT_DIR/scripts/create_task_dir.py"
-```
-
----
-
-## 阶段 0：环境检测（强制 — 每次分析前）
-
-**不可跳过**。在阶段 A 之前必须执行环境检测：
-
-```bash
-python3 "$AGENT_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
-```
-
-成功 → 读取 env.json，提取 `venv_python` 赋值给 `$BA_PYTHON`，继续分析。**失败 → 停下来告知用户，禁止继续**。缓存有效期 24h。
-
-**阶段 0 成功后**，初始化 `$BA_PYTHON`：
-
-bash:
-```bash
-BA_PYTHON=$(python3 -c "
-import json, os
-cache_path = os.path.expanduser('~/bw-security-analysis/env_cache.json')
-if os.path.isfile(cache_path):
-    cache = json.load(open(cache_path))
-    print(cache.get('data', {}).get('venv_python', 'python3'))
-else:
-    print('python3')
-")
-```
-
-PowerShell:
-```powershell
-$BA_PYTHON = python -c "import json,os,sys; p=os.path.expanduser('~/bw-security-analysis/env_cache.json'); print(json.load(open(p)).get('data',{}).get('venv_python','python')) if os.path.isfile(p) else print('python')"
-```
+环境检测失败 → **停下来告知用户，禁止继续**。环境检测结果缓存 24h（`~/bw-security-analysis/env_cache.json`），无需每次重新检测。
 
 ---
 
