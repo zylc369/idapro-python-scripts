@@ -197,11 +197,11 @@ hook.unhook()
 
 ### 脱壳场景：debug_dump.py
 
-项目内置 IDA 调试器脱壳脚本：`$AGENT_DIR/scripts/debug_dump.py`
+项目内置 IDA 调试器脱壳脚本：`$SHARED_DIR/scripts/debug_dump.py`
 
 ```bash
 IDA_OEP_ADDR=0x401000 IDA_OUTPUT="$TASK_DIR/unpacked.exe" \
-  "$IDAT" -A -S"$AGENT_DIR/scripts/debug_dump.py" \
+  "$IDAT" -A -S"$SHARED_DIR/scripts/debug_dump.py" \
   -L"$TASK_DIR/debug_dump.log" "<目标文件>.i64"
 ```
 

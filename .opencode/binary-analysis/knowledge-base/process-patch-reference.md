@@ -6,7 +6,7 @@
 ## 调用方式
 
 ```bash
-"$BA_PYTHON" "$AGENT_DIR/scripts/process_patch.py" \
+"$BA_PYTHON" "$SHARED_DIR/scripts/process_patch.py" \
   --exe TARGET.EXE \
   --patch 0x40234C:EB \
   --write-data 0x422600:4B435446 \
@@ -85,7 +85,7 @@
 ### `--no-kill` 后续操作
 
 使用 `--no-kill` 后，进程保持存活。输出 JSON 包含 `pid` 和 `hwnd`，可用于：
-- 截图: `$BA_PYTHON $AGENT_DIR/scripts/gui_capture.py`
+- 截图: `$BA_PYTHON $SHARED_DIR/scripts/gui_capture.py`
 - Frida attach: `frida -p <pid>`
 - 后续内存操作: 需自行编写 ctypes 脚本（process_patch.py 只能启动新进程，无法操作已有进程）
 
@@ -94,7 +94,7 @@
 ### 场景 1: Patch 跳转 + 捕获计算结果
 
 ```bash
-"$BA_PYTHON" "$AGENT_DIR/scripts/process_patch.py" \
+"$BA_PYTHON" "$SHARED_DIR/scripts/process_patch.py" \
   --exe crackme.exe \
   --patch 0x401234:EB \
   --capture 0x422480:16 \
@@ -106,7 +106,7 @@
 ### 场景 2: Code cave 注入 + 信号同步
 
 ```bash
-"$BA_PYTHON" "$AGENT_DIR/scripts/process_patch.py" \
+"$BA_PYTHON" "$SHARED_DIR/scripts/process_patch.py" \
   --exe crackme.exe \
   --write-data 0x422600:4B435446 \
   --write-code 0x40234E:56578D6C... \
@@ -120,7 +120,7 @@
 ### 场景 3: 只读内存（不 patch）
 
 ```bash
-"$BA_PYTHON" "$AGENT_DIR/scripts/process_patch.py" \
+"$BA_PYTHON" "$SHARED_DIR/scripts/process_patch.py" \
   --exe target.exe \
   --capture 0x403000:256 \
   --no-kill \
