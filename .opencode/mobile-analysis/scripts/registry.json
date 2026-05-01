@@ -5,7 +5,7 @@
     "file": "manage_frida.py",
     "language": "python",
     "runner": "$BA_PYTHON",
-    "usage": "$BA_PYTHON $SCRIPTS_DIR/scripts/manage_frida.py --action {install|start|stop|status} [-s SERIAL] [--upgrade]",
+    "usage": "$BA_PYTHON $AGENT_DIR/scripts/manage_frida.py --action {install|start|stop|status} [-s SERIAL] [--upgrade]",
     "output_format": "JSON",
     "actions": {
       "install": "下载并安装 frida-server 到设备（随机名）",
@@ -22,7 +22,7 @@
     "file": "dex_dump.py",
     "language": "python",
     "runner": "$BA_PYTHON",
-    "usage": "$BA_PYTHON $SCRIPTS_DIR/scripts/dex_dump.py --pid <PID> --output <DIR> [--host 127.0.0.1:6656]",
+    "usage": "$BA_PYTHON $AGENT_DIR/scripts/dex_dump.py --pid <PID> --output <DIR> [--host 127.0.0.1:6656]",
     "output_format": "DEX 文件写入 --output 目录",
     "note": "使用 frida.Compiler 编译 TypeScript（含 Java bridge），首次运行自动安装 npm 依赖",
     "requires_venv": true,
@@ -34,7 +34,7 @@
     "file": "dex_dump.js",
     "language": "javascript",
     "runner": "frida",
-    "usage": "frida -H 127.0.0.1:6656 -n com.target.app -l $SCRIPTS_DIR/scripts/dex_dump.js",
+    "usage": "frida -H 127.0.0.1:6656 -n com.target.app -l $AGENT_DIR/scripts/dex_dump.js",
     "output_format": "通过 send() 发送 DEX 二进制数据",
     "note": "仅用于 frida CLI（REPL 内置 Java bridge）。Python SDK 请使用 dex_dump.py",
     "requires_venv": false

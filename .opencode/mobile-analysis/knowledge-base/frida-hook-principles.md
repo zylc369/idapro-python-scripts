@@ -190,7 +190,7 @@ var Wrapped = Java.registerClass({ name: "com.hook.MyCb" + (++counter), ... });
 
 ## frida 17.x Bridge 使用规则
 
-> **详见 `$SCRIPTS_DIR/knowledge-base/frida-17x-bridge.md`**。核心要点：
+> **详见 `$AGENT_DIR/knowledge-base/frida-17x-bridge.md`**。核心要点：
 
 | 场景 | 方式 |
 |------|------|

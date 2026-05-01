@@ -85,7 +85,7 @@ PostMessageA(hwnd, WM_COMMAND, ptr(btnId), btn);
 
 ## Frida 版本适配（Frida 16 → 17）
 
-> **完整的 API 变化速查见 `$SCRIPTS_DIR/knowledge-base/frida-17x-api.md`。**
+> **完整的 API 变化速查见 `$AGENT_DIR/knowledge-base/frida-17x-api.md`。**
 
 Frida 17 对 API 做了破坏性变更，核心两点：
 
@@ -140,7 +140,7 @@ if (b === 0x55) {
 }
 ```
 
-或使用 `disassembler/frida_unpack.py` 的内置监控机制。该脚本位于项目根目录: `$(dirname $(dirname "$SCRIPTS_DIR"))/disassembler/frida_unpack.py`。
+或使用 `disassembler/frida_unpack.py` 的内置监控机制。该脚本位于项目根目录: `$(dirname $(dirname "$AGENT_DIR"))/disassembler/frida_unpack.py`。
 
 ---
 

@@ -6,11 +6,11 @@
 
 - 需要 `pyautogui` 和 `pyperclip`（通过 `$BA_PYTHON` 运行脚本）
 - 需要 `zai-mcp-server` MCP（视觉理解能力，全局安装在 OpenCode 中）
-- 脚本路径: `$SCRIPTS_DIR/scripts/gui_capture.py` / `gui_act.py` / `gui_launch.py`
+- 脚本路径: `$AGENT_DIR/scripts/gui_capture.py` / `gui_act.py` / `gui_launch.py`
 
 **环境变量说明**:
 - `$BA_PYTHON`: 带 pyautogui/pyperclip 的 venv Python 路径（从 `~/bw-security-analysis/env_cache.json` 的 `venv_python` 字段获取，或在 Binary-Analysis agent 中由环境检测阶段自动设置）
-- `$SCRIPTS_DIR`: 脚本根目录（由 Plugin 环境信息注入，见系统提示"环境信息"段）
+- `$AGENT_DIR`: 脚本根目录（由 Plugin 环境信息注入，见系统提示"环境信息"段）
 - `$TASK_DIR`: 当前任务的工作目录（`~/bw-security-analysis/workspace/<task_id>/`），截图放在 `view/` 子目录下
 
 ## 标准操作流程
@@ -18,7 +18,7 @@
 ### Step 1: 启动目标程序
 
 ```bash
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_launch.py" --action launch --exe <TARGET>
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_launch.py" --action launch --exe <TARGET>
 ```
 
 记录返回的 PID。如果目标程序已运行，脚本会自动 kill 后重启。
@@ -26,13 +26,13 @@
 ### Step 2: 等待窗口出现
 
 ```bash
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_launch.py" --action wait_window --pid <PID> --timeout 10
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_launch.py" --action wait_window --pid <PID> --timeout 10
 ```
 
 ### Step 3: 截图定位控件
 
 ```bash
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_capture.py" --output-dir "$TASK_DIR/view" --name step1_initial
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_capture.py" --output-dir "$TASK_DIR/view" --name step1_initial
 ```
 
 使用 MCP 分析截图（两种方式任选）:
@@ -47,25 +47,25 @@
 
 ```bash
 # 点击输入框
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_act.py" --action click --x 460 --y 320
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_act.py" --action click --x 460 --y 320
 
 # 输入文本（推荐 paste 模式，支持中文）
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_act.py" --action type --text "username" --paste
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_act.py" --action type --text "username" --paste
 
 # 点击下一个输入框
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_act.py" --action click --x 460 --y 380
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_act.py" --action click --x 460 --y 380
 
 # 输入 license
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_act.py" --action type --text "XXXX-XXXX" --paste
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_act.py" --action type --text "XXXX-XXXX" --paste
 
 # 点击验证按钮
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_act.py" --action click --x 500 --y 440 --settle 1
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_act.py" --action click --x 500 --y 440 --settle 1
 ```
 
 ### Step 5: 截图读取结果
 
 ```bash
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_capture.py" --output-dir "$TASK_DIR/view" --name step2_result
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_capture.py" --output-dir "$TASK_DIR/view" --name step2_result
 ```
 
 使用 MCP 判断结果:
@@ -79,7 +79,7 @@
 ### Step 6: 清理
 
 ```bash
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_launch.py" --action kill --pid <PID>
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_launch.py" --action kill --pid <PID>
 ```
 
 ## 失败重试策略
@@ -97,19 +97,19 @@
 
 ```bash
 # 控件探测
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --discover --output "$TASK_DIR/discover.json"
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_verify.py" --exe <TARGET> --discover --output "$TASK_DIR/discover.json"
 
 # 标准模式
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --output "$TASK_DIR/gui_result.json"
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --output "$TASK_DIR/gui_result.json"
 
 # Hook 注入
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --hook-inject --hook-func-addr 0x401000 --hook-inputs-file "$TASK_DIR/inputs.json" --output "$TASK_DIR/result.json"
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_verify.py" --exe <TARGET> --hook-inject --hook-func-addr 0x401000 --hook-inputs-file "$TASK_DIR/inputs.json" --output "$TASK_DIR/result.json"
 
 # Hook 读取结果
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --hook-result --hook-compare-addr 0x401200 --output "$TASK_DIR/result.json"
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_verify.py" --exe <TARGET> --username <USER> --license <LICENSE> --hook-result --hook-compare-addr 0x401200 --output "$TASK_DIR/result.json"
 
 # Hook 注入 + Hook 读取结果 组合模式
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/gui_verify.py" --exe <TARGET> --hook-inject --hook-func-addr 0x401000 --hook-inputs-file "$TASK_DIR/inputs.json" --hook-result --hook-compare-addr 0x401200 --hook-trigger-addr 0x401500 --output "$TASK_DIR/result.json"
+"$BA_PYTHON" "$AGENT_DIR/scripts/gui_verify.py" --exe <TARGET> --hook-inject --hook-func-addr 0x401000 --hook-inputs-file "$TASK_DIR/inputs.json" --hook-result --hook-compare-addr 0x401200 --hook-trigger-addr 0x401500 --output "$TASK_DIR/result.json"
 ```
 
 降级后每次操作前仍尝试 MCP（1 次），恢复则切回视觉驱动。
@@ -120,7 +120,7 @@
 
 ```bash
 # Code cave 注入 + 捕获计算结果（CRACKME3 典型场景）
-"$BA_PYTHON" "$SCRIPTS_DIR/scripts/process_patch.py" \
+"$BA_PYTHON" "$AGENT_DIR/scripts/process_patch.py" \
   --exe TARGET.EXE \
   --write-code 0x40234E:56578D... \
   --patch 0x401000:E9... \
@@ -130,7 +130,7 @@
   --output "$TASK_DIR/patch_result.json"
 ```
 
-完整参数参考见 `$SCRIPTS_DIR/knowledge-base/process-patch-reference.md`。
+完整参数参考见 `$AGENT_DIR/knowledge-base/process-patch-reference.md`。
 
 ## 视觉分析产物管理（强制）
 

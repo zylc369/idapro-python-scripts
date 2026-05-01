@@ -218,7 +218,7 @@ import Java from "frida-java-bridge";
 
 ### §3.2 编码规则
 
-1. 知识库文件使用 `$SCRIPTS_DIR` 或 `$OPENCODE_ROOT` 变量引用路径，禁止硬编码绝对路径
+1. 知识库文件使用 `$AGENT_DIR` 或 `$OPENCODE_ROOT` 变量引用路径，禁止硬编码绝对路径
 2. Python 脚本通过 `sys.path.insert` 导入 frida-scripts 的 library 模块，不重复实现
 3. JS 脚本使用 frida 17.x 的正确 API（`Process.getModuleByName` + `module.getExportByName`），禁止使用 `Module.findExportByName`
 4. 知识库文件必须自包含（不依赖主 prompt 上下文即可理解）

@@ -66,23 +66,23 @@ else:
 
 # 查询操作
 IDA_QUERY=<类型> IDA_OUTPUT="$TASK_DIR/result.json" [IDA_FUNC_ADDR=<地址>] [IDA_PATTERN=<模式>] \
-  "$IDAT" -A -S"$SCRIPTS_DIR/query.py" -L"$TASK_DIR/idat.log" "<目标文件>"
+  "$IDAT" -A -S"$AGENT_DIR/query.py" -L"$TASK_DIR/idat.log" "<目标文件>"
 
 # 更新操作（单操作）
 IDA_OPERATION=<操作> IDA_OUTPUT="$TASK_DIR/result.json" [其他参数] \
-  "$IDAT" -A -S"$SCRIPTS_DIR/update.py" -L"$TASK_DIR/idat.log" "<目标文件>"
+  "$IDAT" -A -S"$AGENT_DIR/update.py" -L"$TASK_DIR/idat.log" "<目标文件>"
 
 # 更新操作（批量）
 IDA_OPERATION=batch IDA_BATCH_FILE="$TASK_DIR/ops.json" IDA_OUTPUT="$TASK_DIR/result.json" \
-  "$IDAT" -A -S"$SCRIPTS_DIR/update.py" -L"$TASK_DIR/idat.log" "<目标文件>"
+  "$IDAT" -A -S"$AGENT_DIR/update.py" -L"$TASK_DIR/idat.log" "<目标文件>"
 
 # 初始分析流水线（首次分析时首选）
 IDA_OUTPUT="$TASK_DIR/initial.json" \
-  "$IDAT" -A -S"$SCRIPTS_DIR/scripts/initial_analysis.py" -L"$TASK_DIR/initial.log" "<目标文件>"
+  "$IDAT" -A -S"$AGENT_DIR/scripts/initial_analysis.py" -L"$TASK_DIR/initial.log" "<目标文件>"
 
 # 沉淀脚本调用
 IDA_FUNC_ADDR=<地址> IDA_OUTPUT="$TASK_DIR/result.json" \
-  "$IDAT" -A -S"$SCRIPTS_DIR/scripts/<脚本名>.py" -L"$TASK_DIR/idat.log" "<目标文件>"
+  "$IDAT" -A -S"$AGENT_DIR/scripts/<脚本名>.py" -L"$TASK_DIR/idat.log" "<目标文件>"
 ```
 
 ## debug_dump 调用模板
@@ -90,11 +90,11 @@ IDA_FUNC_ADDR=<地址> IDA_OUTPUT="$TASK_DIR/result.json" \
 ```bash
 # IDA 调试器 dump（运行到 OEP，dump 内存重建 PE）
 IDA_OEP_ADDR=0x401000 IDA_PE_OUTPUT="$TASK_DIR/unpacked.exe" IDA_OUTPUT="$TASK_DIR/result.json" \
-  "$IDAT" -A -S"$SCRIPTS_DIR/scripts/debug_dump.py" -L"$TASK_DIR/debug.log" "<目标文件>"
+  "$IDAT" -A -S"$AGENT_DIR/scripts/debug_dump.py" -L"$TASK_DIR/debug.log" "<目标文件>"
 
 # 不设 IDA_PE_OUTPUT 时自动从 IDA_OUTPUT 推导（去 .json 加 .pe）
 IDA_OEP_ADDR=0x401000 IDA_OUTPUT="$TASK_DIR/result.json" \
-  "$IDAT" -A -S"$SCRIPTS_DIR/scripts/debug_dump.py" -L"$TASK_DIR/debug.log" "<目标文件>"
+  "$IDAT" -A -S"$AGENT_DIR/scripts/debug_dump.py" -L"$TASK_DIR/debug.log" "<目标文件>"
 # 上面的命令会输出 PE 到 $TASK_DIR/result.pe
 ```
 
@@ -103,7 +103,7 @@ IDA_OEP_ADDR=0x401000 IDA_OUTPUT="$TASK_DIR/result.json" \
 ```bash
 # 反编译未识别函数（脱壳后常见：IDA 未自动识别函数）
 IDA_QUERY=decompile IDA_FUNC_ADDR=0x4047CB IDA_FORCE_CREATE=1 IDA_OUTPUT="$TASK_DIR/result.json" \
-  "$IDAT" -A -S"$SCRIPTS_DIR/query.py" -L"$TASK_DIR/idat.log" "<目标文件>"
+  "$IDAT" -A -S"$AGENT_DIR/query.py" -L"$TASK_DIR/idat.log" "<目标文件>"
 ```
 
 ## Batch JSON 格式
@@ -130,12 +130,12 @@ IDA_QUERY=decompile IDA_FUNC_ADDR=0x4047CB IDA_FORCE_CREATE=1 IDA_OUTPUT="$TASK_
 ```bash
 # 示例：读取全局变量（自动模式）
 IDA_QUERY=read_data IDA_ADDR=Str2 IDA_OUTPUT="$TASK_DIR/result.json" \
-  "$IDAT" -A -S"$SCRIPTS_DIR/query.py" -L"$TASK_DIR/idat.log" "<目标文件>"
+  "$IDAT" -A -S"$AGENT_DIR/query.py" -L"$TASK_DIR/idat.log" "<目标文件>"
 
 # 示例：指针模式 + 解引用
 IDA_QUERY=read_data IDA_ADDR=0x14013F008 IDA_READ_MODE=pointer IDA_DEREF=1 \
   IDA_OUTPUT="$TASK_DIR/result.json" \
-  "$IDAT" -A -S"$SCRIPTS_DIR/query.py" -L"$TASK_DIR/idat.log" "<目标文件>"
+  "$IDAT" -A -S"$AGENT_DIR/query.py" -L"$TASK_DIR/idat.log" "<目标文件>"
 ```
 
 ## 错误诊断
@@ -211,7 +211,7 @@ $IDAT = python -c "import os, sys; p=sys.argv[1]; [print(os.path.join(p,n)) or N
 $env:IDA_QUERY = "<类型>"
 $env:IDA_OUTPUT = "$TASK_DIR\result.json"
 $env:IDA_FUNC_ADDR = "<地址>"
-& "$IDAT" -A -S"$SCRIPTS_DIR\query.py" -L"$TASK_DIR\idat.log" "<目标文件>"
+& "$IDAT" -A -S"$AGENT_DIR\query.py" -L"$TASK_DIR\idat.log" "<目标文件>"
 ```
 
 ### 更新操作（单操作）
@@ -221,14 +221,14 @@ $env:IDA_OPERATION = "<操作>"
 $env:IDA_OUTPUT = "$TASK_DIR\result.json"
 $env:IDA_OLD_NAME = "<旧名>"
 $env:IDA_NEW_NAME = "<新名>"
-& "$IDAT" -A -S"$SCRIPTS_DIR\update.py" -L"$TASK_DIR\idat.log" "<目标文件>"
+& "$IDAT" -A -S"$AGENT_DIR\update.py" -L"$TASK_DIR\idat.log" "<目标文件>"
 ```
 
 ### 初始分析流水线
 
 ```powershell
 $env:IDA_OUTPUT = "$TASK_DIR\initial.json"
-& "$IDAT" -A -S"$SCRIPTS_DIR\scripts\initial_analysis.py" -L"$TASK_DIR\initial.log" "<目标文件>"
+& "$IDAT" -A -S"$AGENT_DIR\scripts\initial_analysis.py" -L"$TASK_DIR\initial.log" "<目标文件>"
 ```
 
 ### debug_dump 调用
@@ -237,7 +237,7 @@ $env:IDA_OUTPUT = "$TASK_DIR\initial.json"
 $env:IDA_OEP_ADDR = "0x401000"
 $env:IDA_PE_OUTPUT = "$TASK_DIR\unpacked.exe"
 $env:IDA_OUTPUT = "$TASK_DIR\result.json"
-& "$IDAT" -A -S"$SCRIPTS_DIR\scripts\debug_dump.py" -L"$TASK_DIR\debug.log" "<目标文件>"
+& "$IDAT" -A -S"$AGENT_DIR\scripts\debug_dump.py" -L"$TASK_DIR\debug.log" "<目标文件>"
 ```
 
 ### 错误诊断

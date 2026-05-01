@@ -48,7 +48,7 @@ $OPENCODE_ROOT/                              # 由插件注入，项目级 .open
     └── security-analysis-requirements/   # 进化需求文档
 
 归属规则:
-  mobile-analysis/ 可引用 binary-analysis/ 的知识库和脚本（通过 $IDA_SCRIPTS_DIR）
+  mobile-analysis/ 可引用 binary-analysis/ 的知识库和脚本（通过 $SHARED_DIR）
   binary-analysis/ 不可引用 mobile-analysis/ 的内容（单向依赖）
 
 依赖方向（单向，禁止反向）:

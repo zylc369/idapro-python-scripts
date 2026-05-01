@@ -27,16 +27,16 @@
 
 ```bash
 # 一键安装（自动下载 + 随机名 + 随机目录）
-$BA_PYTHON $SCRIPTS_DIR/scripts/manage_frida.py --action install -s <serial>
+$BA_PYTHON $AGENT_DIR/scripts/manage_frida.py --action install -s <serial>
 
 # 启动（自动分配端口 + 端口转发，输出 JSON）
-$BA_PYTHON $SCRIPTS_DIR/scripts/manage_frida.py --action start -s <serial>
+$BA_PYTHON $AGENT_DIR/scripts/manage_frida.py --action start -s <serial>
 
 # 检查状态
-$BA_PYTHON $SCRIPTS_DIR/scripts/manage_frida.py --action status -s <serial>
+$BA_PYTHON $AGENT_DIR/scripts/manage_frida.py --action status -s <serial>
 
 # 停止
-$BA_PYTHON $SCRIPTS_DIR/scripts/manage_frida.py --action stop -s <serial>
+$BA_PYTHON $AGENT_DIR/scripts/manage_frida.py --action stop -s <serial>
 ```
 
 ### 手动安装（备用）
@@ -190,7 +190,7 @@ for proc in device.enumerate_processes():
 >
 > **⚠️ frida 17.x 注意事项**：
 > - **frida CLI**: 直接 `frida -H ... -l hook.js` 即可，REPL 内置 Java bridge
-> - **Python SDK**: 必须用 `frida.Compiler` 编译 TypeScript（`import Java from "frida-java-bridge"`），详见 `$SCRIPTS_DIR/knowledge-base/frida-17x-bridge.md`
+> - **Python SDK**: 必须用 `frida.Compiler` 编译 TypeScript（`import Java from "frida-java-bridge"`），详见 `$AGENT_DIR/knowledge-base/frida-17x-bridge.md`
 > - **纯 Native Hook（Interceptor）**: 无需 Java bridge，直接 `session.create_script(js_string)` 即可
 
 ```javascript
@@ -257,7 +257,7 @@ Java.perform(function() {
 >
 > **⚠️ frida 17.x 注意事项**：
 > - **frida CLI**: 直接 `frida -U -l hook.js` 即可，REPL 内置 ObjC bridge
-> - **Python SDK**: 必须用 `frida.Compiler` 编译 TypeScript（`import ObjC from "frida-objc-bridge"`），详见 `$SCRIPTS_DIR/knowledge-base/frida-17x-bridge.md`
+> - **Python SDK**: 必须用 `frida.Compiler` 编译 TypeScript（`import ObjC from "frida-objc-bridge"`），详见 `$AGENT_DIR/knowledge-base/frida-17x-bridge.md`
 
 ```javascript
 // Hook ObjC 实例方法

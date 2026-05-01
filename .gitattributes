@@ -1,2 +1,2 @@
-examples/android/新京报_5.6.5_APKPure.apk filter=lfs diff=lfs merge=lfs -text
+examples/android/新京报_5.6.5.apk filter=lfs diff=lfs merge=lfs -text
 *.apk filter=lfs diff=lfs merge=lfs -text

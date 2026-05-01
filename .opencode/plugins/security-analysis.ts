@@ -166,7 +166,7 @@ function getCompactionReminder(agentName: string | undefined): string {
     const promptPath = join(AGENTS_DIR, `${agentName}.md`);
     const scriptsDir = getScriptDir(agentName);
     const restoreVars = scriptsDir
-      ? `$OPENCODE_ROOT、$SCRIPTS_DIR、$IDA_SCRIPTS_DIR、$TASK_DIR`
+      ? `$OPENCODE_ROOT、$AGENT_DIR、$SHARED_DIR、$TASK_DIR`
       : `$OPENCODE_ROOT、$TASK_DIR`;
     return `## 压缩恢复指令（压缩时必须保留）
 
@@ -179,7 +179,7 @@ function getCompactionReminder(agentName: string | undefined): string {
 上下文刚被压缩。继续分析前必须：
 1. 请告知当前使用的是哪个 Agent（如 binary-analysis、mobile-analysis）
 2. 根据 Agent 名读取 ${AGENTS_DIR}/<agent-name>.md
-3. 恢复 $OPENCODE_ROOT、$SCRIPTS_DIR、$IDA_SCRIPTS_DIR、$TASK_DIR 等关键变量`;
+3. 恢复 $OPENCODE_ROOT、$AGENT_DIR、$SHARED_DIR、$TASK_DIR 等关键变量`;
 }
 
 function getCompactionContext(agentName: string | undefined): string {
@@ -232,11 +232,11 @@ function buildEnvSection(
   envSection += `- 配置根目录 ($OPENCODE_ROOT): ${OPENCODE_ROOT}\n`;
 
   if (scriptsDir) {
-    envSection += `- 脚本目录 ($SCRIPTS_DIR): ${scriptsDir}\n`;
+    envSection += `- Agent 目录 ($AGENT_DIR): ${scriptsDir}\n`;
   }
 
   const idaScriptsDir = join(OPENCODE_ROOT, "binary-analysis");
-  envSection += `- IDA 通用脚本目录 ($IDA_SCRIPTS_DIR): ${idaScriptsDir}\n`;
+  envSection += `- 共享目录 ($SHARED_DIR): ${idaScriptsDir}\n`;
   const idaPath = config.ida_path || "未配置";
   envSection += `- IDA Pro: ${idaPath}\n`;
 

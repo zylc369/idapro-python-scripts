@@ -19,14 +19,14 @@ mobile-analysis/
 
 | 变量 | 含义 | 说明 |
 |------|------|------|
-| `$SCRIPTS_DIR` | 本 Agent 的工具目录 | 由 Plugin 注入，指向 mobile-analysis 所在目录 |
-| `$IDA_SCRIPTS_DIR` | 共享 IDA Pro 通用脚本目录 | 由 Plugin 注入，指向 binary-analysis 所在目录 |
+| `$AGENT_DIR` | 本 Agent 的专属目录 | 由 Plugin 注入，指向 mobile-analysis 所在目录 |
+| `$SHARED_DIR` | 共享分析能力目录 | 由 Plugin 注入，指向 binary-analysis 所在目录 |
 
-**依赖方向**: `$SCRIPTS_DIR/` 只读引用 `$IDA_SCRIPTS_DIR/` 下的文件，不修改。
+**依赖方向**: `$AGENT_DIR/` 只读引用 `$SHARED_DIR/` 下的文件，不修改。
 
 ## 共享资源引用
 
-- IDA Pro 脚本: `$IDA_SCRIPTS_DIR/query.py`、`$IDA_SCRIPTS_DIR/scripts/initial_analysis.py`
-- 通用 Frida 模板: `$IDA_SCRIPTS_DIR/knowledge-base/frida-hook-templates.md`
-- 通用 Unicorn 模板: `$IDA_SCRIPTS_DIR/knowledge-base/unicorn-templates.md`
-- IDAPython 编码规范: `$IDA_SCRIPTS_DIR/knowledge-base/idapython-conventions.md`
+- IDA Pro 脚本: `$SHARED_DIR/query.py`、`$SHARED_DIR/scripts/initial_analysis.py`
+- 通用 Frida 模板: `$SHARED_DIR/knowledge-base/frida-hook-templates.md`
+- 通用 Unicorn 模板: `$SHARED_DIR/knowledge-base/unicorn-templates.md`
+- IDAPython 编码规范: `$SHARED_DIR/knowledge-base/idapython-conventions.md`

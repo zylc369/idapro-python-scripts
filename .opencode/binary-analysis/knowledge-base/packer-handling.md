@@ -44,7 +44,7 @@
    ```bash
    IDA_QUERY=read_data IDA_ADDR=<入口点地址> IDA_READ_MODE=bytes IDA_READ_SIZE=512 \
      IDA_OUTPUT="$TASK_DIR/stub_tail.json" \
-     "$IDAT" -A -S"$SCRIPTS_DIR/query.py" -L"$TASK_DIR/read.log" "<目标文件>"
+     "$IDAT" -A -S"$AGENT_DIR/query.py" -L"$TASK_DIR/read.log" "<目标文件>"
    ```
 3. **搜索 OEP 模式**：根据 `initial_analysis` 返回的 `architecture` 选择对应的字节模式表
 
@@ -200,7 +200,7 @@ if __name__ == "__main__":
 使用沉淀脚本 `scripts/debug_dump.py`：
 ```bash
 IDA_OEP_ADDR=<OEP地址> IDA_OUTPUT="$TASK_DIR/<文件名>_unpacked" \
-  "$IDAT" -A -S"$SCRIPTS_DIR/scripts/debug_dump.py" \
+  "$IDAT" -A -S"$AGENT_DIR/scripts/debug_dump.py" \
   -L"$TASK_DIR/debug_dump.log" "<目标文件>.i64"
 ```
 
@@ -213,7 +213,7 @@ IDA_OEP_ADDR=<OEP地址> IDA_OUTPUT="$TASK_DIR/<文件名>_unpacked" \
 IDA 调试器失败时使用 Frida。详见 `dynamic-analysis-frida.md`。
 
 项目内置 Frida PE 脱壳脚本：项目根目录下 `disassembler/frida_unpack.py`。
-从 `$SCRIPTS_DIR` 推导项目根目录: `PROJECT_ROOT=$(dirname $(dirname "$SCRIPTS_DIR"))`
+从 `$AGENT_DIR` 推导项目根目录: `PROJECT_ROOT=$(dirname $(dirname "$AGENT_DIR"))`
 
 ```bash
 python3 "$PROJECT_ROOT/disassembler/frida_unpack.py" <目标二进制> -o "$TASK_DIR/<文件名>_unpacked" -w 30
@@ -238,7 +238,7 @@ python3 "$PROJECT_ROOT/disassembler/frida_unpack.py" <目标二进制> -o "$TASK
 1. 用 idat 加载解壳产物并自动分析：
    ```bash
    IDA_OUTPUT="$TASK_DIR/unpacked_initial.json" \
-     "$IDAT" -A -S"$SCRIPTS_DIR/scripts/initial_analysis.py" \
+     "$IDAT" -A -S"$AGENT_DIR/scripts/initial_analysis.py" \
      -L"$TASK_DIR/load.log" "$TASK_DIR/<脱壳产物文件名>"
    ```
    **注意**：此处用 `initial_analysis.py` 而非 `query.py`，以便一次性获取解壳后的完整信息

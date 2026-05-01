@@ -2,7 +2,7 @@
 
 > **通用 API 变化（Module/Memory/Process/Bridge 概述）已沉淀到通用知识库，请先读取:**
 >
-> `Read $IDA_SCRIPTS_DIR/knowledge-base/frida-17x-api.md`
+> `Read $SHARED_DIR/knowledge-base/frida-17x-api.md`
 >
 > 本文件仅包含移动端特有的补充说明。
 
@@ -12,7 +12,7 @@
 
 ### 1. Java Bridge 编译方案（移动端最常用）
 
-Android Hook 需要使用 Java Bridge。Python SDK 中完整编译方案见 `$SCRIPTS_DIR/knowledge-base/frida-17x-bridge.md`。
+Android Hook 需要使用 Java Bridge。Python SDK 中完整编译方案见 `$AGENT_DIR/knowledge-base/frida-17x-bridge.md`。
 
 核心要点：
 - Python SDK `session.create_script("Java.perform(...)")` ❌ 不可用（Java 为 undefined）

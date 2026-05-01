@@ -38,8 +38,8 @@ permission:
 
 | 变量 | 来源 | 说明 |
 |------|------|------|
-| `$SCRIPTS_DIR` | 环境信息"脚本目录 ($SCRIPTS_DIR)" | 本 Agent 的工具目录 |
-| `$IDA_SCRIPTS_DIR` | 环境信息"IDA 通用脚本目录 ($IDA_SCRIPTS_DIR)" | 共享 IDA 脚本目录（binary-analysis/） |
+| `$AGENT_DIR` | 环境信息"Agent 目录 ($AGENT_DIR)" | 本 Agent 的工具目录 |
+| `$SHARED_DIR` | 环境信息"共享目录 ($SHARED_DIR)" | 共享分析能力目录（binary-analysis/） |
 | `$IDAT` | 环境信息"IDA Pro"路径 + `/idat` | 需检查文件存在性 |
 | `$BA_PYTHON` | 阶段 0 env.json 的 `venv_python` | 带第三方包的 venv Python |
 
@@ -58,7 +58,7 @@ permission:
 **禁止使用 `workdir` 参数。禁止在项目根目录下创建任何文件。** 所有中间文件写入 `~/bw-security-analysis/workspace/`。
 
 ```bash
-TASK_DIR=$(python3 "$IDA_SCRIPTS_DIR/scripts/create_task_dir.py")
+TASK_DIR=$(python3 "$SHARED_DIR/scripts/create_task_dir.py")
 ```
 
 ---
@@ -68,7 +68,7 @@ TASK_DIR=$(python3 "$IDA_SCRIPTS_DIR/scripts/create_task_dir.py")
 **不可跳过**。在阶段 A 之前必须执行环境检测：
 
 ```bash
-python3 "$IDA_SCRIPTS_DIR/scripts/detect_env.py" --agent mobile-analysis --output "$TASK_DIR/env.json"
+python3 "$SHARED_DIR/scripts/detect_env.py" --agent mobile-analysis --output "$TASK_DIR/env.json"
 ```
 
 成功 → 读取 env.json，提取 `venv_python` 赋值给 `$BA_PYTHON`，继续分析。**失败 → 停下来告知用户，禁止继续**。缓存有效期 24h。
@@ -120,7 +120,7 @@ else:
 
 ### 阶段 B：分析规划（强制）
 
-根据用户的分析需求和阶段 A 的结果，选择分析路径。**读取 `$SCRIPTS_DIR/knowledge-base/mobile-methodology.md`** 获取完整的多路径决策树。
+根据用户的分析需求和阶段 A 的结果，选择分析路径。**读取 `$AGENT_DIR/knowledge-base/mobile-methodology.md`** 获取完整的多路径决策树。
 
 核心规则：
 1. **先规划再执行** — 禁止无方案直接开始分析
@@ -175,21 +175,21 @@ else:
 | ldid | 伪签名 | `ldid -S binary` |
 | unzip | IPA 解压 | `unzip target.ipa -d dir` |
 
-### IDA Pro 脚本（通过 $IDA_SCRIPTS_DIR 调用）
+### IDA Pro 脚本（通过 $SHARED_DIR 调用）
 
-需要分析 .so/.dylib 时，使用 `$IDA_SCRIPTS_DIR/` 下的 IDA 脚本：
+需要分析 .so/.dylib 时，使用 `$SHARED_DIR/` 下的 IDA 脚本：
 
 | 脚本 | 用途 |
 |------|------|
-| `$IDA_SCRIPTS_DIR/query.py` | IDA 数据库查询（反编译、反汇编、xrefs 等） |
-| `$IDA_SCRIPTS_DIR/update.py` | IDA 数据库更新（重命名、注释） |
-| `$IDA_SCRIPTS_DIR/scripts/initial_analysis.py` | 初始分析流水线 |
+| `$SHARED_DIR/query.py` | IDA 数据库查询（反编译、反汇编、xrefs 等） |
+| `$SHARED_DIR/update.py` | IDA 数据库更新（重命名、注释） |
+| `$SHARED_DIR/scripts/initial_analysis.py` | 初始分析流水线 |
 
-> IDA 脚本的完整用法参考 `$IDA_SCRIPTS_DIR/knowledge-base/templates.md`。
+> IDA 脚本的完整用法参考 `$SHARED_DIR/knowledge-base/templates.md`。
 
 ### 设备管理（Frida）
 
-设备操作前先检查 `$TASK_DIR/device.json`。如不存在，按设备选择流程创建。详细规范读取 `$SCRIPTS_DIR/knowledge-base/mobile-frida.md`。
+设备操作前先检查 `$TASK_DIR/device.json`。如不存在，按设备选择流程创建。详细规范读取 `$AGENT_DIR/knowledge-base/mobile-frida.md`。
 
 ---
 
@@ -197,7 +197,7 @@ else:
 
 以下文档按需加载（不在分析开始时全部读取）：
 
-### 移动端知识库（$SCRIPTS_DIR/knowledge-base/）
+### 移动端知识库（$AGENT_DIR/knowledge-base/）
 
 | 文档 | 触发条件 |
 |------|---------|
@@ -206,7 +206,7 @@ else:
 | `mobile-methodology.md` | 分析规划阶段（阶段 B） |
 | `mobile-frida.md` | 需要 Frida Hook、设备操作时 |
 | `mobile-patterns.md` | 检测到安全机制（证书固定、Root检测、混淆、反调试） |
-| `frida-17x-api.md` | 编写 Frida 脚本时（先读通用版 `$IDA_SCRIPTS_DIR/knowledge-base/frida-17x-api.md`，再看本文件移动端补充） |
+| `frida-17x-api.md` | 编写 Frida 脚本时（先读通用版 `$SHARED_DIR/knowledge-base/frida-17x-api.md`，再看本文件移动端补充） |
 | `frida-17x-bridge.md` | Python SDK 中使用 Java/ObjC Hook 时（bridge 编译方案） |
 | `frida-hook-principles.md` | 编写任何 Frida Hook 时（4 条铁律 + Java Bridge 陷阱 + 检查清单） |
 | `frida-hook-templates.md` | 需要 Hook 模板时（标准模板 + 拦截器链 + Native Hook） |
@@ -215,9 +215,9 @@ else:
 ### frida 17.x Bridge 核心规则
 
 > **Python SDK 中 Java/ObjC Hook 必须走 `frida.Compiler` 编译 TypeScript，禁止直接 `session.create_script("Java.perform(...)")`。**
-> frida CLI 和纯 Native Hook（Interceptor）不受影响。详见 `$SCRIPTS_DIR/knowledge-base/frida-17x-bridge.md`。
+> frida CLI 和纯 Native Hook（Interceptor）不受影响。详见 `$AGENT_DIR/knowledge-base/frida-17x-bridge.md`。
 
-### 通用知识库（$IDA_SCRIPTS_DIR/knowledge-base/）
+### 通用知识库（$SHARED_DIR/knowledge-base/）
 
 | 文档 | 触发条件 |
 |------|---------|

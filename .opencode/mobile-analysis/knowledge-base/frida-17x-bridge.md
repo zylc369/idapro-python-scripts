@@ -1,7 +1,7 @@
 # Frida 17.x Bridge 编译与使用指南（移动端）
 
 > Frida 17.0.0 起，Java/ObjC/Swift Bridge 不再内置到 GumJS 运行时。
-> **通用 API 变化速查**见 `$IDA_SCRIPTS_DIR/knowledge-base/frida-17x-api.md`。
+> **通用 API 变化速查**见 `$SHARED_DIR/knowledge-base/frida-17x-api.md`。
 > 本文档专注于移动端（Android Java / iOS ObjC）的 Bridge 编译和使用细节。
 
 ---

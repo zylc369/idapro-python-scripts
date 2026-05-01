@@ -74,8 +74,8 @@ Payload/
 │     1. apktool d -s app.apk -o unpacked（-s 保留 DEX 不反编译，更快）
 │     2. 检查 lib/*/ 下的 .so 文件列表
 │     3. 选择目标 .so（通常最大的，或与功能相关的）
-│     4. 通过 $IDA_SCRIPTS_DIR 的 query.py/initial_analysis.py 分析
-│   知识库加载: android-tools.md + IDA 知识库（通过 $IDA_SCRIPTS_DIR）
+│     4. 通过 $SHARED_DIR 的 query.py/initial_analysis.py 分析
+│   知识库加载: android-tools.md + IDA 知识库（通过 $SHARED_DIR）
 │
 ├── 路径 4: Hybrid/WebView 分析
 │   触发: Hybrid App、H5 页面、JS Bridge
@@ -127,7 +127,7 @@ Payload/
 │     1. unzip target.ipa -d ipa_unpacked
 │     2. 定位主二进制（Payload/*.app/ 下非 plist/非 framework 的文件）
 │     3. otool -h / otool -L / nm -gU 获取基本信息
-│     4. 需要深度分析时 → IDA Pro（通过 $IDA_SCRIPTS_DIR）
+│     4. 需要深度分析时 → IDA Pro（通过 $SHARED_DIR）
 │   知识库加载: ios-tools.md
 │
 ├── 路径 B: Frameworks 分析

@@ -104,7 +104,7 @@ Java.perform(function() {
 
 ```
 1. 识别加固类型（见上表）
-2. 启动 frida-server（$SCRIPTS_DIR/scripts/manage_frida.py --action start）
+2. 启动 frida-server（$AGENT_DIR/scripts/manage_frida.py --action start）
 3. 启动目标 app（等待加固壳解密 DEX）
 4. 使用全量扫描 dump DEX（策略 2，最全面）
 5. 验证 dump 结果
@@ -150,5 +150,5 @@ dexdump -f output_dir/classes.dex | grep "class_def" | wc -l
 - **frida CLI**：可直接加载 JS 脚本（策略 1/2 的 Native 代码不需要 Java bridge）
 - **Python SDK**：
   - 策略 1/2（纯 Native）：可用纯 JS 字符串 `session.create_script(js)`
-  - 策略 3（Java Bridge）：需用 `frida.Compiler` 编译 TypeScript（详见 `$SCRIPTS_DIR/knowledge-base/frida-17x-bridge.md`）
-- 使用 `$SCRIPTS_DIR/scripts/dex_dump.py` 自动化 dump
+  - 策略 3（Java Bridge）：需用 `frida.Compiler` 编译 TypeScript（详见 `$AGENT_DIR/knowledge-base/frida-17x-bridge.md`）
+- 使用 `$AGENT_DIR/scripts/dex_dump.py` 自动化 dump

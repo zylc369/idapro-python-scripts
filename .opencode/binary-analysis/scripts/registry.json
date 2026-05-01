@@ -6,7 +6,7 @@
       "file": "debug_dump.py",
       "description": "IDA 调试器脱壳 dump 脚本：运行到 OEP 断点，dump 内存段并重建可执行文件（PE/ELF）",
       "params": ["IDA_OEP_ADDR", "IDA_PE_OUTPUT", "IDA_OUTPUT"],
-      "example_call": "IDA_OEP_ADDR=0x401000 IDA_PE_OUTPUT=$TASK_DIR/unpacked.exe IDA_OUTPUT=$TASK_DIR/result.json $IDAT -A -S$SCRIPTS_DIR/scripts/debug_dump.py target.i64",
+      "example_call": "IDA_OEP_ADDR=0x401000 IDA_PE_OUTPUT=$TASK_DIR/unpacked.exe IDA_OUTPUT=$TASK_DIR/result.json $IDAT -A -S$AGENT_DIR/scripts/debug_dump.py target.i64",
       "added_at": "2026-04-19",
       "verified": false
     },
@@ -15,7 +15,7 @@
       "file": "initial_analysis.py",
       "description": "一键初始分析流水线：单次 idat 调用完成 segments/entry_points/imports/strings/packer_detect + 场景分类",
       "params": ["IDA_OUTPUT"],
-      "example_call": "IDA_OUTPUT=$TASK_DIR/result.json $IDAT -A -S$SCRIPTS_DIR/scripts/initial_analysis.py target.i64",
+      "example_call": "IDA_OUTPUT=$TASK_DIR/result.json $IDAT -A -S$AGENT_DIR/scripts/initial_analysis.py target.i64",
       "added_at": "2026-04-19",
       "verified": false
     },
@@ -24,7 +24,7 @@
       "file": "gui_verify.py",
       "description": "Win32 GUI 自动化验证脚本：支持控件探测(--discover)、标准 GUI 操作 + 多维行为观察、Hook 注入参数(--hook-inject)、Hook 读取比较结果(--hook-result)，hook-inject 和 hook-result 可组合使用",
       "params": ["--exe", "--username", "--license", "--output", "--timeout", "--edit1-id", "--edit2-id", "--button-id", "--discover", "--hook-inject", "--hook-func-addr", "--hook-inputs", "--hook-inputs-file", "--hook-trigger-addr", "--hook-calling-convention", "--hook-result", "--hook-compare-addr", "--hook-compare-type", "--observe-rounds"],
-      "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/gui_verify.py --exe TARGET.EXE --username test --license XXXX --output result.json",
+      "example_call": "$BA_PYTHON $AGENT_DIR/scripts/gui_verify.py --exe TARGET.EXE --username test --license XXXX --output result.json",
       "added_at": "2026-04-23",
       "verified": false
     },
@@ -33,7 +33,7 @@
       "file": "gui_capture.py",
       "description": "全屏截图工具，输出 JPEG/PNG 图片 + 元数据 JSON",
       "params": ["--output-dir", "--name", "--format", "--quality"],
-      "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/gui_capture.py --output-dir $TASK_DIR/view --name step1_initial",
+      "example_call": "$BA_PYTHON $AGENT_DIR/scripts/gui_capture.py --output-dir $TASK_DIR/view --name step1_initial",
       "added_at": "2026-04-24",
       "verified": false
     },
@@ -42,7 +42,7 @@
       "file": "gui_act.py",
       "description": "坐标级键鼠操作（click/double_click/type/hotkey/scroll），支持剪贴板粘贴",
       "params": ["--action", "--x", "--y", "--text", "--keys", "--direction", "--clicks", "--button", "--paste", "--settle"],
-      "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/gui_act.py --action click --x 460 --y 320",
+      "example_call": "$BA_PYTHON $AGENT_DIR/scripts/gui_act.py --action click --x 460 --y 320",
       "added_at": "2026-04-24",
       "verified": false
     },
@@ -51,7 +51,7 @@
       "file": "gui_launch.py",
       "description": "进程和窗口管理（launch/find_window/bring_to_front/kill/wait_window），P0 仅 Windows",
       "params": ["--action", "--exe", "--pid", "--title", "--timeout"],
-      "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/gui_launch.py --action launch --exe TARGET.EXE",
+      "example_call": "$BA_PYTHON $AGENT_DIR/scripts/gui_launch.py --action launch --exe TARGET.EXE",
       "added_at": "2026-04-24",
       "verified": false
     },
@@ -60,7 +60,7 @@
       "file": "process_patch.py",
       "description": "通用进程 Patch + 值捕获工具：启动目标进程，应用多点多类型补丁（patch/write-data/write-code），触发动作（click），等待信号同步，捕获内存数据。替代手写 ctypes 脚本",
       "params": ["--exe", "--window-title", "--patch", "--write-data", "--write-code", "--capture", "--signal", "--trigger", "--timeout", "--settle", "--no-kill", "--output"],
-      "example_call": "$BA_PYTHON $SCRIPTS_DIR/scripts/process_patch.py --exe TARGET.EXE --patch 0x40234C:EB --capture 0x422480:16 --signal 0x42248C:DEADBEEF --trigger click:1002 --timeout 15 --output result.json",
+      "example_call": "$BA_PYTHON $AGENT_DIR/scripts/process_patch.py --exe TARGET.EXE --patch 0x40234C:EB --capture 0x422480:16 --signal 0x42248C:DEADBEEF --trigger click:1002 --timeout 15 --output result.json",
       "added_at": "2026-04-26",
       "verified": false
     },
@@ -69,7 +69,7 @@
       "file": "create_task_dir.py",
       "description": "任务目录创建与映射注册：创建时间戳目录 + 注册 sessionID→task_dir 映射（压缩后精确恢复）。SESSION_ID 由 Plugin tool.execute.before hook 注入",
       "params": [],
-      "example_call": "python3 $SCRIPTS_DIR/scripts/create_task_dir.py",
+      "example_call": "python3 $AGENT_DIR/scripts/create_task_dir.py",
       "added_at": "2026-04-28",
       "verified": false
     }
