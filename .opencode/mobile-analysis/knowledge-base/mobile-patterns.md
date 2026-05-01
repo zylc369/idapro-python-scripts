@@ -171,7 +171,8 @@ Java.perform(function() {
 
 ```javascript
 // Android: Hook ptrace
-Interceptor.attach(Module.findExportByName("libc.so", "ptrace"), {
+var libc = Process.getModuleByName("libc.so");
+Interceptor.attach(libc.getExportByName("ptrace"), {
     onEnter: function(args) {
         if (args[0].toInt32() === 0) {  // PTRACE_TRACEME
             console.log("[*] Anti-debug: ptrace(TRACEME) bypassed");

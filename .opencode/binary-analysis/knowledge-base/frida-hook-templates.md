@@ -281,7 +281,7 @@ if __name__ == "__main__":
 'use strict';
 
 // Hook memcmp — 捕获所有内存比较
-var memcmp = Module.getExportByName(null, "memcmp");
+var memcmp = Process.getModuleByName("libc.so").getExportByName("memcmp");
 if (memcmp) {
     Interceptor.attach(memcmp, {
         onEnter: function(args) {
@@ -305,7 +305,7 @@ if (memcmp) {
 }
 
 // Hook strcmp — 捕获字符串比较
-var strcmp = Module.getExportByName(null, "strcmp");
+var strcmp = Process.getModuleByName("libc.so").getExportByName("strcmp");
 if (strcmp) {
     Interceptor.attach(strcmp, {
         onEnter: function(args) {

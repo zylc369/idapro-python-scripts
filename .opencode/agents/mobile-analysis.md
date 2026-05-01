@@ -206,6 +206,16 @@ else:
 | `mobile-methodology.md` | 分析规划阶段（阶段 B） |
 | `mobile-frida.md` | 需要 Frida Hook、设备操作时 |
 | `mobile-patterns.md` | 检测到安全机制（证书固定、Root检测、混淆、反调试） |
+| `frida-17x-api.md` | 编写 Frida 脚本时（先读通用版 `$IDA_SCRIPTS_DIR/knowledge-base/frida-17x-api.md`，再看本文件移动端补充） |
+| `frida-17x-bridge.md` | Python SDK 中使用 Java/ObjC Hook 时（bridge 编译方案） |
+| `frida-hook-principles.md` | 编写任何 Frida Hook 时（4 条铁律 + Java Bridge 陷阱 + 检查清单） |
+| `frida-hook-templates.md` | 需要 Hook 模板时（标准模板 + 拦截器链 + Native Hook） |
+| `android-unpacking.md` | 检测到加固/需要脱壳时（识别特征 + dump 策略） |
+
+### frida 17.x Bridge 核心规则
+
+> **Python SDK 中 Java/ObjC Hook 必须走 `frida.Compiler` 编译 TypeScript，禁止直接 `session.create_script("Java.perform(...)")`。**
+> frida CLI 和纯 Native Hook（Interceptor）不受影响。详见 `$SCRIPTS_DIR/knowledge-base/frida-17x-bridge.md`。
 
 ### 通用知识库（$IDA_SCRIPTS_DIR/knowledge-base/）
 
@@ -214,7 +224,8 @@ else:
 | `templates.md` | 构造 idat 命令时 |
 | `analysis-planning.md` | IDA 深度分析规划时 |
 | `packer-handling.md` | 检测到壳/保护时 |
-| `frida-hook-templates.md` | 编写 Frida Hook 脚本时 |
+| `frida-17x-api.md` | 编写 Frida 脚本时（17.x Module/Bridge 通用变化速查） |
+| `frida-hook-templates.md` | 编写 Frida Hook 脚本时（PC 端模板：参数拦截、内存读取） |
 | `unicorn-templates.md` | 需要模拟执行验证时 |
 | `idapython-conventions.md` | 生成 IDAPython 脚本时 |
 | `verification-patterns.md` | 需要验证分析结果时 |

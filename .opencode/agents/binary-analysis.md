@@ -323,6 +323,7 @@ python3 "$SCRIPTS_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 | `idapython-conventions.md` | 生成 IDAPython 脚本时的编码规范（导入、日志、代码风格） |
 | `unicorn-templates.md` | 需要模拟执行验证算法、Unicorn 脚本模板 |
 | `frida-hook-templates.md` | 需要 Frida Hook 脚本模板（参数拦截、返回值读取） |
+| `frida-17x-api.md` | 编写 Frida 脚本时（17.x Module/Bridge 变化速查 + 迁移检查清单） |
 | `verification-patterns.md` | 需要验证分析结果（license/key/password） |
 | `gui-automation.md` | GUI 自动化操作（视觉驱动方案） |
 | `process-patch-reference.md` | 使用 process_patch.py 时的完整参数参考 |

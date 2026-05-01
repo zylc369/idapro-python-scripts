@@ -85,17 +85,39 @@ PostMessageA(hwnd, WM_COMMAND, ptr(btnId), btn);
 
 ## Frida 版本适配（Frida 16 → 17）
 
-Frida 17 对 API 做了破坏性变更：
+> **完整的 API 变化速查见 `$SCRIPTS_DIR/knowledge-base/frida-17x-api.md`。**
 
-| 操作 | Frida 16 | Frida 17 |
-|------|----------|----------|
-| 读 1 字节 | `Memory.readU8(ptr(0xaddr))` | `ptr(0xaddr).readU8()` |
-| 读 N 字节 | `Memory.readByteArray(ptr, n)` | `ptr.readByteArray(n)` |
-| 写字符串 | `Memory.writeUtf8String(ptr, s)` | `ptr.writeUtf8String(s)` |
-| 分配字符串 | `Memory.allocUtf8String(s)` | 不变 |
-| 获取导出函数 | `Module.getExportByName("dll", "func")` | `Process.getModuleByName("dll").getExportByName("func")` |
+Frida 17 对 API 做了破坏性变更，核心两点：
 
-**适配策略**：检测 `Frida.version` 字符串，或直接使用 Frida 17 风格（2024+ 主流版本）。
+### 1. Module 静态方法已移除
+
+```javascript
+// ❌ 16.x 可用，17.x 报错
+Module.getExportByName(null, "memcmp");
+Module.findExportByName("user32.dll", "SendMessageA");
+
+// ✅ 17.x 正确用法
+Process.getModuleByName("user32.dll").getExportByName("SendMessageA");
+Process.getModuleByName("libc.so").getExportByName("memcpy");
+```
+
+### 2. Bridge（Java/ObjC/Swift）不再内置
+
+Python SDK 中需要 ObjC Bridge 时，必须用 `frida.Compiler` 编译 TypeScript：
+```typescript
+import ObjC from "frida-objc-bridge";
+```
+详见 `frida-17x-api.md` 的 "Bridge API" 章节。纯 Native Hook（Interceptor）不受影响。
+
+### 未变化的 API（可继续使用）
+
+| API | 状态 |
+|-----|------|
+| `ptr(0xaddr).readU8()` / `.readByteArray(n)` | ✅ 无变化 |
+| `Memory.alloc()` / `Memory.allocUtf8String()` | ✅ 无变化 |
+| `Process.getModuleByName()` / `.enumerateModules()` | ✅ 无变化 |
+| `Interceptor.attach` / `.detach` | ✅ 无变化 |
+| `NativeFunction` | ✅ 无变化 |
 
 ---
 

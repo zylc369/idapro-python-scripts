@@ -458,7 +458,7 @@ for (var idx = 0; idx < compareAddrs.length; idx++) {{
         // 尝试 Hook 已知导入函数
         if (compareType === "memcmp" || compareType === "auto") {{
             try {{
-                var memcmpAddr = Module.getExportByName(null, "memcmp");
+                var memcmpAddr = Module.getGlobalExportByName("memcmp");
                 if (memcmpAddr && memcmpAddr.equals(addr)) {{
                     Interceptor.attach(memcmpAddr, {{
                         onEnter: function(args) {{
@@ -485,7 +485,7 @@ for (var idx = 0; idx < compareAddrs.length; idx++) {{
 
         if (compareType === "strcmp" || compareType === "auto") {{
             try {{
-                var strcmpAddr = Module.getExportByName(null, "strcmp");
+                var strcmpAddr = Module.getGlobalExportByName("strcmp");
                 if (strcmpAddr && strcmpAddr.equals(addr)) {{
                     Interceptor.attach(strcmpAddr, {{
                         onEnter: function(args) {{
