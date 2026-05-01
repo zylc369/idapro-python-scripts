@@ -24,11 +24,20 @@ const DEFAULT_LOG = join(LOGS_DIR, "plugin_debug.log");
 const MAX_LOG_SIZE = 5 * 1024 * 1024;
 const KEEP_SIZE = 2 * 1024 * 1024;
 
+const AGENT_BINARY_ANALYSIS = "binary-analysis";
+const AGENT_MOBILE_ANALYSIS = "mobile-analysis";
+const AGENT_SECURITY_ANALYSIS_EVOLVE = "security-analysis-evolve";
+
 const PRIMARY_AGENTS = [
-  "binary-analysis",
-  "mobile-analysis",
-  "security-analysis-evolve",
+  AGENT_BINARY_ANALYSIS,
+  AGENT_MOBILE_ANALYSIS,
+  AGENT_SECURITY_ANALYSIS_EVOLVE,
 ];
+
+const AGENT_SCRIPT_DIRS: Record<string, string> = {};
+for (const name of PRIMARY_AGENTS) {
+  AGENT_SCRIPT_DIRS[name] = join(OPENCODE_ROOT, name);
+}
 
 function getLogFilePath(primaryAgent: string | undefined): string {
   if (primaryAgent && PRIMARY_AGENTS.includes(primaryAgent)) {
@@ -148,11 +157,6 @@ function getScriptDir(
   agentName: string | undefined,
   fallbackAgent?: string,
 ): string | undefined {
-  const AGENT_SCRIPT_DIRS: Record<string, string> = {
-    "binary-analysis": join(OPENCODE_ROOT, "binary-analysis"),
-    "mobile-analysis": join(OPENCODE_ROOT, "mobile-analysis"),
-    "security-analysis-evolve": join(OPENCODE_ROOT, "security-analysis-evolve"),
-  };
   return (
     AGENT_SCRIPT_DIRS[agentName || ""] ||
     AGENT_SCRIPT_DIRS[fallbackAgent || ""] ||
@@ -178,7 +182,7 @@ function getCompactionReminder(agentName: string | undefined): string {
   return `## 压缩恢复指令（压缩时必须保留）
 
 上下文刚被压缩。继续分析前必须：
-1. 请告知当前使用的是哪个 Agent（如 binary-analysis、mobile-analysis）
+1. 请告知当前使用的是哪个 Agent（如 ${AGENT_BINARY_ANALYSIS}、${AGENT_MOBILE_ANALYSIS}）
 2. 根据 Agent 名读取 ${AGENTS_DIR}/<agent-name>.md
 3. 恢复 $OPENCODE_ROOT、$AGENT_DIR、$SHARED_DIR、$TASK_DIR 等关键变量`;
 }
@@ -200,7 +204,7 @@ function getCompactionContext(agentName: string | undefined): string {
 - 验证结果和置信度
 - 用户显式约束`;
 
-  if (agentName === "binary-analysis") {
+  if (agentName === AGENT_BINARY_ANALYSIS) {
     context += `
 
 ### IDA 分析状态
@@ -208,7 +212,7 @@ function getCompactionContext(agentName: string | undefined): string {
 - 已执行的 idat 查询和结果摘要`;
   }
 
-  if (agentName === "mobile-analysis") {
+  if (agentName === AGENT_MOBILE_ANALYSIS) {
     context += `
 
 ### 移动端分析状态
@@ -236,7 +240,7 @@ function buildEnvSection(
     envSection += `- Agent 目录 ($AGENT_DIR): ${scriptsDir}\n`;
   }
 
-  const idaScriptsDir = join(OPENCODE_ROOT, "binary-analysis");
+  const idaScriptsDir = join(OPENCODE_ROOT, AGENT_BINARY_ANALYSIS);
   envSection += `- 共享目录 ($SHARED_DIR): ${idaScriptsDir}\n`;
   const idaPath = config.ida_path || "未配置";
   envSection += `- IDA Pro: ${idaPath}\n`;
