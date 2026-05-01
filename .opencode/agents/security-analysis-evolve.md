@@ -36,7 +36,20 @@ $OPENCODE_ROOT/                              # 由插件注入，项目级 .open
 │       ├── idapython-conventions.md      # IDAPython 编码规范
 │       ├── packer-handling.md            # 加壳处理策略
 │       └── script-generation.md          # 脚本生成与沉淀规则
-└── mobile-analysis/                      # 移动端工具与知识库
+├── mobile-analysis/                      # 移动端工具与知识库
+│   ├── scripts/                          # 移动端特有脚本（Frida 管理、DEX dump 等）
+│   │   └── registry.json                 #   脚本注册表
+│   └── knowledge-base/                   # 移动端特有知识库（按需加载）
+│       ├── android-tools.md              #   APK 反编译工具
+│       ├── ios-tools.md                  #   IPA 分析工具
+│       ├── mobile-methodology.md         #   移动端分析方法论
+│       └── ...                           #   其他移动端特有文档
+└── commands/
+    └── security-analysis-requirements/   # 进化需求文档
+
+归属规则:
+  mobile-analysis/ 可引用 binary-analysis/ 的知识库和脚本（通过 $IDA_SCRIPTS_DIR）
+  binary-analysis/ 不可引用 mobile-analysis/ 的内容（单向依赖）
 
 依赖方向（单向，禁止反向）:
   _base.py ← _utils.py ← _analysis.py ← query.py / update.py / scripts/*.py
@@ -339,10 +352,16 @@ Plugin hooks:
   - Agent prompt → `.opencode/agents/<agent-name>.md`
   - Plugin → `.opencode/plugins/security-analysis.ts`
   - IDAPython 脚本 → `.opencode/binary-analysis/` 下对应层级
-  - 独立 Python 工具 → `.opencode/binary-analysis/scripts/`
-  - 知识库 → `.opencode/binary-analysis/knowledge-base/` 或 `.opencode/mobile-analysis/knowledge-base/`
+  - 独立 Python 工具 → `.opencode/binary-analysis/scripts/`（通用）或 `.opencode/mobile-analysis/scripts/`（移动端特有）
+  - 知识库 → `.opencode/binary-analysis/knowledge-base/`（通用）或 `.opencode/mobile-analysis/knowledge-base/`（移动端特有）
   - 需求文档 → `.opencode/commands/security-analysis-requirements/`
   - 禁止散落到项目根目录或 `.opencode/` 之外
+- 知识/脚本的归属判定:
+  - **通用（放 `binary-analysis/`）**: PC 端和移动端都可能用到。如: Frida API 变化、Hook 原则、密码学验证模式、技术选型
+  - **移动端特有（放 `mobile-analysis/`）**: 只在移动端场景有意义。如: APK 反编译、DEX dump、Android 加固识别、Java Bridge 编译
+  - **PC 端特有（放 `binary-analysis/`）**: 只在 PC 端场景有意义。如: IDA 调试器策略、Win32 GUI 自动化
+  - **不确定时默认放 `binary-analysis/`**: 它是最早存在的通用层，不确定归属时先放通用层
+  - **沉淀时机**: 如果先在 agent 专属目录中实现了通用知识，实施完成后必须检查是否有应沉淀到通用层的内容
 
 ### 规则 5: 禁止作弊式测试
 
