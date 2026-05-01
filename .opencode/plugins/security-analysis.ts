@@ -151,6 +151,7 @@ function getScriptDir(
   const AGENT_SCRIPT_DIRS: Record<string, string> = {
     "binary-analysis": join(OPENCODE_ROOT, "binary-analysis"),
     "mobile-analysis": join(OPENCODE_ROOT, "mobile-analysis"),
+    "security-analysis-evolve": join(OPENCODE_ROOT, "security-analysis-evolve"),
   };
   return (
     AGENT_SCRIPT_DIRS[agentName || ""] ||

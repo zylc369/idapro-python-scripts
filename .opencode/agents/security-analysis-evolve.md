@@ -66,6 +66,18 @@ Plugin hooks:
 
 ---
 
+## 变量
+
+环境信息由 Plugin 在每轮注入（见系统提示中的"环境信息"段）：
+
+| 变量 | 来源 | 说明 |
+|------|------|------|
+| `$OPENCODE_ROOT` | 环境信息"配置根目录 ($OPENCODE_ROOT)" | agents/、plugins/ 等目录的父目录（项目级或全局） |
+| `$AGENT_DIR` | 环境信息"Agent 目录 ($AGENT_DIR)" | 本 Agent 的专属目录（security-analysis-evolve/） |
+| `$SHARED_DIR` | 环境信息"共享目录 ($SHARED_DIR)" | 通用分析能力目录（binary-analysis/） |
+
+---
+
 ## 进化流程
 
 ```
