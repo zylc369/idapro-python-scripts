@@ -67,6 +67,20 @@ Payload/
 │     3. 结合 jadx 对照视图（jadx 看大致逻辑，smali 看精确操作）
 │   知识库加载: android-tools.md
 │
+├── jadx-smali 分层分析原则（路径 1+2 组合使用时必读）
+│   触发: 关键比较/返回值/跳转条件需要精确验证
+│   原则:
+│     1. jadx 用于快速理解结构（类层次、方法签名、变量命名、调用链）
+│     2. smali 是 ground truth — 关键公式（比较、返回值、跳转条件）必须在 smali 层验证
+│     3. jadx 变量映射在高度混淆代码中不可靠:
+│        - jadx 可能将不同 smali 寄存器合并为同一 Java 变量
+│        - jadx 的变量赋值追踪可能丢失循环中的寄存器复用
+│        - 实际案例: jadx 显示 `j = jIntValue`（用户输入），
+│          但 smali 中 `v10 = 124750 + jIntValue`（加了一个常量偏移），
+│          导致公式推导错误，暴力测试全部失败
+│     4. 验证方法: 在 smali 中搜索关键操作码（rem-long、cmp-long、if-nez 等）
+│        定位比较点，再追踪参与比较的寄存器来源
+│
 ├── 路径 3: Native 层分析（.so）
 │   触发: 分析加密算法、保护机制、JNI 函数、native 层逻辑
 │   工具链: apktool 解包 → 识别 .so → IDA Pro 分析

@@ -238,3 +238,55 @@ def compile_java_hook(ts_source_code, ts_filename="hook.ts"):
 | 编译后 `Java.available` 仍为 `false` | 目标进程无 Java VM（纯 native 进程） | 换用 attach 到含 Java VM 的进程 |
 | `bundle` 过大（> 1MB） | source map 未压缩 | 使用 `frida_compile` 的压缩选项 |
 | `npm install` 失败 | 无 Node.js 环境 | 安装 Node.js（`brew install node`） |
+
+---
+
+## 超时排查 SOP
+
+### 症状
+
+- CLI: `Failed to load script: timeout was reached`
+- Python SDK: `frida.TransportError: timeout was reached`（在 `create_script()` 时）
+- 任何脚本（包括几十字节的纯 Native 脚本）都无法加载
+
+### 根因
+
+frida-server 进程进入异常状态（残留 agent 未清理、进程僵死等），导致后续所有脚本注入超时。
+
+### 排查流程（严格按顺序执行）
+
+```
+1. 确认症状：尝试加载一个最小纯 Native 脚本
+   Python: session.create_script('console.log("ping"); rpc.exports={ping:function(){return 42;}};')
+   CLI: echo 'console.log("ping");' > /tmp/ping.js && frida -U -p <PID> -l /tmp/ping.js
+
+2. 最小脚本也超时 → frida-server 异常 → 重启 frida-server
+   adb shell "kill -9 $(adb shell 'ps -A | grep <frida_server_name> | awk \"{print \\$2}\"')"
+   sleep 2
+   adb shell "nohup /data/local/tmp/<frida_server_path> -D &"
+   sleep 3
+   确认: adb shell "ps -A | grep <frida_server_name>"
+
+3. 重启后系统性重试所有方案（按优先级）：
+   a. CLI + Java bridge（最简单，优先试）→ frida -U -p <PID> -l hook.js
+   b. Python SDK 纯 Native → session.create_script(small_js)
+   c. Python SDK + Compiler（仅在 a/b 都不需要时）
+
+   ⚠️ 关键：重启 server 后必须重新尝试所有方案，不能只试一个就放弃！
+   之前的教训：重启后只测了 Python SDK 纯 Native（成功），没有重新试 CLI + Java bridge，
+   误判为"Java bridge 在模拟器上不可用"。实际上重启后 CLI + Java bridge 完全正常。
+
+4. 如果重启后 CLI + Java bridge 仍超时：
+   - 检查 frida client 和 server 版本是否匹配（frida --version vs 下载的 server 版本）
+   - 尝试 kill 目标 app 后重新启动再 attach
+   - 尝试 spawn 模式：frida -U -f com.target.app -l hook.js
+```
+
+### 超时 vs 脚本错误区分
+
+| 现象 | 类型 | 处理 |
+|------|------|------|
+| `timeout was reached`（加载阶段） | frida-server 异常 | 按 SOP 重启 server |
+| `Error: Java is not defined`（运行阶段） | 脚本问题 | 用 Compiler 或改用 CLI |
+| 脚本加载成功但运行时报错 | 业务逻辑问题 | 检查脚本内容 |
+| Python SDK 大 bundle（>500KB）超时 | 传输速度问题 | 优先改用 CLI |
