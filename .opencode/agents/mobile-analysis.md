@@ -1,6 +1,7 @@
 ---
 description: 移动应用逆向分析 — 输入 APK/IPA 和分析需求，自动编排工具链完成分析
 mode: primary
+buwai-extension-id: mobile-analysis
 permission:
   external_directory:
     ~/bw-security-analysis/**: allow
@@ -26,24 +27,13 @@ permission:
 
 ## 运行环境
 
-> 动态环境信息由 Plugin 注入到上下文中。环境检测见"阶段 0"。
-
-**跨平台**：bash 模板用 `python3`/`idat`/`VAR=xxx cmd`；PowerShell 模板用 `python`/`idat.exe`/`$env:VAR="xxx"; cmd`。
+{{buwai-rule:running-environment}}
 
 ---
 
 ## 变量初始化（每轮对话首次执行前）
 
-环境信息由 Plugin 在每轮注入（见系统提示中的"环境信息"段）。在首次需要执行脚本的 bash 命令中，从环境信息提取路径赋值：
-
-| 变量 | 来源 | 说明 |
-|------|------|------|
-| `$AGENT_DIR` | 环境信息"Agent 目录 ($AGENT_DIR)" | 本 Agent 的工具目录 |
-| `$SHARED_DIR` | 环境信息"共享目录 ($SHARED_DIR)" | 共享分析能力目录（binary-analysis/） |
-| `$IDAT` | 环境信息"IDA Pro"路径 + `/idat` | 需检查文件存在性 |
-| `$BA_PYTHON` | 阶段 0 env.json 的 `venv_python` | 带第三方包的 venv Python |
-
-**强制**：带第三方包的 Python 脚本必须用 `$BA_PYTHON`，禁止用系统 Python（仅 `detect_env.py` 例外）。
+{{buwai-rule:variable-initialization}}
 
 ---
 
@@ -55,13 +45,9 @@ permission:
 
 ## 阶段 0：任务初始化（强制 — 每次分析前，不可跳过）
 
-在阶段 A 之前必须按顺序执行以下 3 步。详细流程见 `$SHARED_DIR/knowledge-base/task-initialization.md`。
+{{buwai-rule:task-initialization}}
 
-1. **创建任务目录**：`TASK_DIR=$(python3 "$SHARED_DIR/scripts/create_task_dir.py")`
-2. **环境检测**：`python3 "$SHARED_DIR/scripts/detect_env.py" --agent mobile-analysis --output "$TASK_DIR/env.json"`
-3. **初始化 $BA_PYTHON**：从 `~/bw-security-analysis/env_cache.json` 提取 `venv_python`
-
-环境检测失败 → **停下来告知用户，禁止继续**。环境检测结果缓存 24h（`~/bw-security-analysis/env_cache.json`），无需每次重新检测。
+> **mobile-analysis agent**：环境检测命令需添加 `--agent mobile-analysis` 参数。
 
 ---
 
@@ -97,31 +83,15 @@ permission:
 
 根据用户的分析需求和阶段 A 的结果，选择分析路径。**读取 `$AGENT_DIR/knowledge-base/mobile-methodology.md`** 获取完整的多路径决策树。
 
-核心规则：
-1. **先规划再执行** — 禁止无方案直接开始分析
-2. **场景驱动** — 根据需求关键词选择路径
-3. **知识库按需加载** — 只读取场景对应的文档
-4. **必须输出方案** — 向用户输出完整方案（选择路径、计划步骤、预计耗时）
+{{buwai-rule:analysis-planning-rules}}
 
 ### 阶段 C：执行与监控
 
-按规划执行，遵守以下**执行纪律**：
-
-| 纪律 | 规则 |
-|------|------|
-| **失败快速切换** | 同一方向连续失败 **2 次** → 强制切换方向 |
-| **超时保护** | 单步骤耗时超过预期 2x → 暂停评估 |
-| **方向选择** | 遵循知识库中的优先级顺序 |
-| **进度输出** | 用户不应看到超过 30 秒的无输出间隔 |
-| **禁止重复** | 失败后必须记录失败原因和已尝试的方向 |
+{{buwai-rule:execution-discipline}}
 
 ### 循环控制
 
-| 参数 | 值 |
-|------|-----|
-| 最大尝试次数 | 2（同一方向） |
-| 单次 idat 超时 | 300 秒 |
-| 累计耗时上限 | 120 分钟 |
+{{buwai-rule:loop-control}}
 
 ---
 
@@ -220,24 +190,11 @@ permission:
 
 ## 输出格式
 
-```
-## 分析摘要
-（一句话说明分析结论）
+{{buwai-rule:output-format}}
 
-## 详细结果
-（按功能模块/文件组织的分析细节）
-
-## 工具执行记录
-- apktool: X 次 | jadx: X 次 | IDA: X 次 | Frida: X 次
-
-## 置信度说明
-- 确定: （来自工具输出）
-- 推测: （AI 推理，标注置信度）
-
-## 执行统计
-- 总耗时: Xm Xs
-- 任务目录: ~/bw-security-analysis/workspace/<task_id>/
-```
+> **Agent 专属补充**：
+> - 详细结果按功能模块/文件组织
+> - 增加「工具执行记录」段
 
 ---
 
@@ -255,7 +212,7 @@ permission:
 
 ## 任务存档
 
-命令结束时在任务目录写入 `summary.json`（包含 binary_path、user_request、status、metrics）。
+{{buwai-rule:task-archive}}
 
 ---
 

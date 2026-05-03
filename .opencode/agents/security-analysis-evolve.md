@@ -18,8 +18,9 @@ $OPENCODE_ROOT/                              # 由插件注入，项目级 .open
 │   ├── binary-analysis.md                # 二进制逆向 Agent（主 prompt，AI 编排器）
 │   ├── mobile-analysis.md                # 移动端分析 Agent
 │   └── security-analysis-evolve.md       # ← 你自己（本文件）
+├── agents-rules/                         # Agent prompt 共享片段（Plugin 自动展开 {{buwai-rule:xxx}}）
 ├── plugins/
-│   └── security-analysis.ts              # Plugin（上下文持久化 + session 管理）
+│   └── security-analysis.ts              # Plugin（上下文持久化 + session 管理 + 片段展开）
 ├── binary-analysis/                      # 逆向分析核心工具与知识库
 │   ├── _base.py                          # 层 1: 基础设施
 │   ├── _utils.py                         # 层 2: 共享业务工具
@@ -57,7 +58,7 @@ $OPENCODE_ROOT/                              # 由插件注入，项目级 .open
 Plugin hooks:
   chat.message                      — 追踪 session 的当前 agent 和主 agent
   experimental.session.compacting   — 压缩时注入分析状态保留提示 + 关键规则
-  experimental.chat.system.transform — 每轮注入环境信息
+  experimental.chat.system.transform — 每轮注入环境信息 + 占位符展开（{{buwai-rule:xxx}}）
   tool.execute.before               — 注入 SESSION_ID 环境变量
   event                             — 管理 session 生命周期 + 子 session 继承
 ```
@@ -149,7 +150,9 @@ Plugin hooks:
 ┌──────────────────────────────────────────────────────────┐
 │ Phase 4.5: Prompt 瘦身检查（渐进式披露）                     │
 │                                                            │
-│ 读取目标 agent prompt，检查行数:                             │
+│ 读取目标 agent prompt，计算展开后行数（LLM 实际收到的）:     │
+│   展开行数 = .md 文件行数 - 占位符行数 + 各片段文件行数之和  │
+│   （占位符 {{buwai-rule:xxx}} 占 1 行，展开后替换为片段内容） │
 │   < 450 行 → 跳过，进入 Phase 5                             │
 │   450-600 行 → 分析可提取内容，向用户建议                    │
 │   > 600 行 → 必须先瘦身再添加新内容                          │
@@ -164,7 +167,7 @@ Plugin hooks:
 │ 6. 知识库文件必须自包含（不依赖主 prompt 上下文即可理解）     │
 │                                                            │
 │ 提取后验证:                                                 │
-│ - 主 prompt < 450 行                                       │
+│ - 展开后 < 450 行                                           │
 │ - 主 prompt 仍包含核心规则（不会因未加载知识库而犯错）        │
 │ - 知识库文件内容完整，可独立理解                              │
 └───────────────┬──────────────────────────────────────────┘
@@ -391,7 +394,7 @@ Plugin hooks:
 | 独立 Python 工具（gui_verify.py 等） | `python <脚本> --help` 确认参数正确 + 按模式功能测试 |
 | Plugin（security-analysis.ts） | 确认文件存在且 export 正确 |
 | 知识库（.md 文件） | 人工读一遍确认自包含性 + 引用路径正确 |
-| Agent prompt（.md 文件） | 检查行数 < 450 + 核心规则仍在 + 知识库索引完整 |
+| Agent prompt（.md 文件） | 检查展开后行数 < 450 + 核心规则仍在 + 知识库索引完整 |
 
 通用规则:
 - 使用 `~/bw-security-analysis/config.json` 中配置的 idat 路径

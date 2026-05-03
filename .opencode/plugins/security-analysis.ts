@@ -165,6 +165,71 @@ function getScriptDir(
 }
 
 const AGENTS_DIR = join(OPENCODE_ROOT, "agents");
+const AGENTS_RULES_DIR = join(OPENCODE_ROOT, "agents-rules");
+
+// ─── 占位符展开 ──────────────────────────────────────────────────────
+//
+// Agent .md 文件中可以用 {{buwai-rule:片段名}} 引用 agents-rules/ 下的通用片段。
+// Plugin 在 system.transform hook 中展开占位符，LLM 收到的是完整 prompt。
+//
+// 缓存策略：mtime 检测（statSync + mtimeMs 对比），文件改动后下次调用即生效。
+// 依赖顺序：session 检查 → 占位符展开（每次）→ shouldInject（每 10 次环境注入）
+
+interface SnippetCacheEntry { content: string | null; mtime: number; }
+const snippetCache = new Map<string, SnippetCacheEntry>();
+
+interface FrontmatterCacheEntry { result: boolean; mtime: number; }
+const frontmatterCache = new Map<string, FrontmatterCacheEntry>();
+
+// 解析 YAML frontmatter（仅扁平 key-value，不处理嵌套结构）
+// 示例输入：---\nmode: primary\nbuwai-extension-id: binary-analysis\n---\n
+// 返回：{ mode: "primary", "buwai-extension-id": "binary-analysis" }
+function parseFrontmatter(content: string): Record<string, string> {
+  // 匹配 --- 开头和结尾之间的内容（兼容 \r\n 和 \n）
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  if (!match) return {};
+  const result: Record<string, string> = {};
+  for (const line of match[1].split(/\r?\n/)) {
+    // 只匹配顶层 key: value（缩进行如 "  external_directory:" 被跳过）
+    const kv = line.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
+    if (kv) result[kv[1]] = kv[2].trim();
+  }
+  return result;
+}
+
+// 检查 agent .md 是否声明了 buwai-extension-id（有此字段才做占位符展开）
+// 结果按 agentFile 路径缓存，mtime 变了才重新读取
+function hasBuwaiExtensionId(agentFile: string): boolean {
+  try {
+    const stat = statSync(agentFile);
+    const cached = frontmatterCache.get(agentFile);
+    if (cached && cached.mtime === stat.mtimeMs) return cached.result;
+    const content = readFileSync(agentFile, "utf-8");
+    const fm = parseFrontmatter(content);
+    const result = "buwai-extension-id" in fm;
+    frontmatterCache.set(agentFile, { result, mtime: stat.mtimeMs });
+    return result;
+  } catch {
+    return false;
+  }
+}
+
+// 加载 agents-rules/<name>.md 片段文件，带 mtime 缓存
+// 返回 null 表示文件不存在（调用方保留占位符原文）
+function loadSnippet(name: string): string | null {
+  const filePath = join(AGENTS_RULES_DIR, `${name}.md`);
+  try {
+    const stat = statSync(filePath);
+    const cached = snippetCache.get(name);
+    if (cached && cached.mtime === stat.mtimeMs) return cached.content;
+    const content = readFileSync(filePath, "utf-8").trim();
+    snippetCache.set(name, { content, mtime: stat.mtimeMs });
+    return content;
+  } catch {
+    debugLog(`Snippet not found: ${filePath}`);
+    return null;
+  }
+}
 
 function getCompactionReminder(agentName: string | undefined): string {
   if (agentName) {
@@ -556,6 +621,30 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       );
       if (!session) return;
 
+      const agentName = session.agentName;
+
+      // 占位符展开（每次 LLM 调用都执行，不受 shouldInject 控制）
+      if (agentName) {
+        const agentFile = join(AGENTS_DIR, `${agentName}.md`);
+        if (hasBuwaiExtensionId(agentFile)) {
+          // 匹配 {{buwai-rule:片段名}} — 片段名仅允许字母数字连字符下划线
+          const regex = /\{\{buwai-rule:([a-zA-Z0-9_-]+)\}\}/g;
+          for (let i = 0; i < output.system.length; i++) {
+            // 快速跳过不含占位符的字符串，避免无谓的正则匹配
+            if (!output.system[i].includes("{{buwai-rule:")) continue;
+            output.system[i] = output.system[i].replace(regex, (_, name) => {
+              const snippet = loadSnippet(name);
+              if (snippet === null) {
+                debugLog(`Snippet not found: ${name}`, sessionID);
+                return _; // 保留原始占位符文本，不删除
+              }
+              debugLog(`Expanded snippet: ${name} (${snippet.length} chars)`, sessionID);
+              return snippet;
+            });
+          }
+        }
+      }
+
       session.systemTransformCount++;
       const shouldInject = session.systemTransformCount % 10 === 1;
 
@@ -572,7 +661,6 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
       const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE, sessionID);
       const envInfo = envData?.data;
-      const agentName = session.agentName;
 
       const envSection = buildEnvSection(agentName, config, envInfo, sessionID);
       output.system.push(envSection);
