@@ -641,6 +641,8 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
               debugLog(`Expanded snippet: ${name} (${snippet.length} chars)`, sessionID);
               return snippet;
             });
+            // DEBUG: 打印替换完成后的完整内容，验证通过后注释掉
+            // debugLog(`=== system[${i}] after expansion (${output.system[i].length} chars) ===\n${output.system[i]}`, sessionID);
           }
         }
       }
