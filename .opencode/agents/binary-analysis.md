@@ -264,6 +264,14 @@ python3 "$AGENT_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 
 需要生成新脚本时，读取 `$AGENT_DIR/knowledge-base/script-generation.md`。
 
+### 网页渲染工具
+
+> 当 webfetch 无法获取 SPA 页面内容时使用。详情见 `$AGENT_DIR/knowledge-base/web-rendering.md`。
+
+| 脚本 | 用途 | 关键参数 |
+|------|------|---------|
+| `web_render.py` | Playwright 无头浏览器渲染（JS 执行 + 截图） | `--url <URL> --format markdown\|text\|html --screenshot <PATH>` |
+
 ### 进程 Patch 工具
 
 > 当需要向运行中的进程写入补丁/代码/数据，或捕获内存值时使用。
@@ -292,6 +300,7 @@ python3 "$AGENT_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 | `frida-17x-api.md` | 编写 Frida 脚本时（17.x Module/Bridge 变化速查 + 迁移检查清单） |
 | `verification-patterns.md` | 需要验证分析结果（license/key/password） |
 | `gui-automation.md` | GUI 自动化操作（视觉驱动方案） |
+| `web-rendering.md` | webfetch 失败后需要渲染 SPA 页面、获取页面截图 |
 | `process-patch-reference.md` | 使用 process_patch.py 时的完整参数参考 |
 
 ---

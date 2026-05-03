@@ -72,6 +72,15 @@
       "example_call": "python3 $SHARED_DIR/scripts/create_task_dir.py",
       "added_at": "2026-04-28",
       "verified": false
+    },
+    {
+      "name": "web_render",
+      "file": "web_render.py",
+      "description": "Playwright 无头浏览器网页渲染：支持 JavaScript 执行，可获取 SPA 页面渲染后内容（markdown/text/html）和页面截图",
+      "params": ["--url", "--format", "--screenshot", "--screenshot-full-page", "--timeout", "--wait-selector", "--output", "--user-agent"],
+      "example_call": "$BA_PYTHON $SHARED_DIR/scripts/web_render.py --url https://example.com --format markdown",
+      "added_at": "2026-05-03",
+      "verified": true
     }
   ]
 }

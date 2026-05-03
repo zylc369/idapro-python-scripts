@@ -166,6 +166,14 @@ permission:
 
 设备操作前先检查 `$TASK_DIR/device.json`。如不存在，按设备选择流程创建。详细规范读取 `$AGENT_DIR/knowledge-base/mobile-frida.md`。
 
+### 网页渲染工具
+
+> 当 webfetch 无法获取 SPA 页面内容时使用。详情见 `$SHARED_DIR/knowledge-base/web-rendering.md`。
+
+| 脚本 | 用途 | 关键参数 |
+|------|------|---------|
+| `$SHARED_DIR/scripts/web_render.py` | Playwright 无头浏览器渲染（JS 执行 + 截图） | `--url <URL> --format markdown\|text\|html --screenshot <PATH>` |
+
 ---
 
 ## 知识库索引
@@ -206,6 +214,7 @@ permission:
 | `verification-patterns.md` | 需要验证分析结果时 |
 | `crypto-validation-patterns.md` | 检测到密码学特征时 |
 | `technology-selection.md` | 需要实现算法、性能敏感计算时 |
+| `web-rendering.md` | webfetch 失败后需要渲染 SPA 页面、获取页面截图 |
 
 ---
 
