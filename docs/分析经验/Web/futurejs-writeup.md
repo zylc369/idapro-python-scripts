@@ -21,7 +21,9 @@
 - [第九章：第五个大坑——Docker 没有外网](#第九章第五个大坑docker-没有外网)
 - [第十章：完整攻击复现](#第十章完整攻击复现)
 - [第十一章：黑盒环境下的分析方法](#第十一章黑盒环境下的分析方法)
-- [第十二章：总结](#第十二章总结)
+- [第十二章：如何防御这类攻击](#第十二章如何防御这类攻击)
+- [第十三章：分析方法论-深入阅读源码是找到解法的关键](#第十三章分析方法论-深入阅读源码是找到解法的关键)
+- [第十四章：总结](#第十四章总结)
 
 ---
 
@@ -1102,23 +1104,23 @@ Accept-Encoding: gzip, deflate, br
 思路是：**先让 Bot 单独访问一个干净路径，创建一个以 Bot 的 AE 为二级键的缓存副本，然后我们用各种 AE 值去读，看哪个命中**。具体步骤：
 
 ```
-步骤1: 选一个没被访问过的新路径 /_next/probe-v2（确保缓存是空的）
+步骤1: 选一个没被访问过的新路径 /_next/probe-ae-test（确保缓存是空的）
 
-步骤2: 让 Bot 访问 /_next/probe-v2
+步骤2: 让 Bot 访问 /_next/probe-ae-test
         → Bot 的请求不带 RSC 头，不带 x-nonce
         → nginx 缓存 MISS（路径从未被访问过）
         → Next.js 返回正常 404 页面
         → nginx 缓存这个响应，二级键记录 Bot 的 AE 值（但我们不知道具体是什么）
 
-步骤3: 攻击者用不同 AE 值读取 /_next/probe-v2:
+步骤3: 攻击者用不同 AE 值读取 /_next/probe-ae-test:
 
-        curl -H "Accept-Encoding: gzip, deflate, br" http://target/_next/probe-v2
+        curl -H "Accept-Encoding: gzip, deflate, br" http://target/_next/probe-ae-test
         → X-Proxy-Cache: MISS  （Bot 的 AE 不是这个值）
 
-        curl -H "Accept-Encoding: gzip, deflate" http://target/_next/probe-v2
+        curl -H "Accept-Encoding: gzip, deflate" http://target/_next/probe-ae-test
         → X-Proxy-Cache: HIT!  （Bot 的 AE 就是 "gzip, deflate"）
 
-        curl -H "Accept-Encoding: gzip" http://target/_next/probe-v2
+        curl -H "Accept-Encoding: gzip" http://target/_next/probe-ae-test
         → X-Proxy-Cache: MISS  （Bot 的 AE 不是这个值）
 ```
 
@@ -1481,7 +1483,9 @@ curl "http://46.62.153.171:4000/_next/exfil" \
 
 为什么 Step 1 和 Step 3 必须用 curl 而不能在浏览器中操作？因为浏览器会自动设置 `Host` 头为当前页面的域名/IP（如 `46.62.153.171:4000`），而缓存主键中用的是 Host 头的值。如果 Host 不匹配 `proxy:4000`，缓存主键就对不上 Bot 的请求，投毒就失败了。浏览器的 Fetch API 和 XMLHttpRequest 都禁止修改 `Host` 头（这是浏览器的安全限制），所以必须用 curl 或 Python 等可以自由设置 HTTP 头的工具。
 
-### 如何防御这类攻击
+---
+
+## 第十二章：如何防御这类攻击
 
 这道题的攻击能成功，是因为多个组件各自的小问题组合在一起形成了漏洞链。以下逐个说明每个环节的防御方法：
 
@@ -1562,7 +1566,29 @@ if ($host !~ ^(example\.com|www\.example\.com)$) {
 
 ---
 
-## 第十二章：总结
+## 第十三章：分析方法论-深入阅读源码是找到解法的关键
+
+这道题的解法不是通过枚举或猜测找到的，而是通过逐行阅读源码发现的。整个分析过程中，以下源码阅读起到了决定性作用：
+
+**应用代码**（题目提供的文件）：
+- **middleware.ts**：读到了 CT 覆盖逻辑——请求带 `Content-Type` 头就能覆盖响应的 CT。这是整个攻击链的入口，没有这个功能攻击无法成立
+- **app/layout.tsx**：读到了 `x-nonce` 请求头的值被直接反射到 `<body nonce={nonce}>`。这是 XSS 的注入点
+- **bot/server.js**：读到了 `httpOnly: false`（Cookie 可被 JS 读取）、Cookie 绑定 `proxy:4000`（决定了 Host 必须匹配）、用 `page.goto()` 访问（决定了不走客户端导航）
+
+**基础设施配置**：
+- **nginx.conf**：读到了只缓存 `/_next/` 路径、缓存键用 `$host`。这解释了为什么首页投毒不生效、为什么 Host 要对齐
+
+**框架源码**（`node_modules` 里的压缩代码，最难读的部分）：
+- **base-server.js**（Next.js 的请求调度器）：读到了 `req.headers['rsc'] === '1'` 严格检查——只有值为 `"1"` 时才标记为 RSC 请求
+- **app-render.js**（Next.js 的渲染引擎）：读到了 `headers['rsc'] !== undefined` 宽松检查——只要 RSC 头存在就按 RSC 模式渲染
+
+**最关键的突破**来自对比 base-server.js 和 app-render.js 对同一个 `RSC` 头的判断逻辑——一个用 `=== '1'`（严格），一个用 `!== undefined`（宽松）。这个不一致意味着发送 `RSC: ""`（空字符串）时，base-server.js 认为不是 RSC 请求（`"" !== "1"`），但 app-render.js 认为是 RSC 模式（`"" !== undefined`）。这个发现不是猜测出来的，是逐行读 `node_modules/next/dist/` 里的压缩代码找到的。
+
+这说明了一个重要的方法论：**解决复杂的安全问题，往往需要深入阅读中间件和基础软件的源码，而不只是看应用层的业务代码**。本题的漏洞不在业务逻辑中，而在 Next.js 框架内部两个模块对同一请求头的判断不一致。
+
+---
+
+## 第十四章：总结
 
 ### 这道题的本质：Web Cache Poisoning（Web 缓存投毒）
 
@@ -1677,26 +1703,6 @@ Bot 发请求到 /_next/pwn（没有 x-nonce 头）
 2. **Vary 头**是缓存的"安全阀"，但如果实现有差异（空值 vs 缺失），就可能被绕过
 3. **Next.js RSC** 的 flight data 不转义 `<`，如果被浏览器当成 HTML 解析就有 XSS
 4. **多组件协作**：这道题需要 nginx 缓存 + middleware CT 覆盖 + RSC 渲染 + Bot 配合，单独看每个组件都没问题，组合起来就有了漏洞
-
-### 分析方法论：深入阅读源码是找到解法的关键
-
-这道题的解法不是通过枚举或猜测找到的，而是通过逐行阅读源码发现的。整个分析过程中，以下源码阅读起到了决定性作用：
-
-**应用代码**（题目提供的文件）：
-- **middleware.ts**：读到了 CT 覆盖逻辑——请求带 `Content-Type` 头就能覆盖响应的 CT。这是整个攻击链的入口，没有这个功能攻击无法成立
-- **app/layout.tsx**：读到了 `x-nonce` 请求头的值被直接反射到 `<body nonce={nonce}>`。这是 XSS 的注入点
-- **bot/server.js**：读到了 `httpOnly: false`（Cookie 可被 JS 读取）、Cookie 绑定 `proxy:4000`（决定了 Host 必须匹配）、用 `page.goto()` 访问（决定了不走客户端导航）
-
-**基础设施配置**：
-- **nginx.conf**：读到了只缓存 `/_next/` 路径、缓存键用 `$host`。这解释了为什么首页投毒不生效、为什么 Host 要对齐
-
-**框架源码**（`node_modules` 里的压缩代码，最难读的部分）：
-- **base-server.js**（Next.js 的请求调度器）：读到了 `req.headers['rsc'] === '1'` 严格检查——只有值为 `"1"` 时才标记为 RSC 请求
-- **app-render.js**（Next.js 的渲染引擎）：读到了 `headers['rsc'] !== undefined` 宽松检查——只要 RSC 头存在就按 RSC 模式渲染
-
-**最关键的突破**来自对比 base-server.js 和 app-render.js 对同一个 `RSC` 头的判断逻辑——一个用 `=== '1'`（严格），一个用 `!== undefined`（宽松）。这个不一致意味着发送 `RSC: ""`（空字符串）时，base-server.js 认为不是 RSC 请求（`"" !== "1"`），但 app-render.js 认为是 RSC 模式（`"" !== undefined`）。这个发现不是猜测出来的，是逐行读 `node_modules/next/dist/` 里的压缩代码找到的。
-
-这说明了一个重要的方法论：**解决复杂的安全问题，往往需要深入阅读中间件和基础软件的源码，而不只是看应用层的业务代码**。本题的漏洞不在业务逻辑中，而在 Next.js 框架内部两个模块对同一请求头的判断不一致。
 
 ---
 
