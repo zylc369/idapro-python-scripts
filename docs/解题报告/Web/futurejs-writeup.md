@@ -1,6 +1,6 @@
 # future.js — Web Cache Poisoning 完整 Writeup
 
-> CTF: CyberGame 2026 (SK-CERT) | 难度: Hard | 483 分（一道题 477 分还挺高的）
+> CTF: CyberGame 2026 (SK-CERT) | 难度: Hard | 477 分（一道题 477 分还挺高的）
 >
 > 题目来源: [ctf-world-platform-2.cybergame.sk/challenges](https://ctf-world-platform-2.cybergame.sk/challenges) 的 `future.js`
 >
