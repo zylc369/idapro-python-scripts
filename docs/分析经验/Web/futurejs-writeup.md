@@ -1,6 +1,8 @@
 # future.js — Web Cache Poisoning 完整 Writeup
 
-> CTF: CyberGame 2026 (SK-CERT) | 难度: Hard
+> CTF: CyberGame 2026 (SK-CERT) | 难度: Hard | 483 分（一道题 477 分还挺高的）
+>
+> 题目来源: [ctf-world-platform-2.cybergame.sk/challenges](https://ctf-world-platform-2.cybergame.sk/challenges) 的 `future.js`
 >
 > Flag: `SK-CERT{seriously_why??????}`
 
@@ -10,6 +12,7 @@
 
 ## 目录
 
+- [第零章：AI 助力分析](#第零章ai-助力分析)
 - [第一章：你需要先知道的知识](#第一章你需要先知道的知识)
 - [第二章：这道题是什么结构](#第二章这道题是什么结构)
 - [第三章：寻找攻击入口](#第三章寻找攻击入口)
@@ -24,6 +27,46 @@
 - [第十二章：如何防御这类攻击](#第十二章如何防御这类攻击)
 - [第十三章：分析方法论-深入阅读源码是找到解法的关键](#第十三章分析方法论-深入阅读源码是找到解法的关键)
 - [第十四章：总结](#第十四章总结)
+
+---
+
+## 第零章：AI 助力分析
+
+这道题的完整分析过程是由 AI（OpenCode + 大语言模型）主导完成的，人类只提供了初始提示词和少量方向性回复。
+
+### 给 AI 的提示词
+
+```
+这是一道挑战题：
+future.js
+Points: 483
+Can you sonic out the flag? Looks like tardis' translator is broken.
+
+46.62.153.171:4000
+
+我已经下载并解压到了 C:\Users\crack\Downloads\handout_futurejs 里面，这道题啥意思？
+```
+
+就这么多。没有告诉 AI 用什么攻击技术、没有暗示漏洞类型、没有给任何解题方向。
+
+### 分析过程中的人机交互
+
+这确实是一道很难的题。整个分析过程断断续续持续了**一天半**，AI 很多次陷入僵局——试了十几种方法全部失败后，会说"我没有灵感了，你能给我一些提示或方向吗？"。人类的回复始终是：
+
+> 我没啥想法，你自己探索。
+
+然后 AI 就换一个角度继续尝试。比如投毒 `/` 路径发现没缓存，换成 `/_next/` 路径；`RSC: 1` 被 Vary 挡住，试了 HTTP 走私、路径注入等各种绕过方式全部失败后，最终去啃 `node_modules` 里的压缩代码，才找到 `base-server.js` 和 `app-render.js` 对 RSC 头判断不一致的关键突破。后面 Host 不匹配、AE 不匹配、Docker 无外网——每个坑都是 AI 自己撞墙、自己排查、自己解决的。
+
+AI 在完全自主的情况下完成了以下全部工作：
+- 识别题目架构（Next.js App Router + nginx 缓存 + Puppeteer Bot）
+- 阅读并理解所有源码文件（middleware.ts、layout.tsx、nginx.conf、bot/server.js）
+- 深入阅读 `node_modules/next/dist/` 中的框架压缩代码
+- 发现 base-server.js 和 app-render.js 中 RSC 判断逻辑的不一致
+- 构思完整的攻击链（空 RSC 头 → CT 覆盖 → 缓存投毒 → 缓存中缓存窃取 Cookie）
+- 编写并验证完整的 Python 攻击脚本
+- 成功获取 flag: `SK-CERT{seriously_why??????}`
+
+最终，人类让 AI 把整个分析过程写成了你正在阅读的这份 writeup 文档。
 
 ---
 
