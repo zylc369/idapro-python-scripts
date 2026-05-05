@@ -1,8 +1,10 @@
 # future.js — Web Cache Poisoning 完整 Writeup
 
-> CTF: CyberGame 2026 (SK-CERT) | 分类: Web | 难度: Hard
+> CTF: CyberGame 2026 (SK-CERT) | 难度: Hard
 >
 > Flag: `SK-CERT{seriously_why??????}`
+
+**题目分类：Web 安全**。本题属于 Web 类型 CTF，不是 PWN（二进制利用）。Web CTF 的攻击发生在 HTTP 协议层——伪造请求头、投毒缓存、利用应用逻辑漏洞；PWN CTF 的攻击发生在内存层——缓冲区溢出、ROP 链、堆利用。本题的攻击手段（HTTP 头注入 + 缓存投毒 + XSS）全部在 Web 应用层面完成，没有涉及二进制逆向或内存破坏。具体来说，本题考察的是 **Web Cache Poisoning**（Web 缓存投毒）+ **XSS**（跨站脚本攻击）的组合利用。
 
 ---
 
@@ -1451,6 +1453,26 @@ Bot 发请求到 /_next/pwn（没有 x-nonce 头）
 2. **Vary 头**是缓存的"安全阀"，但如果实现有差异（空值 vs 缺失），就可能被绕过
 3. **Next.js RSC** 的 flight data 不转义 `<`，如果被浏览器当成 HTML 解析就有 XSS
 4. **多组件协作**：这道题需要 nginx 缓存 + middleware CT 覆盖 + RSC 渲染 + Bot 配合，单独看每个组件都没问题，组合起来就有了漏洞
+
+### 分析方法论：深入阅读源码是找到解法的关键
+
+这道题的解法不是通过枚举或猜测找到的，而是通过逐行阅读源码发现的。整个分析过程中，以下源码阅读起到了决定性作用：
+
+**应用代码**（题目提供的文件）：
+- **middleware.ts**：读到了 CT 覆盖逻辑——请求带 `Content-Type` 头就能覆盖响应的 CT。这是整个攻击链的入口，没有这个功能攻击无法成立
+- **app/layout.tsx**：读到了 `x-nonce` 请求头的值被直接反射到 `<body nonce={nonce}>`。这是 XSS 的注入点
+- **bot/server.js**：读到了 `httpOnly: false`（Cookie 可被 JS 读取）、Cookie 绑定 `proxy:4000`（决定了 Host 必须匹配）、用 `page.goto()` 访问（决定了不走客户端导航）
+
+**基础设施配置**：
+- **nginx.conf**：读到了只缓存 `/_next/` 路径、缓存键用 `$host`。这解释了为什么首页投毒不生效、为什么 Host 要对齐
+
+**框架源码**（`node_modules` 里的压缩代码，最难读的部分）：
+- **base-server.js**（Next.js 的请求调度器）：读到了 `req.headers['rsc'] === '1'` 严格检查——只有值为 `"1"` 时才标记为 RSC 请求
+- **app-render.js**（Next.js 的渲染引擎）：读到了 `headers['rsc'] !== undefined` 宽松检查——只要 RSC 头存在就按 RSC 模式渲染
+
+**最关键的突破**来自对比 base-server.js 和 app-render.js 对同一个 `RSC` 头的判断逻辑——一个用 `=== '1'`（严格），一个用 `!== undefined`（宽松）。这个不一致意味着发送 `RSC: ""`（空字符串）时，base-server.js 认为不是 RSC 请求（`"" !== "1"`），但 app-render.js 认为是 RSC 模式（`"" !== undefined`）。这个发现不是猜测出来的，是逐行读 `node_modules/next/dist/` 里的压缩代码找到的。
+
+这说明了一个重要的方法论：**解决复杂的安全问题，往往需要深入阅读中间件和基础软件的源码，而不只是看应用层的业务代码**。本题的漏洞不在业务逻辑中，而在 Next.js 框架内部两个模块对同一请求头的判断不一致。
 
 ### 攻击者如何验证 XSS 是否生效
 
