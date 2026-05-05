@@ -1096,35 +1096,47 @@ Accept-Encoding: gzip, deflate, br
 
 问题是：我们不知道 Bot 的 Chromium 发的 AE 是什么。而且浏览器的 AE 值可能是多种组合（`gzip, deflate`、`gzip, deflate, br`、`gzip`、`gzip, br` 等），必须精确匹配才能命中缓存。
 
-我们用了"多值投毒"法：对同一个路径，用多种可能的 AE 值各投毒一次，覆盖所有常见组合：
+**探测方法**：不是靠猜——而是利用 nginx 的 `X-Proxy-Cache` 响应头来反推 Bot 的 AE。nginx 配置中有 `add_header X-Proxy-Cache $upstream_cache_status always;`（nginx.conf 第 45 行），每个响应都会带一个 `X-Proxy-Cache` 头，值为 `HIT`（命中缓存）或 `MISS`（未命中）。
 
-```python
-# 用不同的 AE 值各发一次投毒请求
-for ae in ['gzip, deflate, br', 'gzip, deflate', 'gzip', ...]:
-    conn.request('GET', path, headers={
-        'Host': 'proxy:4000',
-        'RSC': '',
-        'Content-Type': 'text/html',
-        'x-nonce': XSS,
-        'Accept-Encoding': ae,
-    })
-```
-
-每种 AE 值会创建一个独立的缓存副本。Bot 的 AE 会匹配其中某一个。
-
-### 8.3 发现 Bot 的真实 AE
-
-通过检查 Bot 访问后的缓存状态，我们发现 Bot 的 Chromium 用的 AE 是：
+思路是：**先让 Bot 单独访问一个干净路径，创建一个以 Bot 的 AE 为二级键的缓存副本，然后我们用各种 AE 值去读，看哪个命中**。具体步骤：
 
 ```
-gzip, deflate
+步骤1: 选一个没被访问过的新路径 /_next/probe-v2（确保缓存是空的）
+
+步骤2: 让 Bot 访问 /_next/probe-v2
+        → Bot 的请求不带 RSC 头，不带 x-nonce
+        → nginx 缓存 MISS（路径从未被访问过）
+        → Next.js 返回正常 404 页面
+        → nginx 缓存这个响应，二级键记录 Bot 的 AE 值（但我们不知道具体是什么）
+
+步骤3: 攻击者用不同 AE 值读取 /_next/probe-v2:
+
+        curl -H "Accept-Encoding: gzip, deflate, br" http://target/_next/probe-v2
+        → X-Proxy-Cache: MISS  （Bot 的 AE 不是这个值）
+
+        curl -H "Accept-Encoding: gzip, deflate" http://target/_next/probe-v2
+        → X-Proxy-Cache: HIT!  （Bot 的 AE 就是 "gzip, deflate"）
+
+        curl -H "Accept-Encoding: gzip" http://target/_next/probe-v2
+        → X-Proxy-Cache: MISS  （Bot 的 AE 不是这个值）
 ```
 
-**如何检查缓存状态**：nginx 配置中有 `add_header X-Proxy-Cache $upstream_cache_status always;`（nginx.conf 第 45 行），这意味着每个响应都会带一个 `X-Proxy-Cache` 头，值为 `HIT`（命中缓存）或 `MISS`（未命中）。所以"检查缓存状态"就是：用不同的 AE 值投毒后，用各种 AE 值去访问同一路径，看哪个 AE 值返回 `X-Proxy-Cache: HIT`——那个就是 Bot 的 AE 值。具体操作是：先让 Bot 访问投毒 URL，Bot 的请求会以某种 AE 值 MISS（因为 Bot 的 AE 和我们投毒的某个 AE 匹配的话就 HIT 了），然后 Bot 的响应被缓存（以 Bot 的 AE 值为二级键）。之后我们用各种 AE 值尝试读取，看哪个返回 HIT——那个 AE 值就是 Bot 的。
+命中 `HIT` 的那个 AE 值，就是 Bot 浏览器的 Accept-Encoding。
 
 注意：**没有 `br`（Brotli）**。这是因为 Bot 的 Docker 镜像使用的是 Debian 系统包中的 Chromium（不是 Google 官方的 Chrome）。系统包版本的 Chromium 没有编译 Brotli 支持，所以它的 AE 头里不包含 `br`。
 
-这不影响网页的正常显示（gzip 和 deflate 足够了），但影响了我们的攻击——我们投毒时必须也用 `Accept-Encoding: gzip, deflate`（不带 `br`），否则 Vary 二级键中的 AE 值就不匹配，Bot 的请求不会命中我们的缓存。
+找到 Bot 的 AE 后，投毒时就用这个精确的 AE 值：
+
+```python
+# 用探测到的 AE 值投毒
+conn.request('GET', '/_next/pwn', headers={
+    'Host': 'proxy:4000',
+    'RSC': '',
+    'Content-Type': 'text/html',
+    'x-nonce': XSS,
+    'Accept-Encoding': 'gzip, deflate',  # 精确匹配 Bot 的 AE
+})
+```
 
 ---
 
@@ -1473,6 +1485,78 @@ Bot 发请求到 /_next/pwn（没有 x-nonce 头）
 **最关键的突破**来自对比 base-server.js 和 app-render.js 对同一个 `RSC` 头的判断逻辑——一个用 `=== '1'`（严格），一个用 `!== undefined`（宽松）。这个不一致意味着发送 `RSC: ""`（空字符串）时，base-server.js 认为不是 RSC 请求（`"" !== "1"`），但 app-render.js 认为是 RSC 模式（`"" !== undefined`）。这个发现不是猜测出来的，是逐行读 `node_modules/next/dist/` 里的压缩代码找到的。
 
 这说明了一个重要的方法论：**解决复杂的安全问题，往往需要深入阅读中间件和基础软件的源码，而不只是看应用层的业务代码**。本题的漏洞不在业务逻辑中，而在 Next.js 框架内部两个模块对同一请求头的判断不一致。
+
+### 黑盒环境下的分析方法
+
+**如果没有源码，能分析到什么程度？**
+
+黑盒测试（不读源码，只通过发送 HTTP 请求观察响应）可以系统性地发现以下内容：
+
+**发现 `x-nonce` 注入点**——不完全靠运气，有系统性技巧：
+1. **观察 HTML 源码**：在首页 HTML 中搜索 `nonce` 关键字，找到 `<body nonce="xxx">`
+2. **理解 nonce 的来源**：nonce 是 CSP（Content Security Policy）的机制，通常从请求头中读取。这说明某个请求头的值被放到了页面中
+3. **Fuzz 常见的 nonce 头名**：依次发送 `x-nonce: TEST123`、`x-csp-nonce: TEST123`、`nonce: TEST123` 等请求头，检查响应中是否出现 `TEST123`。发现 `x-nonce` 被反射到页面中
+
+**发现 middleware CT 覆盖**：发正常请求记录 CT（如 `text/x-component`），再发带 `Content-Type: text/html` 的请求——如果响应 CT 变了，说明 middleware 允许覆盖
+
+**发现 nginx 缓存范围**：对不同路径（`/`、`/_next/test`）各发两次请求，检查第二次的 `X-Proxy-Cache` 是否为 `HIT`
+
+**发现 Host/AE 不匹配**：投毒后 Bot 没触发 XSS，通过 `X-Proxy-Cache` 头逐步排查
+
+**黑盒无法发现的关键突破：空 RSC 头绕过**——`RSC: ""` 触发 RSC 渲染但 Vary 匹配 Bot，这个只有读 `node_modules` 源码才能找到。
+
+**黑盒下如何获取 Next.js 源码**：
+
+即使没有题目提供的源码，攻击者可以通过黑盒探测获取框架信息，然后下载对应源码分析。以下是针对靶机 `http://46.62.153.171:4000/` 的实际测试结果：
+
+| 探测方法 | 实际结果 | 获取的信息 |
+|---------|---------|-----------|
+| 响应头 `X-Powered-By` | `X-Powered-By: Next.js` | 确认框架是 Next.js，但**无版本号** |
+| HTML 中的 JS chunk 路径 | `/_next/static/chunks/main-app-*.js` | 确认是 App Router 模式（有 `main-app` chunk） |
+| `_buildManifest.js` | `/_next/static/{buildId}/_buildManifest.js` 可访问 | 拿到 buildId，确认 App Router |
+| `/package.json` | 返回 404 | 无法直接获取版本号 |
+| JS chunk 内容搜索 `version` | 无结果 | chunk 中无版本字符串 |
+| 响应头 `Server` | `nginx/1.27.5` | nginx 版本号（nginx 默认暴露） |
+
+黑盒能确认"这是 Next.js App Router"（`X-Powered-By` + `main-app` chunk + `_buildManifest` 存在），但**拿不到精确版本号 15.5.14**。不过这已经足够——攻击者可以下载 Next.js 最近几个版本的源码（Next.js 是开源的，源码在 GitHub 和 npm 上公开），对比 `base-server.js` 和 `app-render.js` 中 RSC 判断逻辑的变化，找到存在不一致的版本范围。这就是"灰盒"分析——黑盒探测技术栈 + 白盒分析开源代码。
+
+### AE 探测的完整机制
+
+§8.2 中说"多值投毒"——对同一个路径用多种 AE 值各投毒一次。这里的关键是理解 **nginx 为每种 AE 值创建独立的缓存副本**（因为 `Vary: Accept-Encoding`）。假设我们用三种 AE 值投毒同一路径 `/_next/probe`：
+
+```
+投毒请求1: AE = "gzip, deflate, br" → 创建缓存副本 A（二级键 AE=gzip, deflate, br）
+投毒请求2: AE = "gzip, deflate"     → 创建缓存副本 B（二级键 AE=gzip, deflate）
+投毒请求3: AE = "gzip"              → 创建缓存副本 C（二级键 AE=gzip）
+```
+
+nginx 按 Vary 头中的 AE 值精确匹配——Bot 发的 AE 如果是 `gzip, deflate`，就命中副本 B。问题是：我们看不到 Bot 发了什么请求，怎么知道它命中了哪个副本？
+
+答案是：**不需要在投毒阶段探测 AE——可以先让 Bot 单独访问一个干净路径，创建一个以 Bot 的 AE 为二级键的缓存副本，然后我们用各种 AE 值去读，看哪个命中**。具体步骤：
+
+```
+步骤1: 清空探测路径（等缓存过期或用一个没被投毒过的新路径 /_next/probe-v2）
+
+步骤2: 让 Bot 访问 /_next/probe-v2
+        → Bot 的请求不带 RSC 头，不带 x-nonce
+        → nginx 缓存 MISS（路径从未被访问过）
+        → Next.js 返回正常 404 页面
+        → nginx 缓存这个响应，二级键记录 Bot 的 AE 值（但我们不知道具体是什么）
+
+步骤3: 攻击者用不同 AE 值读取 /_next/probe-v2:
+
+        请求: AE = "gzip, deflate, br"
+        → nginx 查找: 二级键 AE=gzip, deflate, br ≠ Bot 的 AE → MISS（从 Next.js 获取新响应）
+
+        请求: AE = "gzip, deflate"
+        → nginx 查找: 二级键 AE=gzip, deflate == Bot 的 AE → HIT!
+        → 说明 Bot 的 AE 就是 "gzip, deflate"
+
+        请求: AE = "gzip"
+        → nginx 查找: 二级键 AE=gzip ≠ Bot 的 AE → MISS
+```
+
+命中 `HIT` 的那个 AE 值，就是 Bot 浏览器的 Accept-Encoding。找到后，投毒时就用这个精确的 AE 值。
 
 ### 攻击者如何验证 XSS 是否生效
 
