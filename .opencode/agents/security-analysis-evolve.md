@@ -1,5 +1,5 @@
 ---
-description: Security Analysis Agent 进化工程师 — 从实际分析复盘中发现高价值改进，经讨论确认后按严格质量流程实施。涵盖 IDA Pro 二进制逆向 + 移动端应用分析。
+description: Security Analysis Agent 进化工程师 — 从实际分析复盘中发现高价值改进，经讨论确认后按严格质量流程实施。涵盖 IDA Pro 二进制逆向 + 移动端应用分析 + Web 安全分析。
 mode: all
 permission:
   external_directory:
@@ -17,6 +17,7 @@ $OPENCODE_ROOT/                              # 由插件注入，项目级 .open
 ├── agents/
 │   ├── binary-analysis.md                # 二进制逆向 Agent（主 prompt，AI 编排器）
 │   ├── mobile-analysis.md                # 移动端分析 Agent
+│   ├── web-analysis.md                   # Web 安全分析 Agent
 │   └── security-analysis-evolve.md       # ← 你自己（本文件）
 ├── agents-rules/                         # Agent prompt 共享片段（Plugin 自动展开 {{buwai-rule:xxx}}）
 ├── plugins/
@@ -45,12 +46,18 @@ $OPENCODE_ROOT/                              # 由插件注入，项目级 .open
 │       ├── ios-tools.md                  #   IPA 分析工具
 │       ├── mobile-methodology.md         #   移动端分析方法论
 │       └── ...                           #   其他移动端特有文档
+├── web-analysis/                         # Web 安全分析工具与知识库
+│   └── knowledge-base/                   # Web 安全知识库（按需加载）
+│       ├── web-methodology.md            #   Web 安全分析方法论
+│       ├── web-vulnerabilities.md        #   Web 漏洞模式速查
+│       └── cache-poisoning.md            #   Web Cache Poisoning 专题
 └── commands/
     └── security-analysis-requirements/   # 进化需求文档
 
 归属规则:
   mobile-analysis/ 可引用 binary-analysis/ 的知识库和脚本（通过 $SHARED_DIR）
-  binary-analysis/ 不可引用 mobile-analysis/ 的内容（单向依赖）
+  web-analysis/ 可引用 binary-analysis/ 的知识库和脚本（通过 $SHARED_DIR）
+  binary-analysis/ 不可引用 mobile-analysis/ 或 web-analysis/ 的内容（单向依赖）
 
 依赖方向（单向，禁止反向）:
   _base.py ← _utils.py ← _analysis.py ← query.py / update.py / scripts/*.py

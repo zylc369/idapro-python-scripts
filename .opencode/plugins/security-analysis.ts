@@ -26,11 +26,13 @@ const KEEP_SIZE = 2 * 1024 * 1024;
 
 const AGENT_BINARY_ANALYSIS = "binary-analysis";
 const AGENT_MOBILE_ANALYSIS = "mobile-analysis";
+const AGENT_WEB_ANALYSIS = "web-analysis";
 const AGENT_SECURITY_ANALYSIS_EVOLVE = "security-analysis-evolve";
 
 const PRIMARY_AGENTS = [
   AGENT_BINARY_ANALYSIS,
   AGENT_MOBILE_ANALYSIS,
+  AGENT_WEB_ANALYSIS,
   AGENT_SECURITY_ANALYSIS_EVOLVE,
 ];
 
@@ -247,7 +249,7 @@ function getCompactionReminder(agentName: string | undefined): string {
   return `## 压缩恢复指令（压缩时必须保留）
 
 上下文刚被压缩。继续分析前必须：
-1. 请告知当前使用的是哪个 Agent（如 ${AGENT_BINARY_ANALYSIS}、${AGENT_MOBILE_ANALYSIS}）
+1. 请告知当前使用的是哪个 Agent（如 ${AGENT_BINARY_ANALYSIS}、${AGENT_MOBILE_ANALYSIS}、${AGENT_WEB_ANALYSIS}）
 2. 根据 Agent 名读取 ${AGENTS_DIR}/<agent-name>.md
 3. 恢复 $OPENCODE_ROOT、$AGENT_DIR、$SHARED_DIR、$TASK_DIR 等关键变量`;
 }
@@ -284,6 +286,16 @@ function getCompactionContext(agentName: string | undefined): string {
 - 已解包路径
 - 已识别的 native 库列表（.so / .dylib）
 - 当前设备连接状态（device_id、frida_server 运行/端口）`;
+  }
+
+  if (agentName === AGENT_WEB_ANALYSIS) {
+    context += `
+
+### Web 分析状态
+- 目标 URL 和/或源码目录路径
+- 已识别的技术栈和框架版本
+- 已发现的攻击面和攻击链进度
+- 已测试的攻击方向和结果`;
   }
 
   return context;
