@@ -447,7 +447,9 @@ flight data 的格式看起来像一系列带数字前缀的行：
 
 每一行以数字 ID 开头，后面跟着类似 JSON 的结构，描述一个 React 组件或数据。这个格式是给 Next.js 的前端 JavaScript 代码解析的，不是给浏览器的 HTML 解析器用的。
 
-**为什么 flight data 里的 `<` 不转义**：这不是因为 `RSC: 1` 这个头有什么特殊含义，而是因为 React 渲染器根据渲染模式选择了不同的输出格式。当 React 渲染器输出 HTML 时，它会对属性值中的特殊字符做转义（`<` → `&lt;`，`>` → `&gt;`）——这是 React 渲染器主动做的，不是浏览器的行为。而当 React 渲染器输出 flight data 时，因为 flight data 是组件树的序列化格式（不是 HTML），React 渲染器不做 HTML 转义——字符串值中的 `<` 保持原样。转义与否完全由 React 渲染器根据输出格式决定，和浏览器无关（浏览器收到响应时，React 渲染器的工作已经结束了）。在正常使用中这完全没问题（flight data 的 CT 是 `text/x-component`，浏览器不会当 HTML 解析），但如果攻击者能让浏览器把 flight data 当 HTML 解析（通过修改 CT 为 `text/html`），未转义的 `<script>` 就会被执行。
+**为什么 flight data 里的 `<` 不转义**：React 渲染器根据"渲染模式"选择不同的输出格式。**渲染模式由请求中是否存在 `RSC` 头来决定**——具体是 app-render.js 第 102 行的 `headers['rsc'] !== undefined` 做的判断（详见 §6.1）。`RSC` 头存在 → RSC 渲染模式 → 输出 flight data；`RSC` 头不存在 → HTML 渲染模式 → 输出完整 HTML 页面。`text/x-component` **不是**渲染模式，它是响应的 Content-Type（响应头），是渲染结果的"标签"，告诉浏览器"这个响应体的内容是什么格式"——就像"HTML"不是渲染模式，而是 HTML 渲染模式的输出格式。所以：渲染模式由请求中的 `RSC` 头决定，`text/x-component` 是 RSC 渲染模式输出结果对应的 CT，`text/html` 是 HTML 渲染模式输出结果对应的 CT。
+
+当 React 渲染器在 HTML 模式下工作时，它会对属性值中的特殊字符做转义（`<` → `&lt;`，`>` → `&gt;`）——这是 React 渲染器主动做的，不是浏览器的行为。当 React 渲染器在 RSC 模式下工作时，它输出的是 flight data（组件树的序列化格式，不是 HTML），React 渲染器不做 HTML 转义——字符串值中的 `<` 保持原样。转义与否完全由 React 渲染器根据渲染模式（即输出格式）决定，和浏览器无关（浏览器收到响应时，React 渲染器的工作已经结束了）。在正常使用中 RSC 模式没有问题（输出的 CT 是 `text/x-component`，浏览器不会当 HTML 解析），但如果攻击者能让浏览器把 flight data 当 HTML 解析（通过修改 CT 为 `text/html`），未转义的 `<script>` 就会被执行。
 
 **如果 flight data 被浏览器当 HTML 解析会怎样**：正常情况下这不会发生，因为 flight data 的 Content-Type 是 `text/x-component`（这是 React/Next.js 团队自定义的 MIME 类型，不是 IANA 注册的标准类型，但浏览器遵循通用的 MIME 类型处理规则——不认识的类型不会当 HTML 解析）。**但如果攻击者能把 Content-Type 改成 `text/html`**，浏览器就会尝试把 flight data 的内容当 HTML 解析。此时 flight data 中类似 `"nonce":"<script>alert(1)</script>"` 的内容，浏览器会在文本中遇到 `<script>` 标签并执行它——因为浏览器只看 Content-Type 来决定如何解析，不关心内容本来是什么格式。
 
