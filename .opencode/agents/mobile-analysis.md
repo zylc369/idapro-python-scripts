@@ -177,6 +177,7 @@ permission:
 | 文档 | 触发条件 |
 |------|---------|
 | `android-tools.md` | APK 分析时（初始加载） |
+| `android-ui-automation.md` | 需要 adb 输入文本、点击按钮、uiautomator 操作时 |
 | `ios-tools.md` | IPA 分析时（初始加载） |
 | `mobile-methodology.md` | 分析规划阶段（阶段 B） |
 | `mobile-frida.md` | 需要 Frida Hook、设备操作时 |
