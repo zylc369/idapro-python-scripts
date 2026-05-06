@@ -14,7 +14,8 @@ usage:
 level: intermediate
 
 packages:
-  必需: capstone, unicorn, gmpy2, frida, Pillow, pyautogui, pyperclip
+  必需: capstone, unicorn, gmpy2, frida, Pillow, pyautogui, pyperclip, playwright, markdownify
+  playwright 需要额外安装浏览器二进制（playwright install chromium）
 """
 
 import argparse
@@ -39,6 +40,8 @@ REQUIRED_PACKAGES = {
     "PIL": {"required": True, "pip_name": "Pillow"},
     "pyautogui": {"required": True, "pip_name": "pyautogui"},
     "pyperclip": {"required": True, "pip_name": "pyperclip"},
+    "playwright": {"required": True, "pip_name": "playwright", "post_install": True, "version_via": "importlib:playwright"},
+    "markdownify": {"required": True, "pip_name": "markdownify", "version_via": "importlib:markdownify"},
 }
 
 
@@ -204,12 +207,21 @@ def _detect_gcc_unix():
     return {"available": False, "type": None, "path": None, "vcvarsall": None}
 
 
-def _detect_package(name, venv_python):
+def _detect_package(name, venv_python, version_via=None):
+    """检测 Python 包是否已安装。
+    version_via: None 表示用 name.__version__；"importlib:PIP_NAME" 表示用 importlib.metadata。"""
     try:
-        result = subprocess.run(
-            [venv_python, "-c", f"import {name}; print(__import__('{name}').__version__)"],
-            capture_output=True, text=True, timeout=10,
-        )
+        if version_via and version_via.startswith("importlib:"):
+            pip_name = version_via.split(":", 1)[1]
+            result = subprocess.run(
+                [venv_python, "-c", f"import {name}; import importlib.metadata; print(importlib.metadata.version('{pip_name}'))"],
+                capture_output=True, text=True, timeout=10,
+            )
+        else:
+            result = subprocess.run(
+                [venv_python, "-c", f"import {name}; print(__import__('{name}').__version__)"],
+                capture_output=True, text=True, timeout=10,
+            )
         if result.returncode == 0:
             return {"available": True, "version": result.stdout.strip() or "unknown"}
     except (subprocess.TimeoutExpired, OSError):
@@ -228,6 +240,44 @@ def _install_package(venv_python, pip_name, timeout=60):
         print(f"[!] pip install {pip_name} 超时 ({timeout}s)", file=sys.stderr)
     except OSError as e:
         print(f"[!] pip install {pip_name} 异常: {e}", file=sys.stderr)
+    return False
+
+
+def _detect_playwright_browser(venv_python):
+    """检测 Playwright Chromium 浏览器是否已安装。"""
+    try:
+        result = subprocess.run(
+            [venv_python, "-c",
+             "from playwright.sync_api import sync_playwright; "
+             "import os; "
+             "p = sync_playwright().start(); "
+             "print(os.path.isfile(p.chromium.executable_path)); "
+             "p.stop()"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0 and "True" in result.stdout:
+            return True
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return False
+
+
+def _post_install_playwright(venv_python, timeout=300):
+    """安装 Playwright Chromium 浏览器二进制（约 150-200MB）。"""
+    print("[*] 正在安装 Playwright Chromium 浏览器（首次安装约 150-200MB）...")
+    try:
+        result = subprocess.run(
+            [venv_python, "-m", "playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if result.returncode == 0:
+            print("[+] Playwright Chromium 安装成功")
+            return True
+        print(f"[!] Playwright 浏览器安装失败: {result.stderr.strip()}", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print(f"[!] Playwright 浏览器安装超时 ({timeout}s)", file=sys.stderr)
+    except OSError as e:
+        print(f"[!] Playwright 浏览器安装异常: {e}", file=sys.stderr)
     return False
 
 
@@ -335,12 +385,20 @@ def run_detection(skip_install=False, agent=None):
     packages = {}
     for name, info in REQUIRED_PACKAGES.items():
         print(f"[*] 正在检测 {name}...")
-        pkg_info = _detect_package(name, venv_python)
+        pkg_info = _detect_package(name, venv_python, version_via=info.get("version_via"))
         if not pkg_info["available"] and not skip_install:
             print(f"[*] {name} 未安装，正在自动安装到虚拟环境...")
             if _install_package(venv_python, info["pip_name"]):
-                pkg_info = _detect_package(name, venv_python)
+                pkg_info = _detect_package(name, venv_python, version_via=info.get("version_via"))
                 if pkg_info["available"]:
+                    # 处理 post_install（如 playwright 需要额外安装浏览器）
+                    if info.get("post_install") and name == "playwright":
+                        if not _detect_playwright_browser(venv_python):
+                            if not _post_install_playwright(venv_python):
+                                errors.append(
+                                    "Playwright 浏览器安装失败。请手动运行: "
+                                    f"{venv_python} -m playwright install chromium"
+                                )
                     print(f"[+] {name} 安装成功: {pkg_info['version']}")
                 else:
                     print(f"[!] {name} 安装后仍无法导入")
@@ -352,6 +410,21 @@ def run_detection(skip_install=False, agent=None):
                 else:
                     print(f"[!] {name} 安装失败（可选包，不影响核心流程）。手动安装: {manual_cmd}")
         elif pkg_info["available"]:
+            # 已安装的包也需要检查 post_install
+            if info.get("post_install") and name == "playwright":
+                if not _detect_playwright_browser(venv_python):
+                    if not skip_install:
+                        if not _post_install_playwright(venv_python):
+                            errors.append(
+                                "Playwright 浏览器安装失败。请手动运行: "
+                                f"{venv_python} -m playwright install chromium"
+                            )
+                    else:
+                        print("[!] Playwright 浏览器未安装（--skip-install）")
+                        errors.append(
+                            "Playwright 浏览器未安装。请运行: "
+                            f"{venv_python} -m playwright install chromium"
+                        )
             print(f"[+] {name}: {pkg_info['version']}")
         else:
             if info["required"]:

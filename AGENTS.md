@@ -17,6 +17,7 @@ Plugin 和 Agent 位于 OpenCode 扩展目录（项目级 `.opencode/` 或全局
 ```
 .opencode/                                # 或 ~/.config/opencode/
 ├── agents/                               # Agent prompt（Tab 切换时加载）
+├── agents-rules/                         # Agent prompt 共享片段（Plugin 自动展开）
 ├── plugins/security-analysis.ts          # 上下文持久化 Plugin
 ├── binary-analysis/                      # 逆向分析核心工具与知识库
 │   └── scripts/detect_env.py             # 环境检测脚本

@@ -1,0 +1,13 @@
+{
+  "name": "ctf-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "puppeteer": "^24.8.2"
+  }
+}
