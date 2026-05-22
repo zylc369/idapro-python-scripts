@@ -10,6 +10,7 @@ import { join, dirname } from "path";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
 import type { Plugin } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin";
 
 const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
 const OPENCODE_ROOT = dirname(PLUGIN_DIR);
@@ -28,12 +29,14 @@ const AGENT_BINARY_ANALYSIS = "binary-analysis";
 const AGENT_MOBILE_ANALYSIS = "mobile-analysis";
 const AGENT_WEB_ANALYSIS = "web-analysis";
 const AGENT_SECURITY_ANALYSIS_EVOLVE = "security-analysis-evolve";
+const AGENT_SECURITY_COORDINATOR = "security-coordinator";
 
 const PRIMARY_AGENTS = [
   AGENT_BINARY_ANALYSIS,
   AGENT_MOBILE_ANALYSIS,
   AGENT_WEB_ANALYSIS,
   AGENT_SECURITY_ANALYSIS_EVOLVE,
+  AGENT_SECURITY_COORDINATOR,
 ];
 
 const AGENT_SCRIPT_DIRS: Record<string, string> = {};
@@ -298,6 +301,16 @@ function getCompactionContext(agentName: string | undefined): string {
 - 已测试的攻击方向和结果`;
   }
 
+  if (agentName === AGENT_SECURITY_COORDINATOR) {
+    context += `
+
+### Coordinator 编排状态
+- 父任务目录路径
+- 已完成的子任务列表（Agent 名、关键发现摘要）
+- 待执行的子任务列表（Agent 名、任务描述）
+- 当前执行阶段（分析/分发/聚合）`;
+  }
+
   return context;
 }
 
@@ -360,6 +373,66 @@ function buildEnvSection(
   }
 
   return envSection;
+}
+
+// ─── 子会话 system 注入 ──────────────────────────────────────────────
+//
+// delegate_analysis 工具为子会话构建完整的 system 内容:
+// 1. 子会话模式指令（跳过任务目录创建、结果格式要求）
+// 2. 目标 Agent 的环境信息（复用 buildEnvSection 逻辑）
+
+const VALID_SUB_AGENTS = [
+  AGENT_BINARY_ANALYSIS,
+  AGENT_MOBILE_ANALYSIS,
+  AGENT_WEB_ANALYSIS,
+];
+
+function buildSubSessionSystem(
+  targetAgent: string,
+  subTaskDir: string,
+  parentTaskDir: string,
+): string {
+  const config = readJsonSafe<ConfigData>(CONFIG_FILE);
+  const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE);
+  const envInfo = envData?.data;
+
+  // 复用 buildEnvSection 构建环境信息（会根据 agent 注入正确的 $AGENT_DIR 等）
+  const envSection = buildEnvSection(targetAgent, config || {}, envInfo);
+
+  return `## 子会话运行模式
+
+你正在以子 Agent 模式运行，由 security-coordinator 编排。
+
+### 关键约束
+
+1. **任务目录**: $TASK_DIR = ${subTaskDir}
+   - 此目录已存在，不需要创建
+   - 所有中间文件、临时脚本、输出、报告写入此目录
+2. **跳过阶段 0 的"创建任务目录"步骤**: 不要调用 create_task_dir.py
+   - 环境检测仍需执行: \`python3 "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"\`
+   - $BA_PYTHON 初始化仍需执行（从 env.json 提取）
+3. **结果格式要求**:
+   - 详细分析报告写入 $TASK_DIR/report.md
+   - 你返回的文本必须是结构化摘要，格式如下:
+
+\\`\\`\\`
+## 分析摘要
+（一句话说明分析结论）
+
+## 关键发现
+- 发现 1: ...
+- 发现 2: ...
+
+## 报告路径
+- 详细报告: $TASK_DIR/report.md
+- 中间数据: $TASK_DIR/
+
+## 执行统计
+- 耗时: Xm Xs
+- 工具调用: X 次
+\\`\\`\\`
+
+${envSection}`;
 }
 
 // ─── session 管理 ──────────────────────────────────────────────────────
@@ -532,6 +605,124 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
   debugLog(`  env_cache exists: ${existsSync(ENV_CACHE_FILE)}`);
   debugLog(`  opencodeClient: ${!!opencodeClient}`);
   return {
+    // ─── 自定义工具 ──────────────────────────────────────────────────
+    //
+    // delegate_analysis: Coordinator 用此工具分发任务到专业 Agent
+    // 创建子会话 → 注入 system → 同步等待完成 → 返回摘要
+    tool: {
+      delegate_analysis: tool({
+        description: `将分析任务分发到专业安全分析 Agent。
+
+可用的 Agent:
+- binary-analysis: IDA Pro 二进制逆向分析（.exe/.dll/.so）
+- mobile-analysis: 移动应用分析（APK/IPA）
+- web-analysis: Web 安全分析（URL/源码）
+
+执行流程:
+1. 创建子会话，指定目标 Agent
+2. Agent 在父任务目录的子目录中工作
+3. Agent 完成后返回结构化摘要
+4. 详细报告写入磁盘: parent_task_dir/subdir_name/report.md
+
+同步执行: 等待子 Agent 完成后才返回结果。`,
+
+        args: {
+          target_agent: tool.schema.string().describe("目标 Agent: binary-analysis, mobile-analysis, web-analysis"),
+          task_prompt: tool.schema.string().describe("详细的任务描述，包含子 Agent 需要的所有上下文"),
+          parent_task_dir: tool.schema.string().describe("父任务目录路径"),
+          subdir_name: tool.schema.string().describe("子目录名称（在父任务目录下，如 binary-analysis）"),
+          description: tool.schema.string().optional().describe("简短任务描述（3-5 字）"),
+        },
+
+        async execute(args, context) {
+          const { target_agent, task_prompt, parent_task_dir, subdir_name, description } = args;
+
+          // 1. 参数校验
+          if (!VALID_SUB_AGENTS.includes(target_agent)) {
+            return `错误: 无效的 Agent "${target_agent}"。可用: ${VALID_SUB_AGENTS.join(", ")}`;
+          }
+
+          if (!parent_task_dir || !subdir_name) {
+            return `错误: parent_task_dir 和 subdir_name 不能为空`;
+          }
+
+          // 2. 创建子目录
+          const subTaskDir = join(parent_task_dir, subdir_name);
+          try {
+            mkdirSync(subTaskDir, { recursive: true });
+          } catch (e) {
+            return `错误: 创建子目录失败 ${subTaskDir}: ${e}`;
+          }
+
+          debugLog(`delegate_analysis: target=${target_agent} subDir=${subTaskDir}`, context.sessionID);
+
+          // 3. 构造子会话 system 内容
+          const systemContent = buildSubSessionSystem(target_agent, subTaskDir, parent_task_dir);
+
+          // 4. 创建子会话
+          if (!opencodeClient) {
+            return `错误: OpenCode client 未初始化`;
+          }
+
+          let subSessionID: string;
+          try {
+            const createResult = await opencodeClient.session.create({
+              body: {
+                parentID: context.sessionID,
+                title: `${description || subdir_name}: ${target_agent} 子任务`,
+              },
+              query: { directory: context.directory },
+            });
+
+            if (createResult.error) {
+              return `错误: 创建子会话失败 - ${JSON.stringify(createResult.error)}`;
+            }
+
+            subSessionID = (createResult.data as { id: string }).id;
+            debugLog(`delegate_analysis: 子会话已创建 id=${subSessionID}`, context.sessionID);
+          } catch (e) {
+            return `错误: 创建子会话异常 - ${e}`;
+          }
+
+          // 5. 发送任务（同步阻塞，等待子 Agent 完成全部工作）
+          try {
+            const promptResult = await opencodeClient.session.prompt({
+              path: { id: subSessionID },
+              body: {
+                agent: target_agent,
+                system: systemContent,
+                parts: [{ type: "text", text: task_prompt }],
+              },
+            });
+
+            if (promptResult.error) {
+              return `错误: 子 Agent 执行失败 - ${JSON.stringify(promptResult.error)}`;
+            }
+
+            // 6. 从响应提取文本
+            const data = promptResult.data as { parts?: Array<{ type: string; text?: string }> } | undefined;
+            if (data?.parts) {
+              const textParts = data.parts
+                .filter((p) => p.type === "text" && p.text)
+                .map((p) => p.text!)
+                .join("\n");
+
+              if (textParts.trim()) {
+                debugLog(`delegate_analysis: 子任务完成 subSession=${subSessionID}`, context.sessionID);
+                return textParts;
+              }
+            }
+
+            // 响应中没有文本部分，返回兜底信息
+            debugLog(`delegate_analysis: 子任务完成（无文本输出）subSession=${subSessionID}`, context.sessionID);
+            return `子 Agent (${target_agent}) 已完成执行，但未返回文本结果。\n详细报告: ${subTaskDir}/report.md`;
+          } catch (e) {
+            return `错误: 子 Agent 执行异常 - ${e}`;
+          }
+        },
+      }),
+    },
+
     // 用户发送消息时触发（awaited，宿主等待完成）
     // 职责：记录 agentName + 设置主 session 的 primaryAgent
     // 注意：这是唯一能获取 input.agent 的 hook 点
