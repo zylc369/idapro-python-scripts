@@ -62,7 +62,7 @@ permission:
 
 ### 0.1 创建父任务目录
 
-```powershell
+```bash
 $TASK_DIR=$(python3 "$SHARED_DIR/scripts/create_task_dir.py")
 ```
 

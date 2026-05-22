@@ -66,7 +66,7 @@ delegate_analysis tool (Plugin tool)
 │
 ├── 1. mkdir: 创建 parent_task_dir/subdir_name 子目录
 │
-├── 2. client.session.create({ parentID, title })
+├── 2. client.session.create({ parentID, title, permission, query })
 │      → 返回子会话 sessionID
 │
 ├── 3. client.session.prompt({
@@ -88,9 +88,10 @@ delegate_analysis tool (Plugin tool)
 | 决策点 | 选择 | 理由 |
 |--------|------|------|
 | 同步 vs 异步 | 同步（`session.prompt`） | 初版简化；`session.prompt` 阻塞等待完成，不需要 polling |
-| 环境注入方式 | `system` 参数注入 | 子会话不注册到 Plugin sessions Map，避免 `system.transform` 重复注入 |
+| 环境注入方式 | `system` 参数 + sessions Map 注册 | 子会话注册到 sessions Map 使 `system.transform` 展开占位符；`system` 参数注入子会话模式指令和环境信息（与 hook 注入冗余但无害） |
 | 子 Agent 任务目录 | 父目录/子目录名 | Coordinator 先创建父目录，tool 创建子目录，注入为 $TASK_DIR |
-| 权限控制 | 不限制工具 | 子 Agent 使用与独立运行时相同的工具集 |
+| 权限控制 | 禁止 question 工具 | 子 Agent 在同步模式下运行，提问会阻塞且让用户困惑；通过 `session.create` 的 `permission` 参数禁止 |
+| 占位符展开 | 注册到 sessions Map | 所有 agent prompt 使用 `{{buwai-rule:xxx}}` 占位符，必须由 `system.transform` hook 展开；子会话注册后 hook 可正常处理 |
 
 ### 2.3 子会话 system 注入内容
 
@@ -133,7 +134,7 @@ delegate_analysis tool (Plugin tool)
   - $OPENCODE_ROOT: 配置根目录
   - $AGENT_DIR: 目标 Agent 的脚本目录（通过 getScriptDir(target_agent) 获取）
   - $SHARED_DIR: binary-analysis/（通用共享目录）
-  - $IDAT: IDA Pro 路径（如已配置）
+  - IDA Pro: config.json 中 ida_path 的值（如已配置；子 Agent 按自身片段规则构造 $IDAT）
   - 编译器/Python 包: 从 env_cache.json 读取
 ）
 ```
@@ -195,10 +196,12 @@ const AGENT_SECURITY_COORDINATOR = "security-coordinator";
 1. 校验 target_agent 是否合法
 2. 创建子目录 `mkdir -p parent_task_dir/subdir_name`
 3. 构造子会话 system 内容（环境信息 + 子会话模式指令）
-4. 创建子会话 `client.session.create({ parentID, title })`
-5. 发送任务 `client.session.prompt({ agent, system, parts })`（同步阻塞）
-6. 从响应 Parts 提取文本
-7. 返回文本给 Coordinator
+4. 创建子会话 `client.session.create({ parentID, title, permission })`（permission 禁止 question 工具）
+5. 注册子会话到 sessions Map（使 `system.transform` 展开占位符和注入环境信息）
+6. 发送任务 `client.session.prompt({ agent, system, parts })`（同步阻塞）
+7. 从响应 Parts 提取文本
+8. 清理子会话的 sessions Map 条目
+9. 返回文本给 Coordinator
 
 #### 2.6.3 新增 coordinator 压缩保留
 
@@ -244,7 +247,7 @@ const AGENT_SECURITY_COORDINATOR = "security-coordinator";
 **步骤 3. Plugin: 实现 buildSubSessionSystem 函数**
   - 文件: `plugins/security-analysis.ts`
   - 预估行数: ~60 行
-  - 验证点: `node --check` 语法通过；函数接受 target_agent、sub_task_dir、parent_task_dir 参数；输出包含环境信息 + 子会话模式指令 + 结果格式要求
+  - 验证点: `node --check` 语法通过；函数接受 targetAgent、subTaskDir、parentTaskDir 参数（camelCase）；输出包含环境信息 + 子会话模式指令 + 结果格式要求
   - 依赖: 无
 
 **步骤 4. Plugin: 实现 delegate_analysis tool**

@@ -179,6 +179,17 @@
 - [ ] Coordinator 写入了 `$TASK_DIR/summary.md`
 - [ ] 报告包含总体结论、各领域发现、关联发现、报告路径
 
+### 5.4 检查占位符展开
+
+子 Agent 的 prompt 应被正确展开（不应出现 `{{buwai-rule:xxx}}` 原文）。
+
+- [ ] 子 Agent 的输出中不包含 `{{buwai-rule:` 字样
+- [ ] 子 Agent 正确执行了阶段 0 的环境检测和 $BA_PYTHON 初始化（说明 running-environment 片段被展开）
+
+### 5.5 检查 question 工具被禁止
+
+- [ ] 子 Agent 执行过程中没有向用户提问（如果 Agent 需要clarification，应自行决策而非使用 question 工具）
+
 ---
 
 ## 验证结果汇总

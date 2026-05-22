@@ -459,6 +459,7 @@ interface SessionData {
 const sessions = new Map<string, SessionData>();
 
 // OpenCode client，在 Plugin 函数中初始化
+// 类型声明只列出实际使用的方法；运行时 client 是完整 SDK，包含所有 session API
 let opencodeClient: {
   session: {
     get: (options: {
@@ -466,6 +467,28 @@ let opencodeClient: {
       query?: { directory?: string };
     }) => Promise<{
       data?: { id: string; parentID?: string; [k: string]: unknown };
+      error?: unknown;
+    }>;
+    create: (options: {
+      body?: {
+        parentID?: string;
+        title?: string;
+        permission?: Array<{ permission: string; action: string; pattern: string }>;
+      };
+      query?: { directory?: string };
+    }) => Promise<{
+      data?: { id: string; [k: string]: unknown };
+      error?: unknown;
+    }>;
+    prompt: (options: {
+      path: { id: string };
+      body: {
+        agent?: string;
+        system?: string;
+        parts: Array<{ type: string; text?: string }>;
+      };
+    }) => Promise<{
+      data?: { parts?: Array<{ type: string; text?: string }> };
       error?: unknown;
     }>;
   };
@@ -670,6 +693,9 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
               body: {
                 parentID: context.sessionID,
                 title: `${description || subdir_name}: ${target_agent} 子任务`,
+                // 禁止子 Agent 使用 question 工具提问用户
+                // （子 Agent 在同步模式下运行，提问会阻塞且让用户困惑）
+                permission: [{ permission: "question", action: "deny", pattern: "*" }],
               },
               query: { directory: context.directory },
             });
@@ -680,6 +706,19 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
             subSessionID = (createResult.data as { id: string }).id;
             debugLog(`delegate_analysis: 子会话已创建 id=${subSessionID}`, context.sessionID);
+
+            // 注册子会话到 sessions Map，使 system.transform hook 能处理它：
+            // - 展开 {{buwai-rule:xxx}} 占位符（所有 agent prompt 都使用）
+            // - 注入正确的环境信息（$AGENT_DIR 按目标 agent 映射）
+            // 不设置 isSubSession 标记，因为 system.transform 的环境注入与
+            // system 参数的注入是冗余但无害的（都提供相同的环境变量值）
+            sessions.set(subSessionID, {
+              createdAt: Date.now(),
+              agentName: target_agent,
+              primaryAgent: target_agent,
+              systemTransformCount: 0,
+            });
+            debugLog(`delegate_analysis: 子会话已注册到 sessions Map, agent=${target_agent}`, context.sessionID);
           } catch (e) {
             return `错误: 创建子会话异常 - ${e}`;
           }
@@ -718,6 +757,10 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
             return `子 Agent (${target_agent}) 已完成执行，但未返回文本结果。\n详细报告: ${subTaskDir}/report.md`;
           } catch (e) {
             return `错误: 子 Agent 执行异常 - ${e}`;
+          } finally {
+            // 清理子会话的 sessions Map 条目（子会话已完成，不再需要 hook 处理）
+            sessions.delete(subSessionID);
+            debugLog(`delegate_analysis: 子会话已从 sessions Map 清理 id=${subSessionID}`, context.sessionID);
           }
         },
       }),
