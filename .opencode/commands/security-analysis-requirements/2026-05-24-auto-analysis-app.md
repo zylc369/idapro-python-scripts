@@ -182,7 +182,7 @@ export async function analyze(taskPrompt: string): Promise<string> {
 }
 ```
 
-**SDK 依赖方式**: 使用本地 link（`file:../../vendor/opencode/packages/sdk/js`），确保版本与项目中的 OpenCode 源码一致。发布版可能版本不匹配导致 API 不兼容。
+**SDK 依赖方式**: 使用本地 link（`file:../vendor/opencode/packages/sdk/js`），确保版本与项目中的 OpenCode 源码一致。发布版可能版本不匹配导致 API 不兼容。
 
 **prompt vs promptAsync 选择**: 使用 `session.prompt`（同步阻塞）。
 - 优点：代码简单，直接 await 获取完整结果，不需要额外监听 SSE 收集响应
@@ -276,7 +276,7 @@ TypeScript 实现的加密存储（全新实现，非 Python 方案移植）：
   - 预估行数: ~80 行
   - 验证点: `npm install` 成功
   - 依赖: 无
-  - SDK 依赖: 使用本地 link `"@opencode-ai/sdk": "file:../../vendor/opencode/packages/sdk/js"`，确保版本一致
+  - SDK 依赖: 使用本地 link `"@opencode-ai/sdk": "file:../vendor/opencode/packages/sdk/js"`，确保版本一致
   - 其他依赖: `proper-lockfile`（private_data 文件加锁）、`express`、`cors`、`concurrently`、`tsx`、`vite`、`@vitejs/plugin-react`、`react`、`react-dom`
   - **运行时**: server 使用 `tsx` 运行（不预编译），因为 SDK exports 指向 `.ts` 源文件（没有预编译 dist）
   - **模块系统**: `"type": "module"`（ESM），因为 SDK 是 ESM package
