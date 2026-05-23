@@ -54,3 +54,5 @@ dmypy.json
 .config/
 /ai_analyze.log
 /ai_analyze.log.results
+
+node_modules/
