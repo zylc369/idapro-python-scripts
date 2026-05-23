@@ -5,6 +5,9 @@ permission:
   external_directory:
     ~/bw-security-analysis/**: allow
     ~/Downloads/**: allow
+  read:
+    "~/Downloads/**/*.env": allow
+    "~/Downloads/**/*.env.*": allow
 ---
 
 ## 角色与目标
