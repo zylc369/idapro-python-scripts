@@ -46,6 +46,7 @@ SnailNet Web CTF 题目（46.62.153.171:6767）完整分析过程复盘，发现
 |------|---------|------|
 | `agents-rules/execution-discipline.md` | 修改 | 添加"文件放置"纪律行 + 详细规则段 |
 | `binary-analysis/knowledge-base/task-initialization.md` | 修改 | 移除 Step 1 中的文件放置描述（第 15 行），仅保留目录创建逻辑 |
+| `agents/web-analysis.md` | 修改 | 移除安全规则中与文件放置重复的描述（第 254 行"Cookie/Token..."） |
 
 **方案详情**：
 
@@ -160,7 +161,7 @@ REQUIRED_PACKAGES = {
 | 函数 | 用途 | 参数 |
 |------|------|------|
 | `create_session(base_url)` | 创建 requests.Session，设置默认 timeout | `base_url: str` |
-| `get_csrf(session, url)` | 从页面提取 CSRF token | `session, url: str` → `str` |
+| `get_csrf(session, url, field_name="csrf_token")` | 从页面提取 CSRF token | `session, url: str, field_name: str` → `str` |
 | `register_and_login(session, base_url, username, password)` | 注册+登录，返回 session | `session, base_url, username, password` |
 | `extract_flag_from_webhook(uuid, keyword="SK-CERT")` | 从 webhook.site API 提取 flag | `uuid: str, keyword: str` → `str|None` |
 | `create_webhook()` | 创建 webhook.site 端点 | → `str`（UUID） |
@@ -172,6 +173,14 @@ REQUIRED_PACKAGES = {
 - 依赖 requests + bs4（通过 $BA_PYTHON 调用，venv 中已安装）
 - CSRF 提取使用 bs4（比正则更健壮，能处理各种 HTML 边界情况）
 
+**调用方式**：web_helpers.py 是库模块（被 import），不是命令行工具。在临时脚本中通过以下方式使用：
+
+```python
+import sys
+sys.path.insert(0, "$AGENT_DIR/scripts")  # 使 web_helpers 可被 import
+from web_helpers import create_session, get_csrf, register_and_login
+```
+
 ---
 
 ## §3 实现规范
@@ -181,8 +190,8 @@ REQUIRED_PACKAGES = {
 | 文件 | 改动类型 | 预估行数 |
 |------|---------|---------|
 | `agents-rules/execution-discipline.md` | 修改（添加规则） | +25 行 |
-| `binary-analysis/knowledge-base/task-initialization.md` | 修改（删除重复） | -2 行 |
-| `agents/web-analysis.md` | 修改（$BA_PYTHON + 工具清单） | ~5 行 |
+| `binary-analysis/knowledge-base/task-initialization.md` | 修改（删除重复） | -1 行 |
+| `agents/web-analysis.md` | 修改（$BA_PYTHON + 移除重复 + 工具清单） | ~6 行 |
 | `binary-analysis/scripts/detect_env.py` | 修改（添加 web 包） | +3 行 |
 | `web-analysis/scripts/web_helpers.py` | 新建 | ~120 行 |
 | `web-analysis/scripts/registry.json` | 新建 | ~15 行 |
@@ -196,10 +205,13 @@ REQUIRED_PACKAGES = {
   - 验证点: 文件语法正确（markdown 无格式错误）；新规则与现有纪律表格式一致
   - 依赖: 无
 
-步骤 2. task-initialization.md 移除重复的文件放置描述
-  - 文件: binary-analysis/knowledge-base/task-initialization.md
-  - 预估行数: -2 行
-  - 验证点: 文件仍自包含（读者只看此文件也能理解目录创建流程）；不丢失"禁止使用 workdir"等关键规则
+步骤 2. 移除所有文件放置重复描述
+  - 文件: binary-analysis/knowledge-base/task-initialization.md（移除第 15 行）、agents/web-analysis.md（移除第 254 行"Cookie/Token..."安全规则中与文件放置重复的描述）
+  - 预估行数: -2 行（task-initialization -1 + web-analysis -1）
+  - 验证点:
+    - task-initialization.md 仍自包含（读者只看此文件也能理解目录创建流程）；不丢失"禁止使用 workdir"等关键规则
+    - web-analysis.md 安全规则段仍完整（只移除与文件放置重叠的描述，不移除纯安全约束如"不输出到非预期位置"）
+    - Grep "中间文件写入" 在 task-initialization.md 中无结果
   - 依赖: 步骤 1（确保替代规则已就位后再删除旧规则）
 
 步骤 3. web-analysis.md 修改 $BA_PYTHON 覆盖语句
@@ -228,8 +240,8 @@ REQUIRED_PACKAGES = {
 
 步骤 7. web-analysis.md 添加 web_helpers.py 到工具清单
   - 文件: agents/web-analysis.md
-  - 预估行数: +5 行
-  - 验证点: 工具清单表格格式一致；引用路径使用 $AGENT_DIR 变量
+  - 预估行数: +6 行（工具表 1 行 + import 模板 5 行）
+  - 验证点: 工具清单表格格式一致；引用路径使用 $AGENT_DIR 变量；包含 sys.path.insert + import 模板
   - 依赖: 步骤 5、6（工具必须已存在才能引用）
 
 步骤 8. 安装 web 包到 venv（端到端验证）
@@ -264,7 +276,8 @@ REQUIRED_PACKAGES = {
 | # | 验收项 | 验证方式 |
 |---|--------|---------|
 | F1 | 文件放置规则在 execution-discipline.md 中存在且自包含 | Read 文件确认 |
-| F2 | task-initialization.md 中不再有文件放置规则 | Grep "中间文件写入" 确认无重复 |
+| F2 | task-initialization.md 中不再有文件放置规则 | Grep "中间文件写入" 确认无结果 |
+| F2.5 | web-analysis.md 安全规则中不再有与文件放置重复的描述 | Grep "Cookie/Token.*任务目录" 确认无结果 |
 | F3 | web-analysis.md 不再覆盖 $BA_PYTHON | Grep "不依赖.*BA_PYTHON" 确认不存在 |
 | F4 | detect_env.py 包含 requests、bs4、lxml | Grep 确认 REQUIRED_PACKAGES 中有这三个包 |
 | F5 | web_helpers.py 可 import 且无语法错误 | `$BA_PYTHON -c "import sys; sys.path.insert(0,...); import web_helpers"` |
