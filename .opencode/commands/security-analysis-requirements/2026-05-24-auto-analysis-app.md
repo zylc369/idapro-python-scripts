@@ -212,6 +212,12 @@ interface DownloadResult {
   extractDir?: string     // 如果是压缩包且解压成功，解压后的目录路径
 }
 
+// 提交结果
+interface SubmitResult {
+  success: boolean
+  message?: string        // 如 "correct"/"incorrect" 等服务端反馈
+}
+
 // server/adapters/ctfd.ts — CTFd REST API
 class CTFdAdapter implements SiteAdapter {
   // 使用原生 fetch，不依赖 Python/Playwright
@@ -226,10 +232,10 @@ class CTFdAdapter implements SiteAdapter {
 | 组件 | 功能 |
 |------|------|
 | TaskBoard | 展示所有任务卡片（状态: pending/running/success/failed） |
-| TaskCard | 单个任务：标题、类别、分值、状态、重试次数、实时日志 |
+| TaskCard | 单个任务：标题、类别、分值、状态、重试次数、实盘日志 |
 | LiveLog | SSE 实时显示当前分析进度（agent 输出、工具调用） |
 | ConcurrencyControl | 滑块调整并行分析数（1-5） |
-| StartButton | 输入网站 URL → 开始分析 |
+| StartButton | 输入网站 URL → 开始分析（合入 App.tsx，非独立组件文件） |
 
 ### 2.6 凭据管理
 
@@ -258,7 +264,7 @@ TypeScript 实现的加密存储（全新实现，非 Python 方案移植）：
 | 目录/文件 | 操作 | 说明 |
 |-----------|------|------|
 | `auto-analysis/` (整个目录) | 新增 | 独立应用 |
-| `auto-analysis/.gitignore` | 修改 | +1 行排除 /private_data |
+| `auto-analysis/.gitignore` | 修改 | +2 行排除 /private_data、/dist |
 | 现有 security-analysis 体系 | 不改动 | agents/plugins/scripts 全部不动 |
 
 **不改动任何现有文件**（除了 auto-analysis/.gitignore）。
@@ -271,6 +277,7 @@ TypeScript 实现的加密存储（全新实现，非 Python 方案移植）：
   - 验证点: `npm install` 成功
   - 依赖: 无
   - SDK 依赖: 使用本地 link `"@opencode-ai/sdk": "file:../../vendor/opencode/packages/sdk/js"`，确保版本一致
+  - 其他依赖: `proper-lockfile`（private_data 文件加锁）、`express`、`cors`、`concurrently`、`tsx`、`vite`、`@vitejs/plugin-react`、`react`、`react-dom`
   - **运行时**: server 使用 `tsx` 运行（不预编译），因为 SDK exports 指向 `.ts` 源文件（没有预编译 dist）
   - **模块系统**: `"type": "module"`（ESM），因为 SDK 是 ESM package
   - 运行脚本: package.json 配置 `dev`（concurrently 启动前后端）、`build`（vite build 前端）、`start`（tsx server/index.ts）
@@ -289,41 +296,66 @@ TypeScript 实现的加密存储（全新实现，非 Python 方案移植）：
   - 验证点: 能启动 opencode server 并创建 session
   - 依赖: 步骤 1
 
-**步骤 4. 后端: 网站适配器（base + ctfd）**
-  - 文件: `auto-analysis/server/adapters/base.ts`, `ctfd.ts`
-  - 预估行数: ~250 行
-  - 验证点: TypeScript 编译通过；CTFd adapter 包含 login/listTasks/getTaskInfo/submitAnswer/downloadFile 方法签名
-  - 包含: 文件下载 + 智能解压（zip/tar.gz，散落一级目录时创建子目录）
+**步骤 4a. 后端: 网站适配器基类**
+  - 文件: `auto-analysis/server/adapters/base.ts`
+  - 预估行数: ~60 行
+  - 验证点: TypeScript 编译通过；SiteAdapter 接口包含完整方法签名
   - 依赖: 步骤 2
 
-**步骤 5. 后端: 凭据管理**
-  - 文件: `auto-analysis/server/credentials.ts`
-  - 预估行数: ~100 行
-  - 验证点: 加密/解密闭环
-  - 依赖: 无
+**步骤 4b. 后端: CTFd 适配器实现**
+  - 文件: `auto-analysis/server/adapters/ctfd.ts`
+  - 预估行数: ~190 行
+  - 验证点: TypeScript 编译通过；CTFd adapter 包含 login/listTasks/getTaskInfo/submitAnswer/downloadFile 实现
+  - 包含: CTFd REST API 调用 + 文件下载 + 智能解压（zip/tar.gz，散落一级目录时创建子目录）
+  - 依赖: 步骤 4a
+
+**步骤 5. 后端: 文件存储（加锁读写）+ 凭据管理**
+  - 文件: `auto-analysis/server/file-store.ts`, `auto-analysis/server/credentials.ts`
+  - 预估行数: ~150 行
+  - 验证点: file-store 的 readJson/writeJson 加锁闭环；凭据加密/解密闭环
+  - 包含: proper-lockfile 文件锁、临时文件 + rename 原子写入、凭据 AES-256-GCM 加解密
+  - 依赖: 步骤 1（proper-lockfile 依赖）
 
 **步骤 6. 后端: 任务调度器**
   - 文件: `auto-analysis/server/scheduler.ts`
   - 预估行数: ~150 行
   - 验证点: TypeScript 编译通过；并发控制逻辑正确
-  - 依赖: 步骤 3, 4, 5
+  - 依赖: 步骤 3, 4b, 5
 
-**步骤 7. 后端: Express 路由 + SSE**
-  - 文件: `auto-analysis/server/routes/*.ts`, `auto-analysis/server/index.ts`
-  - 预估行数: ~200 行
-  - 验证点: `npx tsx server/index.ts` 启动后，`curl http://localhost:3001/api/tasks` 返回 200
+**步骤 7a. 后端: Express 入口 + SSE 路由**
+  - 文件: `auto-analysis/server/index.ts`, `auto-analysis/server/routes/events.ts`
+  - 预估行数: ~100 行
+  - 验证点: `npx tsx server/index.ts` 启动后，SSE 端点 `/api/events` 可连接
   - 依赖: 步骤 6
 
-**步骤 8. 前端: React 组件**
-  - 文件: `auto-analysis/src/*.tsx`, `src/components/*.tsx`, `src/hooks/*.ts`
-  - 预估行数: ~400 行
-  - 验证点: `npm run dev` 前端页面可访问
-  - 依赖: 步骤 7（需要后端 API）
+**步骤 7b. 后端: 任务路由 + 配置路由**
+  - 文件: `auto-analysis/server/routes/tasks.ts`, `auto-analysis/server/routes/config.ts`
+  - 预估行数: ~120 行
+  - 验证点: `curl http://localhost:3001/api/tasks` 返回 200；`curl http://localhost:3001/api/config` 返回 200
+  - 依赖: 步骤 7a
+
+**步骤 8a. 前端: 基础设施（SSE hook + App 骨架）**
+  - 文件: `auto-analysis/src/hooks/useSSE.ts`, `auto-analysis/src/App.tsx`
+  - 预估行数: ~80 行
+  - 验证点: `npm run dev` 前端页面加载，SSE 连接建立
+  - 依赖: 步骤 7a（需要后端 SSE 端点）
+
+**步骤 8b. 前端: 任务看板组件**
+  - 文件: `auto-analysis/src/components/TaskBoard.tsx`, `auto-analysis/src/components/TaskCard.tsx`
+  - 预估行数: ~150 行
+  - 验证点: 看板显示任务列表，任务状态实时更新
+  - 依赖: 步骤 8a
+
+**步骤 8c. 前端: 辅助组件（LiveLog + ConcurrencyControl）**
+  - 文件: `auto-analysis/src/components/LiveLog.tsx`, `auto-analysis/src/components/ConcurrencyControl.tsx`
+  - 预估行数: ~120 行
+  - 验证点: 实时日志显示；并发控制滑块可调整
+  - 依赖: 步骤 8a
 
 **步骤 9. .gitignore 更新**
   - 文件: `auto-analysis/.gitignore`
-  - 预估行数: ~1 行
-  - 验证点: `auto-analysis/private_data/` 被 git 排除
+  - 预估行数: ~2 行（追加 `/private_data`、`/dist`）
+  - 验证点: `auto-analysis/private_data/` 和 `auto-analysis/dist/` 被 git 排除
   - 依赖: 无
 
 **步骤 10. 端到端验证**
@@ -334,7 +366,7 @@ TypeScript 实现的加密存储（全新实现，非 Python 方案移植）：
     - SSE 事件流连通
     - OpenCode SDK 能创建 session 并调用 coordinator
     - 现有 agents/plugins/scripts 无改动
-  - 依赖: 步骤 1-9
+  - 依赖: 步骤 1-8c, 9
 
 ---
 
@@ -348,6 +380,7 @@ TypeScript 实现的加密存储（全新实现，非 Python 方案移植）：
 - [ ] CTFd adapter 能提交 flag
 - [ ] CTFd adapter 能下载附件并自动解压
 - [ ] 凭据加密/解密闭环
+- [ ] private_data 文件并发读写安全（加锁 + 原子写入）
 - [ ] 任务调度器支持并发控制
 - [ ] SSE 实时推送任务进度
 - [ ] 前端任务看板显示所有任务状态
