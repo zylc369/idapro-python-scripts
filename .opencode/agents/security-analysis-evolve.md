@@ -4,6 +4,7 @@ mode: all
 permission:
   external_directory:
     ~/bw-security-analysis/**: allow
+    ~/Downloads/**: allow
 ---
 
 ## 角色与目标

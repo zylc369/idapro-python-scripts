@@ -5,6 +5,7 @@ buwai-extension-id: web-analysis
 permission:
   external_directory:
     ~/bw-security-analysis/**: allow
+    ~/Downloads/**: allow
 ---
 
 ## 角色

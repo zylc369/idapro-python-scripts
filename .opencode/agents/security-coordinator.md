@@ -5,6 +5,7 @@ buwai-extension-id: security-coordinator
 permission:
   external_directory:
     ~/bw-security-analysis/**: allow
+    ~/Downloads/**: allow
 ---
 
 ## 角色
