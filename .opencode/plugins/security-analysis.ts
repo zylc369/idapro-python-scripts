@@ -910,6 +910,11 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         }
       }
 
+      // 每次都注入当前 Agent 身份（不受 shouldInject 控制）
+      if (agentName) {
+        output.system.push(`## 当前 Agent\n你当前是 ${agentName} agent。`);
+      }
+
       session.systemTransformCount++;
       const shouldInject = session.systemTransformCount % 10 === 1;
 
