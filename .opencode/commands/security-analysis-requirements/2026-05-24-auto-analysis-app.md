@@ -50,6 +50,8 @@ auto-analysis/
 │   ├── index.ts                    # 入口：启动 Express + OpenCode server
 │   ├── opencode.ts                 # OpenCode SDK 封装
 │   ├── scheduler.ts                # 任务调度器（并发控制、重试）
+│   ├── file-store.ts               # private_data 文件读写（加锁 + 原子写入）
+│   ├── credentials.ts              # 凭据加密/解密
 │   ├── routes/
 │   │   ├── tasks.ts                # 任务 API（CRUD + 状态查询）
 │   │   ├── events.ts               # SSE 事件流
@@ -71,7 +73,7 @@ auto-analysis/
 ├── shared/                         # 前后端共享类型
 │   └── types.ts
 │
-└── data/                           # 运行时数据（gitignore）
+└── private_data/                   # 运行时敏感数据（gitignore，写入需加锁）
     ├── credentials.json            # 加密凭据
     └── tasks.json                  # 任务状态持久化
 ```
@@ -234,8 +236,18 @@ class CTFdAdapter implements SiteAdapter {
 TypeScript 实现的加密存储（全新实现，非 Python 方案移植）：
 - 密钥派生: 机器指纹（hostname + username + platform + MAC）→ PBKDF2-HMAC-SHA256 → 32 字节密钥
 - 加密: Node.js `crypto.createCipheriv('aes-256-gcm', key, iv)` — 比 Python 方案的 Fernet（AES-128-CBC）更强
-- 存储: `data/credentials.json`
+- 存储: `private_data/credentials.json`
 - 跨平台: 使用 Node.js 内置 `crypto` 模块，无需额外依赖
+
+### 2.7 private_data 文件写入安全
+
+调度器并发运行多个任务时，多个 async 函数可能同时写入 `private_data/` 下的文件（如 `tasks.json`、`credentials.json`）。必须确保文件写入的原子性，避免并发写入导致文件损坏。
+
+**方案**: 使用 `proper-lockfile` 库对目标文件加锁（基于 flock/lockfile 机制），包装读写操作：
+- 写入前获取文件锁 → 写入临时文件 → rename 原子替换 → 释放锁
+- 读取前获取文件锁 → 读取 → 释放锁
+- 封装为 `server/file-store.ts` 中的 `readJson()` / `writeJson()` 通用工具函数
+- 所有对 `private_data/` 的文件读写必须通过这两个函数，禁止直接 `fs.readFile`/`fs.writeFile`
 
 ---
 
@@ -246,10 +258,10 @@ TypeScript 实现的加密存储（全新实现，非 Python 方案移植）：
 | 目录/文件 | 操作 | 说明 |
 |-----------|------|------|
 | `auto-analysis/` (整个目录) | 新增 | 独立应用 |
-| `.gitignore` | 修改 | +2 行排除 auto-analysis/data/ |
+| `auto-analysis/.gitignore` | 修改 | +1 行排除 /private_data |
 | 现有 security-analysis 体系 | 不改动 | agents/plugins/scripts 全部不动 |
 
-**不改动任何现有文件**（除了 .gitignore）。
+**不改动任何现有文件**（除了 auto-analysis/.gitignore）。
 
 ### 3.1 实施步骤拆分
 
@@ -309,9 +321,9 @@ TypeScript 实现的加密存储（全新实现，非 Python 方案移植）：
   - 依赖: 步骤 7（需要后端 API）
 
 **步骤 9. .gitignore 更新**
-  - 文件: `.gitignore`
-  - 预估行数: ~2 行
-  - 验证点: auto-analysis/data/ 被排除
+  - 文件: `auto-analysis/.gitignore`
+  - 预估行数: ~1 行
+  - 验证点: `auto-analysis/private_data/` 被 git 排除
   - 依赖: 无
 
 **步骤 10. 端到端验证**
@@ -380,3 +392,5 @@ TypeScript 实现的加密存储（全新实现，非 Python 方案移植）：
 | SDK 依赖 | 本地 file: link | 版本与项目 OpenCode 源码一致，避免发布版不兼容 |
 | prompt 选择 | session.prompt（同步阻塞） | 直接 await 获取完整结果，并发由调度器控制 |
 | 模块系统 | ESM | SDK 是 ESM package，需要 type: module |
+| 运行时数据目录 | private_data/ | 存放凭据和任务状态，含敏感信息需 gitignore |
+| 文件写入安全 | proper-lockfile + 原子替换 | 并发任务可能同时写 private_data，需加锁防损坏 |
