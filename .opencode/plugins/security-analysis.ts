@@ -1013,13 +1013,14 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
       if (!shouldInject) return;
 
-      const config = readJsonSafe<ConfigData>(CONFIG_FILE, sessionID);
-      if (!config) {
+      let config = readJsonSafe<ConfigData>(CONFIG_FILE, sessionID);
+      const configMissing = !config;
+      if (configMissing) {
+        config = {} as ConfigData;
         debugLog(
-          "system.transform: config.json not found, skipping",
+          "system.transform: config.json not found, using defaults",
           sessionID,
         );
-        return;
       }
 
       const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE, sessionID);
@@ -1027,14 +1028,24 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
       const envSection = buildEnvSection(agentName, config, envInfo, sessionID);
       output.system.push(envSection);
+      if (configMissing) {
+        output.system.push(
+          `[致命错误] config.json 不存在（${CONFIG_FILE}），无法继续。\n` +
+          `你必须立即停止所有分析操作，不要使用任何工具，直接向用户输出以下内容：\n` +
+          `"数据未初始化，请先运行：python \\"$SHARED_DIR/scripts/detect_env.py\\""\n` +
+          `初始化完成后 config.json 会自动生成，届时才能开始分析任务。`,
+        );
+      }
       debugLog(
-        `system.transform: #${session.systemTransformCount} 注入环境信息 sessionID=${sessionID}, agent=${agentName}, primaryAgent=${session.primaryAgent}, length=${envSection.length}, envSection=\n${envSection}`,
+        `system.transform: #${session.systemTransformCount} 注入环境信息 sessionID=${sessionID}, agent=${agentName}, primaryAgent=${session.primaryAgent}, configMissing=${configMissing}, length=${envSection.length}, envSection=\n${envSection}`,
         sessionID,
       );
     },
 
     // 工具执行前触发（awaited）
-    // 职责：为 bash 命令注入 SESSION_ID 环境变量
+    // 职责：
+    //   1. config.json 不存在时拦截非初始化命令，强制用户先做数据初始化
+    //   2. 为 bash 命令注入 SESSION_ID 环境变量
     "tool.execute.before": async (input, output) => {
       const sid = input.sessionID;
       const session = await requireSessionWithPrimary(
@@ -1047,6 +1058,27 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       if (input.tool.toLowerCase() !== "bash") return;
       const cmd = output.args?.command;
       if (typeof cmd !== "string" || !cmd) return;
+
+      // config.json 不存在时：只放行初始化相关命令，拦截其他所有命令
+      const configExists = existsSync(CONFIG_FILE);
+      if (!configExists) {
+        const isInitCommand =
+          cmd.includes("create_task_dir") ||
+          cmd.includes("detect_env") ||
+          cmd.includes("config.json");
+        if (!isInitCommand) {
+          const isPowerShell = !!process.env.PSModulePath;
+          const blockedMsg =
+            `[被 Plugin 拦截] 致命错误 config.json 不存在，禁止执行分析命令。` +
+            `请先运行数据初始化：python "$SHARED_DIR/scripts/detect_env.py"`;
+          output.args.command = isPowerShell
+            ? `Write-Error '${blockedMsg}'; exit 1`
+            : `echo '${blockedMsg}' >&2; exit 1`;
+          debugLog(`tool.execute.before: BLOCKED (no config.json) cmd=${cmd.slice(0, 80)}`, sid);
+          return;
+        }
+      }
+
       const isUnix = !!process.env.SHELL || !!process.env.MSYSTEM;
       const isPowerShell = !isUnix && !!process.env.PSModulePath;
       if (isUnix) {
