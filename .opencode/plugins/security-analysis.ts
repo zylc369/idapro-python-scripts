@@ -697,6 +697,21 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
   debugLog(`  config exists: ${existsSync(CONFIG_FILE)}`);
   debugLog(`  env_cache exists: ${existsSync(ENV_CACHE_FILE)}`);
   debugLog(`  opencodeClient: ${!!opencodeClient}`);
+
+  // 写心跳文件，供 agent 检测 Plugin 是否正常加载
+  const heartbeatFile = join(DATA_DIR, ".plugin-heartbeat");
+  try {
+    const heartbeat = {
+      pid: process.pid,
+      loadedAt: new Date().toISOString(),
+      version: "1.0.0",
+    };
+    writeFileSync(heartbeatFile, JSON.stringify(heartbeat, null, 2));
+    debugLog(`  心跳文件已写入: ${heartbeatFile}`);
+  } catch (e) {
+    debugLog(`  心跳文件写入失败: ${e}`);
+  }
+
   return {
     // ─── 自定义工具 ──────────────────────────────────────────────────
     //
@@ -984,13 +999,13 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         }
       }
 
-      // 每次都注入当前 Agent 身份（不受 shouldInject 控制）
+      // 每次都注入 Plugin 完整性检查 + Agent 身份（不受 shouldInject 控制）
       // 放在 output.system 最前面，确保 LLM 优先看到
+      // 如果 Plugin 未加载，这段不会出现，agent 应立即停止并告知用户
       if (agentName) {
         output.system.unshift(
-          `[Agent身份确认] 你当前是 ${agentName} agent。如果用户问你是什么 agent，直接回答 ${agentName}，不要从对话历史推断。`,
+          `[系统完整性] Plugin 已加载。当前 Agent: ${agentName}。如果你看不到这段标记，说明 Plugin 未加载，当前会话缺少关键功能（环境信息、工具配置、占位符展开）。请立即告知用户并停止分析。`,
         );
-        debugLog(`DEBUG system.transform 注入 agent 身份: ${agentName}, output.system 长度=${output.system.length}, 第一个元素前50字符=${output.system[0]?.substring(0, 50)}`, sessionID);
       }
 
       session.systemTransformCount++;
