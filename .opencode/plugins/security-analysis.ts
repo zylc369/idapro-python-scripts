@@ -105,6 +105,9 @@ interface TaskSessionMapping {
   task_dir: string;
 }
 
+// getTaskDir 内存缓存（避免每次 debugLog 都读文件系统）
+const taskDirCache = new Map<string, string | null>();
+
 function readJsonSafe<T>(filePath: string, sessionID?: string): T | null {
   try {
     if (existsSync(filePath)) {
@@ -117,21 +120,24 @@ function readJsonSafe<T>(filePath: string, sessionID?: string): T | null {
 }
 
 function getTaskDir(sessionID: string): string | null {
+  // 先查缓存
+  const cached = taskDirCache.get(sessionID);
+  if (cached !== undefined) return cached;
+
   try {
     const filePath = join(TASK_SESSIONS_DIR, `${sessionID}.json`);
-    const data = readJsonSafe<TaskSessionMapping>(filePath, sessionID);
+    const data = readJsonSafe<TaskSessionMapping>(filePath);
     const result = data?.task_dir || null;
-    debugLog(
-      `getTaskDir: sessionID=${sessionID} file=${filePath} result=${result}`,
-      sessionID,
-    );
+    taskDirCache.set(sessionID, result);
     return result;
   } catch {
+    taskDirCache.set(sessionID, null);
     return null;
   }
 }
 
 function removeTaskSession(sessionID: string): void {
+  taskDirCache.delete(sessionID);
   try {
     const filePath = join(TASK_SESSIONS_DIR, `${sessionID}.json`);
     if (existsSync(filePath)) {
@@ -415,7 +421,7 @@ function buildSubSessionSystem(
    - 详细分析报告写入 $TASK_DIR/report.md
    - 你返回的文本必须是结构化摘要，格式如下:
 
-\\`\\`\\`
+\`\`\`
 ## 分析摘要
 （一句话说明分析结论）
 
@@ -430,7 +436,7 @@ function buildSubSessionSystem(
 ## 执行统计
 - 耗时: Xm Xs
 - 工具调用: X 次
-\\`\\`\\`
+\`\`\`
 
 ${envSection}`;
 }
@@ -554,6 +560,7 @@ async function doEnsureSession(
 
     debugLog(
       `doEnsureSession: client 响应 response=${JSON.stringify(response)}`,
+      sessionID,
     );
 
     if (response.error) {
@@ -568,26 +575,32 @@ async function doEnsureSession(
       return undefined;
     }
 
+    // 从 API 响应直接提取 agent（如果有的话）
+    const directAgent = (sessionInfo as { agent?: string })?.agent;
+
     // 递归解析父链
     let primaryAgent: string | undefined;
     if (sessionInfo.parentID) {
       const parent = await ensureSession(sessionInfo.parentID);
       primaryAgent = parent?.primaryAgent;
     }
+    // 优先使用直接 agent，回退到父链继承
+    const agentName = directAgent || primaryAgent;
 
     const session: SessionData = {
       createdAt: Date.now(),
-      primaryAgent,
+      agentName,
+      primaryAgent: agentName,
       systemTransformCount: 0,
     };
     sessions.set(sessionID, session);
     debugLog(
-      `doEnsureSession: 恢复 sessionID=${sessionID} primaryAgent=${primaryAgent || "无"} parentID=${sessionInfo.parentID || "无"}`,
+      `doEnsureSession: 恢复 sessionID=${sessionID} agentName=${agentName || "无"} primaryAgent=${agentName || "无"} directAgent=${directAgent || "无"} parentID=${sessionInfo.parentID || "无"}`,
       sessionID,
     );
     return session;
   } catch (e) {
-    debugLog(`doEnsureSession: 异常 sessionID=${sessionID} error=${e}`);
+    debugLog(`doEnsureSession: 异常 sessionID=${sessionID} error=${e}`, sessionID);
     return undefined;
   }
 }
@@ -782,6 +795,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
                 join(TASK_SESSIONS_DIR, `${subSessionID}.json`),
                 JSON.stringify({ task_dir: subTaskDir }),
               );
+              taskDirCache.set(subSessionID, subTaskDir);
               debugLog(`delegate_analysis: 子会话 task session 映射已写入 dir=${subTaskDir}`, context.sessionID);
             } catch (e) {
               debugLog(`delegate_analysis: 写入 task session 映射失败: ${e}`, context.sessionID);
@@ -836,10 +850,13 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
     // 用户发送消息时触发（awaited，宿主等待完成）
     // 职责：记录 agentName + 设置主 session 的 primaryAgent
-    // 注意：这是唯一能获取 input.agent 的 hook 点
-    //       system.transform / tool.execute.before 没有 agent 信息
+    // 注意：chat.message 是唯一能直接从 input.agent 获取 agent 名的 hook
+    //       system.transform / tool.execute.before 的 input 无 agent
+    //       但 requireSessionWithPrimary 可通过 session.get API 间接获取
     "chat.message": async (input) => {
       const agent = (input as { agent?: string })?.agent;
+      // DEBUG: 诊断 OpenCode hook input 结构（确认后可删除）
+      debugLog(`DEBUG chat.message INPUT keys=${Object.keys(input || {}).join(",")} agent=${agent ?? "无"}`);
       const sessionID = (input as { sessionID?: string })?.sessionID;
       if (!sessionID) {
         debugLog(`chat.message: 跳过 — 无 sessionID, agent=${agent}`);
@@ -933,6 +950,8 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
     //       每 10 次 LLM 请求注入一次完整环境信息，中间请求由 LLM 从对话历史获取路径值
     "experimental.chat.system.transform": async (input, output) => {
       const sessionID = (input as { sessionID?: string })?.sessionID;
+      // DEBUG: 诊断 OpenCode hook input 结构（确认后可删除）
+      debugLog(`DEBUG system.transform INPUT keys=${Object.keys(input || {}).join(",")} agent=${(input as { agent?: string })?.agent ?? "未传入"} sessionID=${sessionID}`, sessionID);
       const session = await requireSessionWithPrimary(
         "system.transform",
         sessionID,
@@ -966,8 +985,12 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       }
 
       // 每次都注入当前 Agent 身份（不受 shouldInject 控制）
+      // 放在 output.system 最前面，确保 LLM 优先看到
       if (agentName) {
-        output.system.push(`## 当前 Agent\n你当前是 ${agentName} agent。`);
+        output.system.unshift(
+          `[Agent身份确认] 你当前是 ${agentName} agent。如果用户问你是什么 agent，直接回答 ${agentName}，不要从对话历史推断。`,
+        );
+        debugLog(`DEBUG system.transform 注入 agent 身份: ${agentName}, output.system 长度=${output.system.length}, 第一个元素前50字符=${output.system[0]?.substring(0, 50)}`, sessionID);
       }
 
       session.systemTransformCount++;
