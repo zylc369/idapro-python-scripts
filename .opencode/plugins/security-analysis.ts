@@ -457,6 +457,8 @@ interface SessionData {
 }
 
 const sessions = new Map<string, SessionData>();
+// 缓存已确认非 PRIMARY_AGENT 的 session，避免反复调 session.get API
+const nonPrimarySessions = new Set<string>();
 
 // OpenCode client，在 Plugin 函数中初始化
 // 类型声明只列出实际使用的方法；运行时 client 是完整 SDK，包含所有 session API
@@ -592,8 +594,13 @@ async function doEnsureSession(
 
 /**
  * 统一的 hook 入口守卫：
- * 仅从 Map 中同步查找 session。session 的创建和删除完全由 chat.message 控制。
- * Map 中无数据 → 意味着当前 agent 不是 PRIMARY_AGENT → 跳过。
+ * 1. 优先从 Map 中查找 session（chat.message 已注册）
+ * 2. Map miss 时，通过 session.get API 查询当前 session 的 agent
+ *    - 如果是 PRIMARY_AGENT，恢复到 Map 中并返回
+ *    - 否则跳过
+ *
+ * 修复：agent 中途切换后 chat.message 可能不重新触发，
+ * 导致 Map 中无数据但实际 agent 已变为 PRIMARY_AGENT。
  */
 async function requireSessionWithPrimary(
   hookName: string,
@@ -607,10 +614,54 @@ async function requireSessionWithPrimary(
   const existing = sessions.get(sessionID);
   if (existing) return existing;
 
-  debugLog(
-    `${hookName}: 跳过 — sessionID=${sessionID} 无 session 数据，意味着这不是我们要处理的 agent`,
-    sessionID,
-  );
+  // 已确认非 PRIMARY_AGENT，跳过（避免重复 API 调用）
+  if (nonPrimarySessions.has(sessionID)) {
+    debugLog(
+      `${hookName}: 跳过 — 已缓存为非 PRIMARY sessionID=${sessionID}`,
+      sessionID,
+    );
+    return undefined;
+  }
+
+  // Map miss — 尝试从 API 恢复（覆盖 agent 切换场景）
+  if (!opencodeClient) {
+    debugLog(`${hookName}: Map miss → opencodeClient 未初始化，无法恢复`);
+    return undefined;
+  }
+  try {
+    const response = await opencodeClient.session.get({
+      path: { id: sessionID },
+    });
+    const sessionInfo = response?.data;
+    const agentName = (sessionInfo as { agent?: string } | undefined)?.agent;
+
+    if (agentName && PRIMARY_AGENTS.includes(agentName)) {
+      debugLog(
+        `${hookName}: Map miss → API 恢复成功 sessionID=${sessionID} agent=${agentName}`,
+        sessionID,
+      );
+      const session: SessionData = {
+        createdAt: Date.now(),
+        agentName,
+        primaryAgent: agentName,
+        systemTransformCount: 0,
+      };
+      sessions.set(sessionID, session);
+      return session;
+    }
+
+    // 缓存为非 PRIMARY，后续直接跳过
+    nonPrimarySessions.add(sessionID);
+    debugLog(
+      `${hookName}: Map miss → API 返回非 PRIMARY agent=${agentName || "无"} sessionID=${sessionID}`,
+      sessionID,
+    );
+  } catch (e) {
+    debugLog(
+      `${hookName}: Map miss → API 查询异常 sessionID=${sessionID} error=${e}`,
+      sessionID,
+    );
+  }
 
   return undefined;
 }
@@ -809,8 +860,12 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
       if (!isValidAgent) {
         sessions.delete(sessionID);
+        nonPrimarySessions.add(sessionID);
         return;
       }
+
+      // 清除非主缓存（agent 可能已切换回 PRIMARY）
+      nonPrimarySessions.delete(sessionID);
 
       // 确保 session 存在（重启后懒恢复）
       const session = await ensureSession(sessionID);
