@@ -36,13 +36,9 @@
 
 ### 2.1 改动内容
 
-**改动 1**: `agents-rules/execution-discipline.md` — 增加"自主探索"纪律行
+**改动**: `agents-rules/execution-discipline.md` — 增加"自主探索"纪律行
 
-这是 3 个分析 agent（binary/mobile/web）共享的片段，改一处全局生效。
-
-**改动 2**: `plugins/security-analysis.ts` 的 `buildSubSessionSystem` — 在子会话指令中增加自主探索规则
-
-通过 coordinator 调度的子 agent 也需要遵守同样的规则。
+这是 3 个分析 agent（binary/mobile/web）共享的片段，改一处全局生效。通过 coordinator 调度的子 agent 同样生效——子会话注册到 sessions Map 后，`system.transform` hook 会展开 `{{buwai-rule:execution-discipline}}` 占位符，不需要在 `buildSubSessionSystem` 中重复注入。
 
 ### 2.2 规则定义
 
@@ -75,33 +71,28 @@
 
 | 文件 | 操作 | 预估行数 | 说明 |
 |------|------|---------|------|
-| `agents-rules/execution-discipline.md` | 修改 | +15 行 | 增加自主探索规则 |
-| `plugins/security-analysis.ts` | 修改 | +12 行 | buildSubSessionSystem 增加自主探索指令 |
+| `agents-rules/execution-discipline.md` | 修改 | +17 行 | 增加自主探索规则 |
 
-**总改动**: ~27 行，2 个文件
+**总改动**: ~17 行，1 个文件
+
+说明：不需要修改 `buildSubSessionSystem`。子会话注册到 sessions Map 后，`system.transform` hook 会展开 agent prompt 中的 `{{buwai-rule:execution-discipline}}` 占位符，自主探索规则自动生效。
 
 ### 3.1 实施步骤拆分
 
 **步骤 1. 修改 execution-discipline.md 共享片段**
   - 文件: `agents-rules/execution-discipline.md`
-  - 预估行数: +15 行
+  - 预估行数: +17 行
   - 验证点: 文件内容包含"自主探索"行；包含"可以问"和"禁止问"的清晰定义；3 个 agent 的展开后 prompt 中能看到这条规则
   - 依赖: 无
 
-**步骤 2. 修改 buildSubSessionSystem 子会话注入**
-  - 文件: `plugins/security-analysis.ts`
-  - 预估行数: +12 行
-  - 验证点: `node --check` 语法通过；buildSubSessionSystem 返回的字符串中包含"自主探索"相关指令
-  - 依赖: 无
-
-**步骤 3. 端到端验证**
+**步骤 2. 端到端验证**
   - 文件: 所有修改文件
   - 预估行数: 0 行（验证步骤）
   - 验证点:
     - execution-discipline.md 内容正确
     - Plugin 语法通过
     - 现有文件（agent prompt、其他片段）无改动
-  - 依赖: 步骤 1-2 全部完成
+  - 依赖: 步骤 1
 
 ---
 
@@ -112,8 +103,7 @@
 - [ ] `execution-discipline.md` 包含"自主探索"纪律行
 - [ ] "自主探索"规则清晰定义了"可以问"和"禁止问"的边界
 - [ ] "自主探索"规则描述了遇到困难时的自主行为（读知识库、做实验、切换方向）
-- [ ] `buildSubSessionSystem` 返回内容中包含自主探索指令
-- [ ] 子会话的自主探索指令与 execution-discipline.md 的规则一致
+- [ ] 子 agent 通过 `{{buwai-rule:execution-discipline}}` 占位符展开自动获得自主探索规则（不需要在 buildSubSessionSystem 中额外注入）
 
 ### 回归验收
 
@@ -126,7 +116,7 @@
 ### 架构验收
 
 - [ ] 规则放在共享片段（agents-rules/），3 个 agent 自动生效
-- [ ] 子会话通过 system 参数注入（与现有注入机制一致）
+- [ ] 子 agent 通过占位符展开自动获得规则，不需要在 plugin 中重复注入
 
 ---
 
