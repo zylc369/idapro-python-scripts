@@ -502,8 +502,14 @@ function getPrimaryAgent(sessionID?: string): string | undefined {
 }
 
 function debugLog(msg: string, sessionID?: string): void {
-  const logFile = getLogFilePath(getPrimaryAgent(sessionID));
-  writeLog(logFile, msg);
+  // 优先写到任务目录下的 logs/plugin.log，没有任务目录则走集中日志
+  const taskDir = sessionID ? getTaskDir(sessionID) : null;
+  if (taskDir) {
+    writeLog(join(taskDir, "logs", "plugin.log"), msg);
+  } else {
+    const logFile = getLogFilePath(getPrimaryAgent(sessionID));
+    writeLog(logFile, msg);
+  }
 }
 
 /**
@@ -718,6 +724,17 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
               primaryAgent: target_agent,
               systemTransformCount: 0,
             });
+            // 为子会话写入 task session 映射，使子会话的日志路由到子任务目录
+            try {
+              mkdirSync(TASK_SESSIONS_DIR, { recursive: true });
+              writeFileSync(
+                join(TASK_SESSIONS_DIR, `${subSessionID}.json`),
+                JSON.stringify({ task_dir: subTaskDir }),
+              );
+              debugLog(`delegate_analysis: 子会话 task session 映射已写入 dir=${subTaskDir}`, context.sessionID);
+            } catch (e) {
+              debugLog(`delegate_analysis: 写入 task session 映射失败: ${e}`, context.sessionID);
+            }
             debugLog(`delegate_analysis: 子会话已注册到 sessions Map, agent=${target_agent}`, context.sessionID);
           } catch (e) {
             return `错误: 创建子会话异常 - ${e}`;
@@ -947,6 +964,34 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         output.args.command = `set "SESSION_ID=${sid}" && ${cmd}`;
       }
       debugLog(`injected: ${output.args.command.slice(0, 120)}`, sid);
+    },
+
+    // 工具执行后触发（fire-and-forget）
+    // 职责：记录工具执行结果，供 evolve agent 事后验证
+    "tool.execute.after": async (input, output) => {
+      const sid = input.sessionID;
+      const session = await requireSessionWithPrimary(
+        "tool.execute.after",
+        sid,
+      );
+      if (!session) return;
+
+      const toolName = input.tool;
+      // 对自定义工具记录完整结果，对内置工具只记录调用
+      if (toolName === "delegate_analysis") {
+        const result = typeof output.output === "string"
+          ? output.output
+          : JSON.stringify(output.output);
+        const summary = result.length > 500
+          ? result.slice(0, 500) + `...(truncated, total ${result.length} chars)`
+          : result;
+        debugLog(
+          `tool.execute.after: tool=${toolName} result=${summary}`,
+          sid,
+        );
+      } else {
+        debugLog(`tool.execute.after: tool=${toolName}`, sid);
+      }
     },
 
     // session 生命周期事件（fire-and-forget，宿主不等待完成）
