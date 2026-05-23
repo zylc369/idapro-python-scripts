@@ -4,6 +4,7 @@ import express from "express"
 import type { Scheduler } from "../scheduler.js"
 import { getCredentials } from "../credentials.js"
 import { CTFdAdapter } from "../adapters/ctfd.js"
+import logger from "../logger.js"
 
 export function taskRouter(scheduler: Scheduler): Router {
   const router = express.Router()
@@ -45,7 +46,7 @@ export function taskRouter(scheduler: Scheduler): Router {
         downloadFile: (url, outputPath) => adapter.downloadFile(url, outputPath),
         submitAnswer: (taskId, answer) => adapter.submitAnswer(taskId, answer),
       }).catch((err) => {
-        console.error("调度器异常退出:", err)
+        logger.error({ err }, "调度器异常退出")
       })
 
       res.json({ message: `开始分析 ${tasks.length} 个题目`, taskCount: tasks.length })

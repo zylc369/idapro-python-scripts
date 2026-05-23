@@ -8,6 +8,7 @@ import { taskRouter } from "./routes/tasks.js"
 import { configRouter } from "./routes/config.js"
 import { Scheduler } from "./scheduler.js"
 import { closeServer } from "./opencode.js"
+import logger from "./logger.js"
 
 const __dirname = import.meta.dirname ?? path.dirname(fileURLToPath(import.meta.url))
 const PORT = parseInt(process.env.PORT ?? "3001", 10)
@@ -30,14 +31,16 @@ app.use("/api/config", configRouter(scheduler))
 
 // 启动
 const server = app.listen(PORT, () => {
-  console.log(`Auto Analysis 后端已启动: http://localhost:${PORT}`)
-  console.log(`SSE 端点: http://localhost:${PORT}/api/events`)
+  logger.info({ port: PORT }, "Auto Analysis 后端已启动")
+  logger.info(`SSE 端点: http://localhost:${PORT}/api/events`)
 })
 
 // 优雅退出：关闭 HTTP server + OpenCode server
 async function shutdown() {
+  logger.info("正在关闭服务器...")
   server.close()
   await closeServer()
+  logger.info("服务器已关闭")
   process.exit(0)
 }
 

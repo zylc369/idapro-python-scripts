@@ -2,6 +2,7 @@
 import type { Task, TaskInfo, SchedulerConfig, DownloadResult, SubmitResult } from "../shared/types.js"
 import { analyze } from "./opencode.js"
 import { readJson, writeJson } from "./file-store.js"
+import logger from "./logger.js"
 import { EventEmitter } from "node:events"
 import path from "node:path"
 import fs from "node:fs"
@@ -95,8 +96,9 @@ export class Scheduler extends EventEmitter {
           const task = queue.shift()!
           try {
             await this.executeTask(task, callbacks, signal)
-          } catch {
+          } catch (err) {
             // executeTask 内部已处理异常，此处仅保证 worker 不退出
+            logger.error({ err, taskId: task.id }, "任务执行意外失败")
           }
         }
       }
