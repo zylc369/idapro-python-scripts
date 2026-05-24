@@ -1,7 +1,6 @@
 # Web Cache Poisoning 专题
 
 > 本文档为 web-analysis Agent 的 Web Cache Poisoning 深度参考。
-> 内容沉淀自 CyberGame 2026 `future.js` 题目的完整分析（详见 `docs/解题报告/Web/futurejs-writeup.md`）。
 > 不依赖主 prompt 上下文即可理解。
 
 ---
