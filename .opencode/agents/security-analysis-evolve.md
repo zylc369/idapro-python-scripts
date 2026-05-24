@@ -437,6 +437,18 @@ Plugin hooks:
 
 **例外**: 创建全新文件且预估 < 300 行时，可以用 Write 一次性创建。
 
+### 规则 8: 知识编写规范
+
+> 详细规范见 `$SHARED_DIR/knowledge-base/knowledge-writing-guide.md`。每次沉淀知识前必须读取。
+
+**核心规则**:
+
+1. **写"什么场景、怎么检查、怎么利用"**，不写"经验来源"、不引用解题报告路径、不按时间线叙述
+2. **具体胜过抽象** — 附带可操作的步骤、payload 示例、具体的参数值（默认值、阈值等）
+3. **每条知识必须通过质量检查** — 准确性（代码示例可执行）、完整性（读者能独立完成操作）、一致性（跨文件引用用 `$AGENT_DIR`/`$SHARED_DIR`）、可操作性（有检查步骤和成功/失败判断标准）
+4. **沉淀后检查覆盖度** — 是否过于偏科（只基于一道题）？是否遗漏其他常见场景？
+5. **不重复已有知识** — 同一技术在其他文件中已有描述时，引用而非重写
+
 ---
 
 ## OpenCode 开发知识库
@@ -447,6 +459,7 @@ Plugin hooks:
 
 | 文档 | 触发条件 |
 |------|---------|
+| `knowledge-writing-guide.md` | 沉淀知识到任何知识库文件之前 |
 | `opencode-plugin-api.md` | 查看 Hook 签名、input/output 类型 |
 | `opencode-plugin-hooks-lifecycle.md` | 理解 Hook 执行时序、awaited vs fire-and-forget、常见陷阱 |
 | `opencode-plugin-development-guide.md` | 从零创建插件、最小模板、状态管理模式 |

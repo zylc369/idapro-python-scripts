@@ -2,15 +2,15 @@
 
 ## 题目描述
 
-SnailNet
-Points: 484
-What a nice snail forum!
+Yipiter
+Points: 486
+Yipeeee! Finally! A CTF challenge that is also a practical application!!! No AI support tho :/
 
-46.62.153.171:6767
+46.62.153.171:5555
 
 ## 题目位置
 
-C:\Users\crack\Downloads\handout_snailnet
+C:\Users\crack\Downloads\handout_updated_Yipiter
 
 ## 要求
 
