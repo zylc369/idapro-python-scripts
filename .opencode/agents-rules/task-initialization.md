@@ -1,7 +1,9 @@
-在阶段 A 之前必须按顺序执行以下 3 步。详细流程见 `$SHARED_DIR/knowledge-base/task-initialization.md`。
+同一会话中开始一个新分析任务时，必须执行以下初始化（且仅执行一次）：
 
-1. **创建任务目录**：`TASK_DIR=$(python3 "$SHARED_DIR/scripts/create_task_dir.py")`
-2. **环境检测**：`python3 "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"`
-3. **初始化 $BA_PYTHON**：从 `~/bw-security-analysis/env_cache.json` 提取 `venv_python`
+读取并执行 `$SHARED_DIR/knowledge-base/task-initialization.md` 中定义的步骤。
 
-环境检测失败 → **停下来告知用户，禁止继续**。环境检测结果缓存 24h（`~/bw-security-analysis/env_cache.json`），无需每次重新检测。
+**为什么必须执行：** 确保分析环境（工具链、依赖库）就绪，否则后续分析可能受阻甚至无法进行。
+
+**为什么只执行一次：** 初始化步骤具有幂等性，重复执行无益且可能引入副作用。
+
+> 初始化文档独立存放而非内联于此，是为了在完成初始化后释放其占用的上下文空间——这正是渐进式披露的设计意图。
