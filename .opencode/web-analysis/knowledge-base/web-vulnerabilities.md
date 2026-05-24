@@ -41,8 +41,6 @@
 
 #### 1.1.1 Markdown 解析器注入
 
-> 经验来源: SnailNet CTF。Markdown 解析器将用户输入转为 HTML，但某些解析器对嵌套结构处理不当，允许注入 HTML 属性。
-
 **场景**：应用允许用户提交 Markdown 内容并渲染为 HTML（论坛帖子、评论、个人简介等）。
 
 **为什么 Markdown 是 XSS 风险点**：
