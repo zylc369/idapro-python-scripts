@@ -76,22 +76,22 @@ SnailNet Web CTF 题目（46.62.153.171:6767）完整分析过程复盘，发现
 
 | 文件 | 改动类型 | 说明 |
 |------|---------|------|
-| `agents/web-analysis.md` | 修改 | 修改第 42 行，仅声明不依赖 $IDAT |
+| `agents/web-analysis.md` | 修改 | 删除第 42 行（不必要的变量覆盖语句） |
 | `binary-analysis/scripts/detect_env.py` | 修改 | REQUIRED_PACKAGES 加入 web 分析包 |
 
-**方案详情（1）：web-analysis.md 移除 $BA_PYTHON 覆盖**
+**方案详情（1）：web-analysis.md 删除变量覆盖语句**
 
 当前第 42 行：
 ```
 > **web-analysis 专属说明**：本 Agent 只使用 `$AGENT_DIR`、`$SHARED_DIR`、`$TASK_DIR`，不依赖 `$IDAT` 和 `$BA_PYTHON`。
 ```
 
-改为：
-```
-> **web-analysis 专属说明**：本 Agent 不依赖 `$IDAT`（IDA Pro 路径）。`$BA_PYTHON`、`$AGENT_DIR`、`$SHARED_DIR`、`$TASK_DIR` 均通过公共片段注入，按公共片段规则使用。
-```
+**直接删除此行**。原因：
+- `variable-initialization.md` 已定义所有变量来源，agent 按需使用，无需被告知"用哪些不用哪些"
+- 之前的"不依赖 $BA_PYTHON"反而有害（阻止 agent 使用 venv Python）
+- agent 不会无谓使用 $IDAT（Web 分析场景没有 IDA 数据库）
 
-效果：`variable-initialization.md` 中的 $BA_PYTHON 初始化规则和 "$BA_PYTHON 强制使用" 规则自然对 web-analysis 生效，无需额外改动。
+效果：`variable-initialization.md` 中的 $BA_PYTHON 初始化规则自然对 web-analysis 生效，无需额外改动。
 
 **方案详情（2）：detect_env.py 加入 web 分析包**
 
@@ -191,7 +191,7 @@ from web_helpers import create_session, get_csrf, register_and_login
 |------|---------|---------|
 | `agents-rules/execution-discipline.md` | 修改（添加规则） | +25 行 |
 | `binary-analysis/knowledge-base/task-initialization.md` | 修改（删除重复） | -1 行 |
-| `agents/web-analysis.md` | 修改（$BA_PYTHON + 移除重复 + 工具清单） | ~6 行 |
+| `agents/web-analysis.md` | 修改（删除覆盖 + 移除重复 + 工具清单） | ~4 行 |
 | `binary-analysis/scripts/detect_env.py` | 修改（添加 web 包） | +3 行 |
 | `web-analysis/scripts/web_helpers.py` | 新建 | ~120 行 |
 | `web-analysis/scripts/registry.json` | 新建 | ~15 行 |
@@ -214,10 +214,10 @@ from web_helpers import create_session, get_csrf, register_and_login
     - Grep "中间文件写入" 在 task-initialization.md 中无结果
   - 依赖: 步骤 1（确保替代规则已就位后再删除旧规则）
 
-步骤 3. web-analysis.md 修改 $BA_PYTHON 覆盖语句
+步骤 3. web-analysis.md 删除变量覆盖语句
   - 文件: agents/web-analysis.md
-  - 预估行数: 改 1 行
-  - 验证点: variable-initialization.md 的 $BA_PYTHON 规则不再被覆盖
+  - 预估行数: -1 行（删除第 42 行）
+  - 验证点: 第 42 行不存在"专属说明"块引用；variable-initialization.md 的 $BA_PYTHON 规则不再被覆盖
   - 依赖: 无
 
 步骤 4. detect_env.py 添加 web 分析包
@@ -278,7 +278,7 @@ from web_helpers import create_session, get_csrf, register_and_login
 | F1 | 文件放置规则在 execution-discipline.md 中存在且自包含 | Read 文件确认 |
 | F2 | task-initialization.md 中不再有文件放置规则 | Grep "中间文件写入" 确认无结果 |
 | F2.5 | web-analysis.md 安全规则中不再有与文件放置重复的描述 | Grep "Cookie/Token.*任务目录" 确认无结果 |
-| F3 | web-analysis.md 不再覆盖 $BA_PYTHON | Grep "不依赖.*BA_PYTHON" 确认不存在 |
+| F3 | web-analysis.md 第 42 行变量覆盖语句已删除 | Grep "专属说明" 在 web-analysis.md 中无结果 |
 | F4 | detect_env.py 包含 requests、bs4、lxml | Grep 确认 REQUIRED_PACKAGES 中有这三个包 |
 | F5 | web_helpers.py 可 import 且无语法错误 | `$BA_PYTHON -c "import sys; sys.path.insert(0,...); import web_helpers"` |
 | F6 | registry.json 格式正确 | `python -c "import json; json.load(open(...))"` |
