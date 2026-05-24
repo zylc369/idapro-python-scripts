@@ -12,7 +12,6 @@
 - **禁止**使用 `workdir` 参数
 - **禁止**在项目根目录下创建任何文件
 - **禁止**手动 `mkdir` 创建任务目录
-- 所有中间文件写入 `~/bw-security-analysis/workspace/<task_id>/`
 
 **命令**：
 
@@ -31,11 +30,7 @@ TASK_DIR=$(python3 "$SHARED_DIR/scripts/create_task_dir.py")
 **命令**：
 
 ```bash
-# binary-analysis agent
 python3 "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
-
-# mobile-analysis agent
-python3 "$SHARED_DIR/scripts/detect_env.py" --agent mobile-analysis --output "$TASK_DIR/env.json"
 ```
 
 - 成功 → 继续 Step 3

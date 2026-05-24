@@ -1,0 +1,14 @@
+{
+  "_comment": "web-analysis agent 专用脚本注册表。通用脚本（detect_env 等）在 $SHARED_DIR/scripts/registry.json 中注册",
+  "scripts": [
+    {
+      "name": "web_helpers",
+      "file": "web_helpers.py",
+      "description": "Web 安全分析公共工具库：create_session（预配置 HTTP session）、get_csrf（CSRF token 提取）、register_and_login（注册+登录）、extract_flag_from_webhook（webhook.site flag 提取）、create_webhook（创建 webhook 端点）。作为库模块被 import",
+      "params": [],
+      "example_call": "import sys; sys.path.insert(0, '$AGENT_DIR/scripts'); from web_helpers import create_session",
+      "added_at": "2026-05-24",
+      "verified": false
+    }
+  ]
+}

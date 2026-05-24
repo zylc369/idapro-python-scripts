@@ -1045,7 +1045,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
     // 工具执行前触发（awaited）
     // 职责：
     //   1. config.json 不存在时拦截非初始化命令，强制用户先做数据初始化
-    //   2. 为 bash 命令注入 SESSION_ID 环境变量
+    //   2. 为 bash 命令注入 SESSION_ID + AGENT_NAME 环境变量
     "tool.execute.before": async (input, output) => {
       const sid = input.sessionID;
       const session = await requireSessionWithPrimary(
@@ -1081,17 +1081,20 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
       const isUnix = !!process.env.SHELL || !!process.env.MSYSTEM;
       const isPowerShell = !isUnix && !!process.env.PSModulePath;
+      const agentName = session.agentName || "";
       if (isUnix) {
         // bash 单引号转义：' → '\''（结束引号→转义单引号→重新开始引号）
         const safeSid = sid.replace(/'/g, "'\\''");
-        output.args.command = `SESSION_ID='${safeSid}' ${cmd}`;
+        const safeAgent = agentName.replace(/'/g, "'\\''");
+        output.args.command = `SESSION_ID='${safeSid}' AGENT_NAME='${safeAgent}' ${cmd}`;
       } else if (isPowerShell) {
         // PowerShell 单引号转义：' → ''（两个单引号）
         const safeSid = sid.replace(/'/g, "''");
-        output.args.command = `$env:SESSION_ID='${safeSid}'; ${cmd}`;
+        const safeAgent = agentName.replace(/'/g, "''");
+        output.args.command = `$env:SESSION_ID='${safeSid}'; $env:AGENT_NAME='${safeAgent}'; ${cmd}`;
       } else {
         // cmd.exe 双引号内不需要转义单引号
-        output.args.command = `set "SESSION_ID=${sid}" && ${cmd}`;
+        output.args.command = `set "SESSION_ID=${sid}" && set "AGENT_NAME=${agentName}" && ${cmd}`;
       }
       debugLog(`injected: ${output.args.command.slice(0, 120)}`, sid);
     },

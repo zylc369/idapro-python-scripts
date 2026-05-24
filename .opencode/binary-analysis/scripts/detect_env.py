@@ -14,7 +14,7 @@ usage:
 level: intermediate
 
 packages:
-  必需: capstone, unicorn, gmpy2, frida, Pillow, pyautogui, pyperclip, playwright, markdownify
+  必需: capstone, unicorn, gmpy2, frida, Pillow, pyautogui, pyperclip, playwright, markdownify, requests, beautifulsoup4, lxml
   playwright 需要额外安装浏览器二进制（playwright install chromium）
 """
 
@@ -42,6 +42,10 @@ REQUIRED_PACKAGES = {
     "pyperclip": {"required": True, "pip_name": "pyperclip"},
     "playwright": {"required": True, "pip_name": "playwright", "post_install": True, "version_via": "importlib:playwright"},
     "markdownify": {"required": True, "pip_name": "markdownify", "version_via": "importlib:markdownify"},
+    # Web 安全分析包
+    "requests":      {"required": True,  "pip_name": "requests"},
+    "bs4":           {"required": True,  "pip_name": "beautifulsoup4"},
+    "lxml":          {"required": True,  "pip_name": "lxml"},
 }
 
 
@@ -481,7 +485,8 @@ def main():
     parser.add_argument("--output", "-o", help="输出 JSON 文件路径")
     parser.add_argument("--force", "-f", action="store_true", help="强制重新检测（忽略缓存）")
     parser.add_argument("--skip-install", action="store_true", help="跳过自动安装缺失的包")
-    parser.add_argument("--agent", help="仅检测指定 Agent 需要的工具（如 binary-analysis, mobile-analysis）")
+    parser.add_argument("--agent", help="仅检测指定 Agent 需要的工具（如 binary-analysis, mobile-analysis）",
+                        default=os.environ.get("AGENT_NAME"))
     args = parser.parse_args()
 
     agent = args.agent

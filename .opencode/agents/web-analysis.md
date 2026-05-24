@@ -39,8 +39,6 @@ permission:
 
 {{buwai-rule:variable-initialization}}
 
-> **web-analysis 专属说明**：本 Agent 只使用 `$AGENT_DIR`、`$SHARED_DIR`、`$TASK_DIR`，不依赖 `$IDAT` 和 `$BA_PYTHON`。
-
 ---
 
 ## 参数解析与目标识别
@@ -195,6 +193,22 @@ permission:
 - **Read/Glob/Grep**: 读取和搜索源码文件（最常用的"工具"）
 - **Docker**: `docker compose config` / `docker compose logs`（Docker 环境分析）
 
+### Web 分析辅助库（通过 $AGENT_DIR 调用）
+
+> 高频操作封装库，减少测试脚本中的 boilerplate。通过 `$BA_PYTHON` 调用（依赖 requests + bs4 + lxml）。
+
+| 模块 | 用途 | 关键函数 |
+|------|------|---------|
+| `$AGENT_DIR/scripts/web_helpers.py` | HTTP session 管理、CSRF 提取、注册登录、webhook 交互 | `create_session`、`get_csrf`、`register_and_login`、`extract_flag_from_webhook`、`create_webhook` |
+
+**使用方式**（在临时脚本中）：
+
+```python
+import sys
+sys.path.insert(0, "$AGENT_DIR/scripts")
+from web_helpers import create_session, get_csrf, register_and_login
+```
+
 ---
 
 ## 知识库索引
@@ -251,5 +265,4 @@ permission:
 
 - **不向生产环境发送破坏性请求**（CTF 靶机和授权测试环境除外）
 - **不发送大量请求导致 DoS**（即使是测试环境也注意速率控制）
-- Cookie/Token 等敏感信息仅在任务目录中存储，不输出到非预期位置
 - 失败后不静默忽略，必须说明失败原因
