@@ -77,7 +77,9 @@ SnailNet Web CTF 题目（46.62.153.171:6767）完整分析过程复盘，发现
 | 文件 | 改动类型 | 说明 |
 |------|---------|------|
 | `agents/web-analysis.md` | 修改 | 删除第 42 行（不必要的变量覆盖语句） |
-| `binary-analysis/scripts/detect_env.py` | 修改 | REQUIRED_PACKAGES 加入 web 分析包 |
+| `binary-analysis/scripts/detect_env.py` | 修改 | REQUIRED_PACKAGES 加入 web 分析包 + `--agent` 参数支持 AGENT_NAME 环境变量 |
+| `plugins/security-analysis.ts` | 修改 | `tool.execute.before` 注入 AGENT_NAME 环境变量 |
+| `binary-analysis/knowledge-base/task-initialization.md` | 修改 | 移除 Step 2 中的 `--agent` 专属命令示例（已由环境变量自动传递替代） |
 
 **方案详情（1）：web-analysis.md 删除变量覆盖语句**
 
@@ -93,7 +95,7 @@ SnailNet Web CTF 题目（46.62.153.171:6767）完整分析过程复盘，发现
 
 效果：`variable-initialization.md` 中的 $BA_PYTHON 初始化规则自然对 web-analysis 生效，无需额外改动。
 
-**方案详情（2）：detect_env.py 加入 web 分析包**
+**方案详情（2）：detect_env.py 加入 web 分析包 + AGENT_NAME 环境变量**
 
 当前 `REQUIRED_PACKAGES` 只包含 binary-analysis 的包（capstone, unicorn, frida 等）。venv 是所有 agent 共享的，Web 分析需要的包加入同一列表即可。
 
@@ -111,6 +113,17 @@ REQUIRED_PACKAGES = {
 - `requests`: HTTP 客户端（Web 分析基础依赖）
 - `beautifulsoup4`: HTML 解析（CSRF token 提取、响应分析）
 - `lxml`: bs4 推荐的后端解析器，处理畸形 HTML 比 html.parser 更健壮，速度更快
+
+`--agent` 参数新增环境变量支持：`os.environ.get("AGENT_NAME")` 作为默认值，命令行参数优先级更高。Plugin 已通过环境变量注入 agent name，detect_env.py 自动读取，文档中不再需要 `--agent` 参数说明。
+
+**方案详情（3）：Plugin 注入 AGENT_NAME 环境变量**
+
+在 `tool.execute.before` hook 中，与 `SESSION_ID` 一起注入 `AGENT_NAME` 环境变量。当前 session 的 agent name 已在 `chat.message` hook 中记录到 `session.agentName`。
+
+效果：
+- 所有 bash 命令自动携带 `AGENT_NAME=<agent-name>` 环境变量
+- detect_env.py 自动获取 agent name 进行工具过滤
+- 文档中去掉所有 `--agent` 参数描述，命令保持通用
 
 ### 2.3 方案 C：Writeup/已知方案处理策略
 
@@ -190,9 +203,10 @@ from web_helpers import create_session, get_csrf, register_and_login
 | 文件 | 改动类型 | 预估行数 |
 |------|---------|---------|
 | `agents-rules/execution-discipline.md` | 修改（添加规则） | +25 行 |
-| `binary-analysis/knowledge-base/task-initialization.md` | 修改（删除重复） | -1 行 |
+| `binary-analysis/knowledge-base/task-initialization.md` | 修改（删除重复 + 删除 `--agent`） | -5 行 |
 | `agents/web-analysis.md` | 修改（删除覆盖 + 移除重复 + 工具清单） | ~4 行 |
-| `binary-analysis/scripts/detect_env.py` | 修改（添加 web 包） | +3 行 |
+| `binary-analysis/scripts/detect_env.py` | 修改（添加 web 包 + AGENT_NAME 支持） | +5 行 |
+| `plugins/security-analysis.ts` | 修改（注入 AGENT_NAME 环境变量） | +3 行 |
 | `web-analysis/scripts/web_helpers.py` | 新建 | ~120 行 |
 | `web-analysis/scripts/registry.json` | 新建 | ~15 行 |
 
@@ -205,12 +219,17 @@ from web_helpers import create_session, get_csrf, register_and_login
   - 验证点: 文件语法正确（markdown 无格式错误）；新规则与现有纪律表格式一致
   - 依赖: 无
 
-步骤 2. 移除所有文件放置重复描述
-  - 文件: binary-analysis/knowledge-base/task-initialization.md（移除第 15 行）、agents/web-analysis.md（移除第 254 行"Cookie/Token..."安全规则中与文件放置重复的描述）
-  - 预估行数: -2 行（task-initialization -1 + web-analysis -1）
+步骤 2. 移除重复/已替代的片段内容
+  - 文件: binary-analysis/knowledge-base/task-initialization.md、agents/web-analysis.md
+  - 改动内容:
+    - task-initialization.md: 移除第 15 行（文件放置规则，已上移到 execution-discipline.md）
+    - task-initialization.md: 移除 Step 2 中的 `--agent` 专属命令示例（已由环境变量自动传递替代）
+    - web-analysis.md: 移除第 254 行（"Cookie/Token...仅在任务目录中存储，不输出到非预期位置"已完全被 execution-discipline.md 文件放置规则覆盖）
+  - 预估行数: -6 行（task-initialization -5 + web-analysis -1）
   - 验证点:
-    - task-initialization.md 仍自包含（读者只看此文件也能理解目录创建流程）；不丢失"禁止使用 workdir"等关键规则
-    - web-analysis.md 安全规则段仍完整（只移除与文件放置重叠的描述，不移除纯安全约束如"不输出到非预期位置"）
+    - task-initialization.md 仍自包含；不丢失"禁止使用 workdir"等关键规则
+    - task-initialization.md Step 2 命令为通用版（无 `--agent` 参数）
+    - Grep "--agent" 在 task-initialization.md 中无结果
     - Grep "中间文件写入" 在 task-initialization.md 中无结果
   - 依赖: 步骤 1（确保替代规则已就位后再删除旧规则）
 
@@ -220,44 +239,54 @@ from web_helpers import create_session, get_csrf, register_and_login
   - 验证点: 第 42 行不存在"专属说明"块引用；variable-initialization.md 的 $BA_PYTHON 规则不再被覆盖
   - 依赖: 无
 
-步骤 4. detect_env.py 添加 web 分析包
+步骤 4. detect_env.py 添加 web 分析包 + AGENT_NAME 环境变量支持
   - 文件: binary-analysis/scripts/detect_env.py
-  - 预估行数: +3 行（REQUIRED_PACKAGES 新增 requests + bs4 + lxml）
-  - 验证点: python -c "compile(open(...).read(), ..., 'exec')" 语法检查通过
+  - 预估行数: +5 行（REQUIRED_PACKAGES +3 行 + --agent 环境变量默认值 ~2 行）
+  - 验证点:
+    - python -c "compile(open(...).read(), ..., 'exec')" 语法检查通过
+    - AGENT_NAME=test-agent python3 detect_env.py --skip-install → 日志中体现 agent=test-agent
   - 依赖: 无
 
-步骤 5. 创建 web_helpers.py
+步骤 5. Plugin 注入 AGENT_NAME 环境变量
+  - 文件: plugins/security-analysis.ts
+  - 预估行数: +3 行（tool.execute.before 中与 SESSION_ID 并列注入 AGENT_NAME）
+  - 验证点:
+    - node --check 语法检查通过
+    - Plugin 逻辑正确：从 session.agentName 获取值，非 PRIMARY_AGENT 时不注入
+  - 依赖: 无
+
+步骤 6. 创建 web_helpers.py
   - 文件: web-analysis/scripts/web_helpers.py（新建）
   - 预估行数: ~120 行
   - 验证点: python -c "compile(open(...).read(), ..., 'exec')" 语法检查通过
   - 依赖: 无
 
-步骤 6. 创建 registry.json
+步骤 7. 创建 registry.json
   - 文件: web-analysis/scripts/registry.json（新建）
   - 预估行数: ~15 行
   - 验证点: python -c "import json; json.load(open(...))" JSON 语法检查通过
-  - 依赖: 步骤 5（注册的脚本必须已存在）
+  - 依赖: 步骤 6（注册的脚本必须已存在）
 
-步骤 7. web-analysis.md 添加 web_helpers.py 到工具清单
+步骤 8. web-analysis.md 添加 web_helpers.py 到工具清单
   - 文件: agents/web-analysis.md
   - 预估行数: +6 行（工具表 1 行 + import 模板 5 行）
   - 验证点: 工具清单表格格式一致；引用路径使用 $AGENT_DIR 变量；包含 sys.path.insert + import 模板
-  - 依赖: 步骤 5、6（工具必须已存在才能引用）
+  - 依赖: 步骤 6、7（工具必须已存在才能引用）
 
-步骤 8. 安装 web 包到 venv（端到端验证）
-  - 文件: 无（运行 detect_env.py 触发安装）
+步骤 9. 端到端验证
+  - 文件: 无
   - 预估行数: 0
   - 验证点:
-    - detect_env.py --force 运行成功
+    - detect_env.py --force 运行成功（AGENT_NAME 由 Plugin 自动注入）
     - venv python 可 import requests、bs4、lxml
     - web_helpers.py 可被 venv python import
-  - 依赖: 步骤 4、5（包声明和脚本必须已存在）
+  - 依赖: 步骤 4、5、6（包声明、AGENT_NAME 注入、脚本必须已存在）
 
-步骤 9. web-analysis.md Prompt 瘦身检查
+步骤 10. web-analysis.md Prompt 瘦身检查
   - 文件: agents/web-analysis.md
   - 预估行数: 0（纯检查）
   - 验证点: 展开后行数 < 450 行
-  - 依赖: 步骤 3、7（所有修改完成后统计）
+  - 依赖: 步骤 3、8（所有修改完成后统计）
 ```
 
 ### 3.2 编码规则
@@ -280,6 +309,8 @@ from web_helpers import create_session, get_csrf, register_and_login
 | F2.5 | web-analysis.md 安全规则中不再有与文件放置重复的描述 | Grep "Cookie/Token.*任务目录" 确认无结果 |
 | F3 | web-analysis.md 第 42 行变量覆盖语句已删除 | Grep "专属说明" 在 web-analysis.md 中无结果 |
 | F4 | detect_env.py 包含 requests、bs4、lxml | Grep 确认 REQUIRED_PACKAGES 中有这三个包 |
+| F4.5 | detect_env.py `--agent` 支持环境变量 AGENT_NAME，命令行参数优先级更高 | Grep "AGENT_NAME" 确认存在 |
+| F4.6 | Plugin 注入 AGENT_NAME 环境变量 | Read tool.execute.before 确认与 SESSION_ID 并列注入 |
 | F5 | web_helpers.py 可 import 且无语法错误 | `$BA_PYTHON -c "import sys; sys.path.insert(0,...); import web_helpers"` |
 | F6 | registry.json 格式正确 | `python -c "import json; json.load(open(...))"` |
 | F7 | web-analysis.md 工具清单引用 web_helpers.py | Read 确认 |
@@ -301,6 +332,7 @@ from web_helpers import create_session, get_csrf, register_and_login
 | A2 | web-analysis/scripts/ 遵循归档规则（agent 专属目录） |
 | A3 | 依赖方向正确: web-analysis 可引用 shared (binary-analysis)，不反向 |
 | A4 | web_helpers.py 通过 $BA_PYTHON 调用（venv 中有 requests + bs4 + lxml），不要求系统 Python 可用 |
+| A5 | AGENT_NAME 通过 Plugin 环境变量自动注入，文档中不硬编码 `--agent` 参数 |
 
 ---
 
