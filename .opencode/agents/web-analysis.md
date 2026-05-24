@@ -222,6 +222,7 @@ from web_helpers import create_session, get_csrf, register_and_login
 | `web-methodology.md` | 分析规划阶段（阶段 B） |
 | `web-vulnerabilities.md` | 识别到潜在漏洞类型时 |
 | `cache-poisoning.md` | 检测到缓存机制 / Vary 头 / 反向代理 |
+| `csp-bypass.md` | 检测到 CSP 头 / XSS 被 CSP 阻止 / PHP 应用 + 需要绕过安全头 |
 
 ### 通用知识库（$SHARED_DIR/knowledge-base/）
 

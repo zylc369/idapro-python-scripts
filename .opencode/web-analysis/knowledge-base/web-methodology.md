@@ -119,6 +119,8 @@ Web 安全分析不是找单个漏洞，而是构造**攻击链**——多个小
 | SQL 注入 + 认证绕过 | SQLi → 绕过登录 → 管理员功能 | 登录表单 + SQL 查询 |
 | 文件上传 + RCE | 上传恶意文件 → 服务器执行 → 拿 shell | 文件上传功能 + 可执行目录 |
 | JWT 伪造 + 权限提升 | 算法混淆 → 伪造 token → 管理员权限 | JWT 认证 + 弱密钥 |
+| Stored XSS + CSP bypass | 存储恶意内容 → 绕过 CSP → Bot/受害者触发 XSS | 有 Markdown/评论功能 + CSP + Bot/Cookie |
+| 参数炸弹 + 安全头绕过 | 超量参数 → 触发服务器错误 → 安全头（CSP/HSTS）消失 | PHP 应用 + max_input_vars |
 
 ### 3.3 关键思维方式
 
