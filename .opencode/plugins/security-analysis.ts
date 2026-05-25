@@ -679,6 +679,78 @@ async function requireSessionWithPrimary(
   return undefined;
 }
 
+// ─── 时间线日志 ──────────────────────────────────────────────────────
+//
+// 记录工具执行和 session 事件的时间线，供事后复盘分析。
+// 内存 buffer → 文件 flush 策略，避免每次事件都写磁盘。
+
+type TimelineEventType = "tool.before" | "tool.after" | "session.status" | "session.error" | "heartbeat";
+
+interface TimelineEvent {
+  timestamp: number;
+  type: TimelineEventType;
+  tool?: string;
+  detail?: string;
+  duration?: number;
+}
+
+const MAX_TIMELINE_BUFFER = 500;
+const timelineBuffers = new Map<string, TimelineEvent[]>();
+
+// 工具开始执行时间戳（tool.execute.before → tool.execute.after 配对计算耗时）
+const toolStartTimes = new Map<string, number>();
+
+function formatTimelineEntry(event: TimelineEvent): string {
+  const date = new Date(event.timestamp);
+  const ts = date.toLocaleString("zh-CN", { hour12: false });
+  const obj: Record<string, unknown> = {
+    ts: event.timestamp,
+    type: event.type,
+  };
+  if (event.tool) obj.tool = event.tool;
+  if (event.detail) obj.detail = event.detail;
+  if (event.duration !== undefined) obj.duration = event.duration;
+  return `[${ts}] ${JSON.stringify(obj)}`;
+}
+
+function flushTimeline(sessionID: string): void {
+  const buffer = timelineBuffers.get(sessionID);
+  if (!buffer || buffer.length === 0) return;
+
+  const taskDir = getTaskDir(sessionID);
+  const logFile = taskDir
+    ? join(taskDir, "logs", "timeline.log")
+    : join(LOGS_DIR, `timeline-${sessionID}.log`);
+
+  try {
+    const lines = buffer.map(formatTimelineEntry).join("\n") + "\n";
+    mkdirSync(dirname(logFile), { recursive: true });
+    writeFileSync(logFile, lines, { flag: "a" });
+  } catch (e) {
+    debugLog(`flushTimeline failed: ${e}`, sessionID);
+  }
+
+  buffer.length = 0;
+}
+
+function recordTimeline(
+  sessionID: string,
+  event: TimelineEvent,
+  flush = false,
+): void {
+  let buffer = timelineBuffers.get(sessionID);
+  if (!buffer) {
+    buffer = [];
+    timelineBuffers.set(sessionID, buffer);
+  }
+  buffer.push(event);
+
+  // buffer 满时自动 flush
+  if (buffer.length >= MAX_TIMELINE_BUFFER || flush) {
+    flushTimeline(sessionID);
+  }
+}
+
 export const SecurityAnalysisPlugin: Plugin = async (input) => {
   const { client, directory } = input;
   opencodeClient = client;
@@ -1055,6 +1127,17 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       if (!session) return;
       debugLog(`tool.execute.before: tool=${input.tool} sessionID=${sid}`, sid);
 
+      // 时间线记录：工具开始执行（记录注入前的原始命令）
+      const originalCmd = output.args?.command;
+      recordTimeline(sid, {
+        timestamp: Date.now(),
+        type: "tool.before",
+        tool: input.tool,
+        detail: typeof originalCmd === "string" ? originalCmd.slice(0, 80) : undefined,
+      });
+      // 记录开始时间用于计算耗时
+      toolStartTimes.set(input.callID, Date.now());
+
       if (input.tool.toLowerCase() !== "bash") return;
       const cmd = output.args?.command;
       if (typeof cmd !== "string" || !cmd) return;
@@ -1110,6 +1193,17 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       if (!session) return;
 
       const toolName = input.tool;
+
+      // 时间线记录：工具执行完成（计算耗时）
+      const startTime = toolStartTimes.get(input.callID);
+      toolStartTimes.delete(input.callID);
+      recordTimeline(sid, {
+        timestamp: Date.now(),
+        type: "tool.after",
+        tool: toolName,
+        duration: startTime ? Date.now() - startTime : undefined,
+      });
+
       // 对自定义工具记录完整结果，对内置工具只记录调用
       if (toolName === "delegate_analysis") {
         const result = typeof output.output === "string"
@@ -1157,6 +1251,39 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       // 压缩完成：仅记录日志（状态恢复由 compacting hook 在压缩前注入）
       if (event.type === "session.compacted") {
         debugLog(`event: session.compacted id=${sessionID}`, sessionID);
+      }
+
+      // 时间线记录：session 状态变化和错误
+      if (sessionID && PRIMARY_AGENTS.includes(
+        sessions.get(sessionID)?.primaryAgent || ""
+      )) {
+        if (event.type === "session.status" || event.type === "session.idle") {
+          recordTimeline(sessionID, {
+            timestamp: Date.now(),
+            type: "session.status",
+            detail: event.type,
+          });
+          // session idle 时 flush 时间线 buffer
+          if (event.type === "session.idle") {
+            flushTimeline(sessionID);
+          }
+        }
+
+        if (event.type === "session.error" && props.error) {
+          recordTimeline(sessionID, {
+            timestamp: Date.now(),
+            type: "session.error",
+            detail: String(props.error).slice(0, 80),
+          });
+        }
+
+        // 心跳：Shell 有输出更新时记录（表示有活跃的工具执行）
+        if (event.type === "message.part.updated" && props.part?.type === "text") {
+          recordTimeline(sessionID, {
+            timestamp: Date.now(),
+            type: "heartbeat",
+          });
+        }
       }
     },
   };

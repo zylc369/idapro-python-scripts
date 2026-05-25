@@ -121,6 +121,60 @@
 - 注入额外的响应头（CSP / CORS）
 - HTTP 请求走私（配合反向代理差异）
 
+### 1.5 iframe Sandbox 逃逸
+
+**场景**：页面使用 `<iframe sandbox="...">` 加载用户可控内容，sandbox 限制了 iframe 内 JS 的能力。目标是让恶意 JS 逃出 sandbox 限制，获得完整的浏览器 API 访问权限。
+
+**sandbox 权限标志含义**：
+
+| 标志 | 允许的行为 | 缺失后果 |
+|------|-----------|---------|
+| `allow-scripts` | 执行 JS | JS 无法运行（最基本，通常存在） |
+| `allow-same-origin` | 保留原始 origin | origin 变为 `null`，无法访问 Cookie/localStorage/同源页面 |
+| `allow-popups` | `window.open()` | 无法打开新窗口 |
+| `allow-popups-to-escape-sandbox` | 新窗口不受 sandbox 限制 | 新窗口也继承 sandbox 限制 |
+| `allow-forms` | 提交表单 | 表单提交被阻止 |
+
+**关键认知**：`allow-same-origin` 和 `allow-scripts` 同时存在时，iframe 内 JS 可以移除 sandbox 属性（通过 `frameElement.removeAttribute('sandbox')`），等于没有 sandbox。所以安全配置通常**只给 `allow-scripts`**，这导致 origin 变为 `null`。
+
+#### 逃逸技术 1：blob URL 作为顶级页面加载
+
+**原理**：在 sandboxed iframe 中创建 blob URL，通过 `window.open` 或重定向使 blob URL 成为顶级页面。blob URL 脱离 iframe 后，sandbox 限制消失。
+
+**blob URL 的 origin 继承**：`blob:` URL 继承创建者的 origin。在 sandboxed iframe 中（origin 为 `null`），创建的 blob URL 的 origin 也是 `null`。但如果应用通过其他方式（如 postMessage）将非 null origin 的 blob URL 传递给 iframe，该 blob URL 具有完整的 origin（详见第 7 节"开放重定向"中的 blob URL origin 继承机制）。
+
+**利用步骤**：
+1. 在 iframe 中构造恶意 JS payload
+2. JS 创建 blob URL（`URL.createObjectURL(new Blob([payload], {type: 'text/html'}))`）
+3. 通过 `window.open(blobUrl)` 或 `location.href = blobUrl` 使 blob URL 成为顶级页面
+4. 新页面不受 sandbox 限制，可执行完整 JS（访问 Cookie/localStorage 等）
+
+**条件**：sandbox 包含 `allow-popups`（允许 `window.open`）或存在重定向到 blob URL 的路径。
+
+#### 逃逸技术 2：postMessage 传递 blob URL
+
+**原理**：iframe 中的 JS 通过 `postMessage` 将 blob URL 传给外部页面，外部页面构造重定向使 blob URL 成为顶级页面。本节只描述逃逸的利用方式，blob URL 为什么能通过 origin 检查的原理在第 7 节。
+
+**利用步骤**：
+1. 在 sandboxed iframe 中构造恶意 JS
+2. JS 将 payload 编码为 blob URL
+3. 通过 `window.parent.postMessage(blobUrl, '*')` 发送到父页面
+4. 父页面接收后，通过 `location.href = blobUrl` 重定向（或构造 `window.open`）
+5. blob URL 作为顶级页面加载，sandbox 消失
+
+**识别方法**：
+1. 搜索源码中 `<iframe sandbox` 看权限标志组合
+2. 检查 `allow-popups` 和 `allow-same-origin` 的存在情况
+3. 查看父页面是否有 `postMessage` 监听器 + 重定向逻辑
+4. 检查应用是否有 SSO/OAuth 回调中的 `return`/`redirect` 参数（可与 blob URL 组合）
+
+**检查清单**：
+- [ ] sandbox 标志中是否包含 `allow-scripts`（无则无法执行 JS，无逃逸可能）
+- [ ] 是否有 `allow-popups`（逃逸技术 1 必要条件）
+- [ ] 是否有 `allow-same-origin`（同时有 `allow-scripts` 则等于无 sandbox）
+- [ ] 父页面是否有 postMessage → location 重定向链路
+- [ ] 应用是否有开放重定向（与 blob URL 组合利用，见第 7 节）
+
 ---
 
 ## 2. 认证/会话类
@@ -271,3 +325,60 @@
 - 密码重置链接中毒
 - 缓存投毒（Host 是缓存键的一部分）
 - SSRF（Host 被用于反向代理上游请求）
+
+---
+
+## 7. 开放重定向与 URL 验证绕过
+
+**场景**：SSO/OAuth 回调中的 `return`/`redirect` 参数、登录后的跳转 URL 等，服务端通常做 origin 检查，只允许同域跳转。
+
+### 典型验证逻辑
+
+```javascript
+// 服务端验证回调 URL 的 origin
+const candidate = req.query.return;
+if (new URL(candidate).origin === window.location.origin) {
+  redirect(candidate);  // 安全？不一定
+}
+```
+
+### blob URL 绕过（核心）
+
+**关键特性**：`new URL('blob:https://example.com/uuid-1234').origin` 返回 `'https://example.com'`。
+
+blob URL 继承创建者的 origin。当页面 `https://example.com` 上执行 `URL.createObjectURL(blob)` 创建的 blob URL，其 origin 为 `https://example.com`，能通过同域检查。
+
+**利用步骤**：
+1. 在目标域上找到可注入 JS 的位置（XSS/Markdown 注入等）
+2. 构造恶意页面内容，生成 blob URL
+3. 将 blob URL 作为 `return` 参数传递给 SSO/OAuth 回调
+4. 服务端验证 `new URL(blobUrl).origin === 'https://example.com'` → **通过**
+5. 用户被重定向到 blob URL，恶意 JS 在目标域的 origin 下执行
+
+**与其他漏洞的组合**（与第 1.5 节 sandbox 逃逸的关系）：
+- 1.5 节的逃逸技术需要让 blob URL 成为顶级页面来脱离 sandbox
+- 本节的开放重定向是"让 blob URL 成为顶级页面"的一种手段
+- blob URL 继承创建者 origin 的特性是两者共同的基础
+
+### 其他绕过方式
+
+| 方式 | URL 示例 | `new URL().origin` | 说明 |
+|------|---------|-------------------|------|
+| `javascript:` | `javascript:alert(1)` | `"null"` | 仅在 `=== null` 比较时可能绕过 |
+| `data:` | `data:text/html,<script>alert(1)</script>` | `"null"` | 同上 |
+| `@` 混淆 | `https://evil.com@good.com/` | `"https://good.com"` | origin 是 `@` 后的域名 |
+| 协议降级 | `http://good.com.evil.com/` | `"http://good.com.evil.com"` | 依赖子域名控制 |
+
+### 识别方法
+
+1. 搜索源码中的 `redirect`、`return`、`callback`、`next` 参数
+2. 搜索 `window.location.assign`、`window.location.replace`、`location.href =`
+3. 搜索 `new URL(candidate).origin` 检查逻辑
+4. 检查 SSO/OAuth 登录流程的回调 URL 处理
+
+### 检查清单
+
+- [ ] 找到所有用户可控的跳转 URL 参数
+- [ ] 验证逻辑是否只检查 `origin`（blob URL 可绕过）
+- [ ] 是否允许 `javascript:` 或 `data:` 协议
+- [ ] 跳转目标是否作为顶级页面加载（sandbox 逃逸的利用路径）

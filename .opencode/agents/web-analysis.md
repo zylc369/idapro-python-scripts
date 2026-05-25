@@ -188,6 +188,17 @@ permission:
 |------|------|---------|
 | `$SHARED_DIR/scripts/web_render.py` | Playwright 无头浏览器渲染（JS 执行 + 截图） | `--url <URL> --format markdown\|text\|html --screenshot <PATH>` |
 
+**页面内容获取工具选择**：
+
+| 场景 | 工具 | 原因 |
+|------|------|------|
+| 获取静态页面 HTML | webfetch | 快速，无 JS 执行开销 |
+| 获取 API/JSON 响应 | webfetch | 不需要渲染 |
+| 页面需要 JS 渲染才能看到内容（SPA） | web_render.py | 需要 JS 执行 |
+| 需要页面截图 | web_render.py | webfetch 无法截图 |
+| 需要登录后的页面内容 | 编写 Playwright 脚本（`$TASK_DIR/render_auth.py`），在脚本中设置 Cookie/Token 后渲染 | web_render.py 不支持传入认证信息，需要自行编写带认证的渲染脚本 |
+| 获取 CTF writeup / 技术文章 | webfetch | 文章类页面通常不需要 JS |
+
 ### 源码分析工具
 
 - **Read/Glob/Grep**: 读取和搜索源码文件（最常用的"工具"）
