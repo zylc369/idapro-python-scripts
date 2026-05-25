@@ -332,6 +332,8 @@
 
 **场景**：SSO/OAuth 回调中的 `return`/`redirect` 参数、登录后的跳转 URL 等，服务端通常做 origin 检查，只允许同域跳转。
 
+> SSO 审计的完整攻击编排流程（含 iframe sandbox 逃逸 + blob URL 组合利用），见 `$AGENT_DIR/knowledge-base/attack-orchestration.md` §4。
+
 ### 典型验证逻辑
 
 ```javascript
@@ -382,3 +384,74 @@ blob URL 继承创建者的 origin。当页面 `https://example.com` 上执行 `
 - [ ] 验证逻辑是否只检查 `origin`（blob URL 可绕过）
 - [ ] 是否允许 `javascript:` 或 `data:` 协议
 - [ ] 跳转目标是否作为顶级页面加载（sandbox 逃逸的利用路径）
+- [ ] **协议白名单**：验证逻辑是否要求协议为 `http:` 或 `https:`（拒绝 `blob:`）
+- [ ] **hash 参数**：回调 URL 是否也从 URL hash（`#return=xxx`）中读取（额外的绕过点）
+
+---
+
+## 8. Markdown 解析器安全测试方法论
+
+### 8.1 系统化测试流程
+
+```
+阶段 1：基础探测
+  ├── 提交纯文本 → 确认渲染正常
+  ├── 提交标准 Markdown → 确认语法支持
+  └── 检查 HTML 混合模式：提交 <b>test</b> → 是否被渲染为加粗？
+
+阶段 2：HTML 混合模式测试（如果开启）
+  ├── <img src=x onerror=alert(1)>  → 直接 XSS
+  ├── <script>alert(1)</script>     → 直接 XSS
+  └── 如果这里能 XSS，不需要继续测试
+
+阶段 3：标准语法边界测试
+  ├── 图片 alt 文本注入：![alt"><script>alert(1)</script>](url)
+  ├── 链接 title 注入：[link](url "title"><script>alert(1)</script>)
+  ├── 代码块逃逸：```代码块内注入```
+  └── 检查每个语法元素是否正确转义特殊字符
+
+阶段 4：嵌套/非标准结构测试（重点！）
+  ├── 嵌套方括号：![[x](url1)](url2 extra_attrs)
+  ├── 未闭合的方括号/圆括号
+  ├── URL 中的空格和特殊字符
+  └── 解析器的边界处理通常是弱点
+
+阶段 5：确认 CSP 保护
+  ├── 响应中是否有 Content-Security-Policy 头？
+  ├── CSP 是否阻止内联脚本和内联事件处理器？
+  └── 如果有 CSP，需要结合 CSP 绕过技术
+```
+
+### 8.2 常见解析器漏洞模式
+
+| 漏洞 | Payload 示例 | 原因 |
+|------|-------------|------|
+| URL 属性注入 | `![[x](url1)](url2 onerror=alert(1) x=)` | 解析器把 URL 后的内容当作 HTML 属性 |
+| alt 属性注入 | `!["><script>alert(1)</script>](url)` | alt 文本未转义 `"` 和 `<` |
+| href 属性注入 | `[link](javascript:alert(1))` | URL 未过滤 `javascript:` 协议 |
+| HTML 混合 | `<img src=x onerror=alert(1)>` | 解析器直接透传 HTML |
+
+### 8.3 PHP 自定义 Markdown 解析器特有问题
+
+自定义 Markdown 解析器（非标准库）通常有更多边界问题：
+
+```php
+// 典型的有漏洞模式：先全局 htmlspecialchars，再用正则替换
+$text = htmlspecialchars($text, ENT_QUOTES, 'UTF-8');  // 转义所有 HTML
+$text = preg_replace_callback('/!\[(.*?)\]\((.*?)\)/', function($m) {
+    // 正则匹配后再处理，可能引入新的注入点
+    $url = safe_markdown_url(htmlspecialchars_decode($m[2])); // 解码后再处理
+    return '<img src="' . $url . '" ...>';
+}, $text);
+```
+
+**关键问题**：`htmlspecialchars_decode` 撤销了之前的转义，然后在正则替换中可能产生新的注入机会。
+
+### 8.4 检查清单
+
+- [ ] 确认 Markdown 渲染功能存在
+- [ ] 测试 HTML 混合模式是否开启
+- [ ] 测试标准语法中的边界情况
+- [ ] **重点测试嵌套/非标准结构**（解析器的最大弱点）
+- [ ] 确认渲染后页面的 CSP 保护
+- [ ] 如果是自定义解析器，检查源码中是否有 decode→reprocess 模式

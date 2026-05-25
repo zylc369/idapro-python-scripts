@@ -9,6 +9,28 @@
       "example_call": "import sys; sys.path.insert(0, '$AGENT_DIR/scripts'); from web_helpers import create_session",
       "added_at": "2026-05-24",
       "verified": false
+    },
+    {
+      "name": "cache_poison",
+      "file": "cache_poison.py",
+      "description": "Web Cache Poisoning 攻击框架：CachePoison 类（投毒、验证、Bot 触发、缓存中缓存渗出）、probe_accept_encoding（Bot AE 探测）、probe_cache_key（缓存键分析）。纯标准库，无第三方依赖",
+      "params": [
+        {"name": "target_host", "desc": "靶机外网 IP"},
+        {"name": "target_port", "desc": "靶机端口"},
+        {"name": "internal_host", "desc": "Docker 内部域名（如 proxy:4000）"}
+      ],
+      "example_call": "python cache_poison.py 46.62.153.171 4000 proxy:4000",
+      "added_at": "2026-05-25",
+      "verified": false
+    },
+    {
+      "name": "param_bomb",
+      "file": "param_bomb.py",
+      "description": "PHP max_input_vars 参数炸弹生成器：build_bomb_post_data（POST 参数炸弹）、build_bomb_get_url（GET URL 参数炸弹）、build_two_stage_bomb（两阶段组合：提交+Bot访问）、estimate_param_count（参数计数调试）。纯标准库",
+      "params": [],
+      "example_call": "import sys; sys.path.insert(0, '$AGENT_DIR/scripts'); from param_bomb import build_two_stage_bomb",
+      "added_at": "2026-05-25",
+      "verified": false
     }
   ]
 }

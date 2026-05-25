@@ -164,7 +164,7 @@ Bot 时间线：
 **轮询机制**（适用于 flag 写入时机不确定的场景）：
 
 ```javascript
-// 轮询等待 flag 出现（Cookie 变体）
+// 简化轮询模板（Cookie 变体）
 const poll = setInterval(() => {
   const flag = document.cookie;  // 或 localStorage.getItem('flag')
   if (flag) {
@@ -174,7 +174,31 @@ const poll = setInterval(() => {
 }, 500);  // 每 500ms 检查一次
 ```
 
-#### 1.5.5 常见数据外泄方式
+> 完整的攻击编排模板（含 iframe 逃逸、localStorage 轮询、自动外泄），见 `$AGENT_DIR/knowledge-base/attack-orchestration.md` §3.3。
+
+#### 1.5.5 Bot 时间差利用（popup 存活模式）
+
+当 Bot 的行为是"先访问攻击者 URL（firstPage），后在新页面（secondPage）中写入 flag"时：
+
+```
+关键行为：
+  firstPage.close() 只关闭 firstPage 本身
+  firstPage 通过 window.open() 打开的 popup 不会关闭
+  popup 会继续存活直到 browser.close()
+```
+
+**利用条件**：
+1. 攻击者代码在 popup 中运行（popup 的 origin 与 flag 同源）
+2. popup 使用轮询等待 flag 写入 localStorage
+3. flag 写入时间在 popup 存活窗口内
+
+**适用场景**：
+- Bot+localStorage：flag 在 secondPage 中保存到 localStorage
+- Bot+DOM：flag 在 secondPage 中出现在页面上
+
+> 详细的攻击编排模式见 `$AGENT_DIR/knowledge-base/attack-orchestration.md`
+
+#### 1.5.6 常见数据外泄方式
 
 **Cookie 外泄**：
 
