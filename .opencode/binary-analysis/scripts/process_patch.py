@@ -6,8 +6,8 @@ description:
   值捕获和触发操作。避免每次动态分析都手写 OpenProcess/VirtualProtectEx
   等样板代码。
 
-  使用方式（通过 $BA_PYTHON 运行）:
-    $BA_PYTHON $SCRIPTS_DIR/scripts/process_patch.py \\
+  使用方式（通过 $PYTHON_CMD 运行）:
+    $PYTHON_CMD $SCRIPTS_DIR/scripts/process_patch.py \\
       --exe TARGET.EXE \\
       --patch 0x40234C:EB \\
       --write-data 0x422600:4B43544646 \\

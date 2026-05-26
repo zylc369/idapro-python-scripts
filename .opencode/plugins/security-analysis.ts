@@ -164,44 +164,103 @@ function getToolsForAgent(
     .map(([name, tool]) => ({ name, ...tool }));
 }
 
-// ─── Python 命令检测 ────────────────────────────────────────────────
+// ─── Python 虚拟环境管理 ──────────────────────────────────────────────
 //
-// 通过实际执行 Python 代码验证命令可用性。
-// 不依赖 exit code（Windows App Execution Alias 的 python3 静默返回 0），
-// 不假设平台（python3 在 Linux 上也可能不存在），而是运行已知代码验证输出。
-// 结果在 Plugin 进程生命周期内缓存。
+// Plugin 启动时确保 ~/bw-security-analysis/.venv 存在且可用。
+// $PYTHON_CMD 指向 venv Python 绝对路径，所有 agent 统一使用。
+// venv 创建需要系统 Python（通过 findSystemPython 检测）。
+// 整个流程在 Plugin 加载时执行一次，失败则抛异常终止加载。
 
-let cachedPythonCmd: string | undefined;
+const VENV_DIR = join(DATA_DIR, ".venv");
 
-function detectPythonCmd(): string {
-  if (cachedPythonCmd !== undefined) return cachedPythonCmd;
+// venv 内 Python 可能的路径（覆盖所有平台，按常见度排序）
+const VENV_PYTHON_CANDIDATES = [
+  join(VENV_DIR, "Scripts", "python.exe"),   // Windows 标准位置
+  join(VENV_DIR, "bin", "python"),           // Linux/macOS 标准位置
+  join(VENV_DIR, "Scripts", "python3.exe"),  // Windows（python3 别名）
+  join(VENV_DIR, "bin", "python3"),          // Linux/macOS（python3）
+];
 
+// 实际运行 Python 代码验证可用性（不依赖 exit code，不假设路径）
+function verifyPython(pathOrCmd: string): boolean {
+  try {
+    const output = execSync(`"${pathOrCmd}" -c "print('OK')"`, {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5000,
+      encoding: "utf-8",
+    });
+    return output.trim() === "OK";
+  } catch {
+    return false;
+  }
+}
+
+// 从 venv 中检测可用的 Python（不假设路径，逐个验证）
+function findVenvPython(): string | null {
+  for (const candidate of VENV_PYTHON_CANDIDATES) {
+    if (!existsSync(candidate)) continue;
+    if (verifyPython(candidate)) {
+      return candidate;
+    }
+    debugLog(`findVenvPython: ${candidate} exists but failed verification`);
+  }
+  return null;
+}
+
+// 检测系统 Python 命令（仅用于创建 venv）
+function findSystemPython(): string {
   const candidates = process.platform === "win32"
     ? ["python", "python3"]
     : ["python3", "python"];
 
   for (const cmd of candidates) {
-    try {
-      const output = execSync(`${cmd} -c "print('OK')"`, {
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: 5000,
-        encoding: "utf-8",
-      });
-      if (output.trim() === "OK") {
-        cachedPythonCmd = cmd;
-        debugLog(`detectPythonCmd: ${cmd} verified`);
-        return cachedPythonCmd;
-      }
-      debugLog(`detectPythonCmd: ${cmd} output unexpected: "${output.trim()}"`);
-    } catch (e) {
-      debugLog(`detectPythonCmd: ${cmd} failed: ${(e as Error).message.split("\n")[0]}`);
-    }
+    if (verifyPython(cmd)) return cmd;
+  }
+  throw new Error(
+    `未找到可用的系统 Python。请安装 Python 3.8+ 后重试。\n` +
+    `已尝试: ${candidates.join(", ")}`
+  );
+}
+
+function ensureVenvPython(): string {
+  // 1. 已有 venv → 检测可用的 Python
+  const existing = findVenvPython();
+  if (existing) {
+    debugLog(`ensureVenvPython: ${existing} verified`);
+    return existing;
   }
 
-  cachedPythonCmd = "python";
-  debugLog(`detectPythonCmd: no candidate passed, fallback to python`);
-  return cachedPythonCmd;
+  // 2. 需要创建 venv
+  const systemPython = findSystemPython();
+  debugLog(`ensureVenvPython: creating venv with ${systemPython}`);
+
+  try {
+    execSync(`"${systemPython}" -m venv "${VENV_DIR}"`, {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 120000,
+      encoding: "utf-8",
+    });
+  } catch (e) {
+    throw new Error(
+      `创建 Python 虚拟环境失败: ${(e as Error).message}\n` +
+      `请手动运行: ${systemPython} -m venv "${VENV_DIR}"`
+    );
+  }
+
+  // 3. 创建后重新检测（不假设路径，用同一套检测逻辑）
+  const created = findVenvPython();
+  if (created) {
+    debugLog(`ensureVenvPython: ${created} created and verified`);
+    return created;
+  }
+  throw new Error(
+    `虚拟环境创建成功但未检测到可用的 Python。\n` +
+    `请删除 "${VENV_DIR}" 后重试。`
+  );
 }
+
+// Plugin 加载时立即确保 venv 可用；失败则整个 Plugin 加载失败
+const PYTHON_CMD = ensureVenvPython();
 
 // 根据实际 agent 名获取脚本目录；子 agent（如 "general"）不在映射表中时，
 // 回退到 primaryAgent 对应的目录；均无映射则返回 undefined
@@ -381,7 +440,7 @@ function buildEnvSection(
   envSection += `- 共享目录 ($SHARED_DIR): ${idaScriptsDir}\n`;
   const idaPath = config.ida_path || "未配置";
   envSection += `- IDA Pro: ${idaPath}\n`;
-  envSection += `- 系统 Python ($PYTHON_CMD): ${detectPythonCmd()}\n`;
+  envSection += `- Python ($PYTHON_CMD): ${PYTHON_CMD}\n`;
 
   if (envInfo) {
     const compiler = envInfo.compiler;
@@ -392,9 +451,6 @@ function buildEnvSection(
       }
     } else {
       envSection += `- 编译器: 未检测到\n`;
-    }
-    if (envInfo.venv_python) {
-      envSection += `- BA_PYTHON: ${envInfo.venv_python}\n`;
     }
     if (envInfo.packages) {
       const pkgs = Object.entries(envInfo.packages)
@@ -457,8 +513,8 @@ function buildSubSessionSystem(
    - 此目录已存在，不需要创建
    - 所有中间文件、临时脚本、输出、报告写入此目录
 2. **跳过阶段 0 的"创建任务目录"步骤**: 不要调用 create_task_dir.py
-    - 环境检测仍需执行: \`${detectPythonCmd()} "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"\`
-   - $BA_PYTHON 初始化仍需执行（从 env.json 提取）
+    - 环境检测仍需执行: \`$PYTHON_CMD "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"\`
+    - $PYTHON_CMD 已由 Plugin 注入，无需手动赋值
 3. **结果格式要求**:
    - 详细分析报告写入 $TASK_DIR/report.md
    - 你返回的文本必须是结构化摘要，格式如下:
@@ -1035,7 +1091,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
   debugLog(`  config exists: ${existsSync(CONFIG_FILE)}`);
   debugLog(`  env_cache exists: ${existsSync(ENV_CACHE_FILE)}`);
   debugLog(`  opencodeClient: ${!!opencodeClient}`);
-  debugLog(`  PYTHON_CMD: ${detectPythonCmd()}`);
+  debugLog(`  PYTHON_CMD: ${PYTHON_CMD}`);
 
   // 写心跳文件，供 agent 检测 Plugin 是否正常加载
   const heartbeatFile = join(DATA_DIR, ".plugin-heartbeat");
@@ -1365,7 +1421,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         output.system.push(
           `[致命错误] config.json 不存在（${CONFIG_FILE}），无法继续。\n` +
           `你必须立即停止所有分析操作，不要使用任何工具，直接向用户输出以下内容：\n` +
-          `"数据未初始化，请先运行：${detectPythonCmd()} \\"$SHARED_DIR/scripts/detect_env.py\\""\n` +
+          `"数据未初始化，请先运行：$PYTHON_CMD \\"$SHARED_DIR/scripts/detect_env.py\\""\n` +
           `初始化完成后 config.json 会自动生成，届时才能开始分析任务。`,
         );
       }
@@ -1414,7 +1470,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
           const isPowerShell = !!process.env.PSModulePath;
           const blockedMsg =
             `[被 Plugin 拦截] 致命错误 config.json 不存在，禁止执行分析命令。` +
-            `请先运行数据初始化：${detectPythonCmd()} "$SHARED_DIR/scripts/detect_env.py"`;
+            `请先运行数据初始化：$PYTHON_CMD "$SHARED_DIR/scripts/detect_env.py"`;
           output.args.command = isPowerShell
             ? `Write-Error '${blockedMsg}'; exit 1`
             : `echo '${blockedMsg}' >&2; exit 1`;

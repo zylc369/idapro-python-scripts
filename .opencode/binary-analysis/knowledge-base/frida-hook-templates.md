@@ -1,7 +1,7 @@
 # Frida Hook 脚本模板
 
 > AI 编排器在需要 Frida Hook 脚本时按需加载。
-> **Frida 脚本必须使用 `$BA_PYTHON` 运行**（需要 frida 包，安装在 venv 中）。
+> **Frida 脚本必须使用 `$PYTHON_CMD` 运行**（需要 frida 包，安装在 venv 中）。
 > 验证结果的完整决策树见 `verification-patterns.md`。本文件提供通用的 Hook 模板。
 
 ## 触发条件
@@ -32,7 +32,7 @@
 ```python
 """Frida Hook — 拦截指定函数的参数和返回值
 
-用法: $BA_PYTHON hook_args.py <目标程序> <函数地址(hex)> [--timeout 30]
+用法: $PYTHON_CMD hook_args.py <目标程序> <函数地址(hex)> [--timeout 30]
 """
 
 import argparse
@@ -152,7 +152,7 @@ if __name__ == "__main__":
 ```python
 """Frida Hook — 读取指定地址处的内存数据
 
-用法: $BA_PYTHON hook_memory.py <目标程序> <地址(hex)> <大小> [--timeout 30]
+用法: $PYTHON_CMD hook_memory.py <目标程序> <地址(hex)> <大小> [--timeout 30]
 """
 
 import argparse

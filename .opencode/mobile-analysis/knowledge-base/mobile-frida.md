@@ -27,16 +27,16 @@
 
 ```bash
 # 一键安装（自动下载 + 随机名 + 随机目录）
-$BA_PYTHON $AGENT_DIR/scripts/manage_frida.py --action install -s <serial>
+$PYTHON_CMD $AGENT_DIR/scripts/manage_frida.py --action install -s <serial>
 
 # 启动（自动分配端口 + 端口转发，输出 JSON）
-$BA_PYTHON $AGENT_DIR/scripts/manage_frida.py --action start -s <serial>
+$PYTHON_CMD $AGENT_DIR/scripts/manage_frida.py --action start -s <serial>
 
 # 检查状态
-$BA_PYTHON $AGENT_DIR/scripts/manage_frida.py --action status -s <serial>
+$PYTHON_CMD $AGENT_DIR/scripts/manage_frida.py --action status -s <serial>
 
 # 停止
-$BA_PYTHON $AGENT_DIR/scripts/manage_frida.py --action stop -s <serial>
+$PYTHON_CMD $AGENT_DIR/scripts/manage_frida.py --action stop -s <serial>
 ```
 
 ### 手动安装（备用）

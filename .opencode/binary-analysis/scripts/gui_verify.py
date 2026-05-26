@@ -8,7 +8,7 @@ description:
   4. hook-result: Frida Hook 读取比较结果
   hook-inject 和 hook-result 可组合使用。
   仅支持 Windows 平台。通过 Win32 API (ctypes) 实现 GUI 操作。
-  Hook 模式需要 frida 包（通过 $BA_PYTHON 运行）。
+  Hook 模式需要 frida 包（通过 $PYTHON_CMD 运行）。
 
 usage:
   python gui_verify.py --exe TARGET.EXE --username "test" --license "XXXX" --output result.json
@@ -723,7 +723,7 @@ def run_standard(exe_path, username, license_code, edit1_id, edit2_id, button_id
 def run_hook_inject(exe_path, func_addr, inputs, trigger_addr=None, calling_convention="auto", timeout=30, compare_addrs=None, observe_rounds=5, button_id=DEFAULT_BUTTON_ID):
     """hook-inject 模式（可组合 hook-result）"""
     if not _check_frida():
-        return {"success": False, "error": "frida 未安装，请运行: $BA_PYTHON -m pip install frida"}
+        return {"success": False, "error": "frida 未安装，请运行: $PYTHON_CMD -m pip install frida"}
 
     if not os.path.isfile(exe_path):
         return {"success": False, "error": f"可执行文件不存在: {exe_path}"}
@@ -815,7 +815,7 @@ Interceptor.attach(triggerAddr, {{
 def run_hook_result(exe_path, username, license_code, compare_addrs, compare_type, edit1_id, edit2_id, button_id, timeout, observe_rounds):
     """hook-result 模式：标准 GUI 输入 + Hook 读取比较结果"""
     if not _check_frida():
-        return {"success": False, "error": "frida 未安装，请运行: $BA_PYTHON -m pip install frida"}
+        return {"success": False, "error": "frida 未安装，请运行: $PYTHON_CMD -m pip install frida"}
 
     if not os.path.isfile(exe_path):
         return {"success": False, "error": f"可执行文件不存在: {exe_path}"}

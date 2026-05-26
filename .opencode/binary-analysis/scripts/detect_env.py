@@ -3,13 +3,13 @@
 description:
   检测逆向分析所需的工具链和依赖包，输出 JSON 格式结果。
   支持 Windows/Linux/macOS。
-  自动创建专用虚拟环境（~/bw-security-analysis/.venv），在其中安装 Python 包。
+  Python 包安装在 Plugin 管理的虚拟环境（~/bw-security-analysis/.venv）中。
   C/C++ 编译器缺失时通知用户。
   结果缓存 24 小时。
   必需依赖缺失时返回 success: false，Agent 应停止并提示用户安装。
 
 usage:
-  python detect_env.py [--output PATH] [--force] [--skip-install] [--agent AGENT_NAME]
+  $PYTHON_CMD detect_env.py [--output PATH] [--force] [--skip-install] [--agent AGENT_NAME]
 
 level: intermediate
 
@@ -30,7 +30,6 @@ import time
 CACHE_DIR = os.path.expanduser("~/bw-security-analysis")
 CACHE_FILE = os.path.join(CACHE_DIR, "env_cache.json")
 CACHE_TTL = 86400
-VENV_DIR = os.path.join(CACHE_DIR, ".venv")
 
 REQUIRED_PACKAGES = {
     "capstone": {"required": True, "pip_name": "capstone"},
@@ -47,32 +46,6 @@ REQUIRED_PACKAGES = {
     "bs4":           {"required": True,  "pip_name": "beautifulsoup4"},
     "lxml":          {"required": True,  "pip_name": "lxml"},
 }
-
-
-def _venv_python_path():
-    if os.name == "nt":
-        return os.path.join(VENV_DIR, "Scripts", "python.exe")
-    return os.path.join(VENV_DIR, "bin", "python")
-
-
-def _ensure_venv():
-    venv_python = _venv_python_path()
-    if os.path.isfile(venv_python):
-        return venv_python
-
-    print(f"[*] 正在创建虚拟环境: {VENV_DIR}")
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "venv", VENV_DIR],
-            check=True, timeout=120,
-        )
-        print(f"[+] 虚拟环境创建成功: {VENV_DIR}")
-        return venv_python
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
-        print(f"[!] 创建虚拟环境失败: {e}", file=sys.stderr)
-        print(f"[!] 请手动创建: {sys.executable} -m venv {VENV_DIR}", file=sys.stderr)
-        return None
-
 
 def _load_cache(force=False):
     if force:
@@ -211,19 +184,20 @@ def _detect_gcc_unix():
     return {"available": False, "type": None, "path": None, "vcvarsall": None}
 
 
-def _detect_package(name, venv_python, version_via=None):
+def _detect_package(name, version_via=None):
     """检测 Python 包是否已安装。
-    version_via: None 表示用 name.__version__；"importlib:PIP_NAME" 表示用 importlib.metadata。"""
+    version_via: None 表示用 name.__version__；"importlib:PIP_NAME" 表示用 importlib.metadata。
+    使用 sys.executable（由 Plugin 保证为 venv Python）执行检测。"""
     try:
         if version_via and version_via.startswith("importlib:"):
             pip_name = version_via.split(":", 1)[1]
             result = subprocess.run(
-                [venv_python, "-c", f"import {name}; import importlib.metadata; print(importlib.metadata.version('{pip_name}'))"],
+                [sys.executable, "-c", f"import {name}; import importlib.metadata; print(importlib.metadata.version('{pip_name}'))"],
                 capture_output=True, text=True, timeout=10,
             )
         else:
             result = subprocess.run(
-                [venv_python, "-c", f"import {name}; print(__import__('{name}').__version__)"],
+                [sys.executable, "-c", f"import {name}; print(__import__('{name}').__version__)"],
                 capture_output=True, text=True, timeout=10,
             )
         if result.returncode == 0:
@@ -233,8 +207,8 @@ def _detect_package(name, venv_python, version_via=None):
     return {"available": False, "version": None}
 
 
-def _install_package(venv_python, pip_name, timeout=60):
-    pip_cmd = [venv_python, "-m", "pip", "install", pip_name]
+def _install_package(pip_name, timeout=60):
+    pip_cmd = [sys.executable, "-m", "pip", "install", pip_name]
     try:
         result = subprocess.run(pip_cmd, capture_output=True, text=True, timeout=timeout)
         if result.returncode == 0:
@@ -247,11 +221,11 @@ def _install_package(venv_python, pip_name, timeout=60):
     return False
 
 
-def _detect_playwright_browser(venv_python):
+def _detect_playwright_browser():
     """检测 Playwright Chromium 浏览器是否已安装。"""
     try:
         result = subprocess.run(
-            [venv_python, "-c",
+            [sys.executable, "-c",
              "from playwright.sync_api import sync_playwright; "
              "import os; "
              "p = sync_playwright().start(); "
@@ -266,12 +240,12 @@ def _detect_playwright_browser(venv_python):
     return False
 
 
-def _post_install_playwright(venv_python, timeout=300):
+def _post_install_playwright(timeout=300):
     """安装 Playwright Chromium 浏览器二进制（约 150-200MB）。"""
     print("[*] 正在安装 Playwright Chromium 浏览器（首次安装约 150-200MB）...")
     try:
         result = subprocess.run(
-            [venv_python, "-m", "playwright", "install", "chromium"],
+            [sys.executable, "-m", "playwright", "install", "chromium"],
             capture_output=True, text=True, timeout=timeout,
         )
         if result.returncode == 0:
@@ -357,14 +331,7 @@ def _detect_tools(config, agent=None, errors=None):
 def run_detection(skip_install=False, agent=None):
     errors = []
 
-    print("[*] 正在创建/检测虚拟环境...")
-    venv_python = _ensure_venv()
-    if venv_python is None:
-        errors.append(f"虚拟环境创建失败。请手动运行: {sys.executable} -m venv {VENV_DIR}")
-        result = {"success": False, "data": {"venv_python": None, "compiler": {"available": False}, "packages": {}, "ida_pro": {"available": False}}, "errors": errors}
-        return result
-
-    print(f"[+] 虚拟环境 Python: {venv_python}")
+    print(f"[+] Python: {sys.executable}")
 
     print("[*] 正在检测 C/C++ 编译器...")
     compiler = _detect_compiler()
@@ -389,26 +356,25 @@ def run_detection(skip_install=False, agent=None):
     packages = {}
     for name, info in REQUIRED_PACKAGES.items():
         print(f"[*] 正在检测 {name}...")
-        pkg_info = _detect_package(name, venv_python, version_via=info.get("version_via"))
+        pkg_info = _detect_package(name, version_via=info.get("version_via"))
         if not pkg_info["available"] and not skip_install:
-            print(f"[*] {name} 未安装，正在自动安装到虚拟环境...")
-            if _install_package(venv_python, info["pip_name"]):
-                pkg_info = _detect_package(name, venv_python, version_via=info.get("version_via"))
+            print(f"[*] {name} 未安装，正在自动安装...")
+            if _install_package(info["pip_name"]):
+                pkg_info = _detect_package(name, version_via=info.get("version_via"))
                 if pkg_info["available"]:
                     # 处理 post_install（如 playwright 需要额外安装浏览器）
                     if info.get("post_install") and name == "playwright":
-                        if not _detect_playwright_browser(venv_python):
-                            if not _post_install_playwright(venv_python):
+                        if not _detect_playwright_browser():
+                            if not _post_install_playwright():
                                 errors.append(
                                     "Playwright 浏览器安装失败。请手动运行: "
-                                    f"{venv_python} -m playwright install chromium"
+                                    f"{sys.executable} -m playwright install chromium"
                                 )
                     print(f"[+] {name} 安装成功: {pkg_info['version']}")
                 else:
                     print(f"[!] {name} 安装后仍无法导入")
             else:
-                pip_path = os.path.join(os.path.dirname(venv_python), "pip") if os.name != "nt" else os.path.join(os.path.dirname(venv_python), "pip.exe")
-                manual_cmd = f"{venv_python} -m pip install {info['pip_name']}"
+                manual_cmd = f"{sys.executable} -m pip install {info['pip_name']}"
                 if info["required"]:
                     errors.append(f"{name} 安装失败，请手动运行: {manual_cmd}")
                 else:
@@ -416,23 +382,23 @@ def run_detection(skip_install=False, agent=None):
         elif pkg_info["available"]:
             # 已安装的包也需要检查 post_install
             if info.get("post_install") and name == "playwright":
-                if not _detect_playwright_browser(venv_python):
+                if not _detect_playwright_browser():
                     if not skip_install:
-                        if not _post_install_playwright(venv_python):
+                        if not _post_install_playwright():
                             errors.append(
                                 "Playwright 浏览器安装失败。请手动运行: "
-                                f"{venv_python} -m playwright install chromium"
+                                f"{sys.executable} -m playwright install chromium"
                             )
                     else:
                         print("[!] Playwright 浏览器未安装（--skip-install）")
                         errors.append(
                             "Playwright 浏览器未安装。请运行: "
-                            f"{venv_python} -m playwright install chromium"
+                            f"{sys.executable} -m playwright install chromium"
                         )
             print(f"[+] {name}: {pkg_info['version']}")
         else:
             if info["required"]:
-                manual_cmd = f"{venv_python} -m pip install {info['pip_name']}"
+                manual_cmd = f"{sys.executable} -m pip install {info['pip_name']}"
                 errors.append(f"{name} 未安装。请运行: {manual_cmd}")
             print(f"[!] {name} 未安装（--skip-install）")
         packages[name] = pkg_info
@@ -468,7 +434,6 @@ def run_detection(skip_install=False, agent=None):
         "python_arch": python_arch,
         "packages": packages,
         "ida_pro": ida_pro,
-        "venv_python": venv_python,
         "tools": tools,
     }
 
@@ -493,12 +458,11 @@ def main():
 
     cached = _load_cache(force=args.force)
     if cached and not args.force:
-        venv_python = cached.get("venv_python")
-        if venv_python and os.path.isfile(venv_python):
+        if cached.get("packages"):
             result = {"success": True, "data": cached, "errors": []}
             print("[*] 使用缓存的环境检测结果（使用 --force 强制重新检测）")
         else:
-            print("[!] 缓存中的虚拟环境路径无效，重新检测...")
+            print("[!] 缓存数据不完整，重新检测...")
             cached = None
 
     if not cached or args.force:
