@@ -5,7 +5,6 @@ import {
   unlinkSync,
   mkdirSync,
   statSync,
-  readdirSync,
 } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
@@ -754,7 +753,6 @@ interface SessionData {
   agentName?: string;
   primaryAgent?: string;
   systemTransformCount: number;
-  delegationCheckCompleted?: boolean; // coordinator 委托检查（只执行一次）
 }
 
 const sessions = new Map<string, SessionData>();
@@ -1401,58 +1399,6 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
       session.systemTransformCount++;
       const shouldInject = session.systemTransformCount % 10 === 1;
-
-      // ── Coordinator 降级检查（每轮执行，不受 shouldInject 门控） ──
-      // 如果 coordinator 完成了任务但未调用 delegate_analysis 且未说明降级原因，
-      // 注入警告让 coordinator 解释。只检查一次（delegationCheckCompleted）。
-      if (
-        agentName === AGENT_SECURITY_COORDINATOR &&
-        !session.delegationCheckCompleted
-      ) {
-        const taskDir = getTaskDir(sessionID);
-        if (taskDir) {
-          const summaryPath = join(taskDir, "summary.md");
-          if (existsSync(summaryPath)) {
-            // 检查是否有子目录（子 agent 的工作目录）
-            let hasSubDirs = false;
-            try {
-              for (const entry of readdirSync(taskDir)) {
-                try {
-                  if (statSync(join(taskDir, entry)).isDirectory()) {
-                    hasSubDirs = true;
-                    break;
-                  }
-                } catch { /* skip */ }
-              }
-            } catch { /* skip */ }
-
-            if (!hasSubDirs) {
-              // 读取 summary.md 检查是否有降级说明
-              let hasDegradationNote = false;
-              try {
-                const content = readFileSync(summaryPath, "utf-8");
-                hasDegradationNote =
-                  content.includes("降级") ||
-                  content.includes("delegate") ||
-                  content.includes("子 agent");
-              } catch { /* skip */ }
-
-              if (!hasDegradationNote) {
-                output.system.push(
-                  `[系统警告] 检测到任务目录 ${taskDir} 中有 summary.md 但没有子 agent 工作目录，也没有降级说明。\n` +
-                  `可能的违规：你在阶段 1 中没有调用 delegate_analysis 工具分发子任务。\n` +
-                  `请立即检查：\n` +
-                  `1. 如果尚未写完 summary.md → 先用 delegate_analysis 分发子任务\n` +
-                  `2. 如果确实需要降级直接分析 → 在 summary.md 中明确说明降级原因（使用"降级"关键词）\n` +
-                  `3. 如果用户明确要求你直接分析（无需子 agent）→ 在 summary.md 中说明`,
-                );
-                debugLog(`coordinator anomaly: no sub-dirs, no degradation note in ${taskDir}`, sessionID);
-              }
-            }
-            session.delegationCheckCompleted = true;
-          }
-        }
-      }
 
       if (!shouldInject) return;
 
