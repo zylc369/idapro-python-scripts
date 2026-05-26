@@ -15,11 +15,11 @@
 
 **命令**：
 
-```bash
-TASK_DIR=$(python3 "$SHARED_DIR/scripts/create_task_dir.py")
+```
+$PYTHON_CMD "$SHARED_DIR/scripts/create_task_dir.py"
 ```
 
-脚本输出目录绝对路径到 stdout，直接赋值给 `TASK_DIR`。sessionID 从环境变量 `SESSION_ID` 读取（由 Plugin `tool.execute.before` hook 自动注入）。
+`$PYTHON_CMD` 和 `$SHARED_DIR` 是 Plugin 注入到上下文中的值，不是 shell 环境变量——执行时替换为实际路径。
 
 ---
 
@@ -29,8 +29,8 @@ TASK_DIR=$(python3 "$SHARED_DIR/scripts/create_task_dir.py")
 
 **命令**：
 
-```bash
-python3 "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
+```
+$PYTHON_CMD "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 ```
 
 - 成功 → 继续 Step 3
@@ -46,17 +46,11 @@ python3 "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 
 **命令**：
 
-```bash
-BA_PYTHON=$(python3 -c "
-import json, os
-cache_path = os.path.expanduser('~/bw-security-analysis/env_cache.json')
-if os.path.isfile(cache_path):
-    cache = json.load(open(cache_path))
-    print(cache.get('data', {}).get('venv_python', 'python3'))
-else:
-    print('python3')
-")
 ```
+$BA_PYTHON = $PYTHON_CMD -c "import json, os; cache_path = os.path.expanduser('~/bw-security-analysis/env_cache.json'); print(json.load(open(cache_path)).get('data', {}).get('venv_python', '$PYTHON_CMD')) if os.path.isfile(cache_path) else print('$PYTHON_CMD')"
+```
+
+> 将 `$PYTHON_CMD` 和 `$SHARED_DIR` 替换为 Plugin 注入的实际值后再执行。输出即为 `$BA_PYTHON` 路径。
 
 **强制**：带第三方包的 Python 脚本必须用 `$BA_PYTHON`，禁止用系统 Python（仅 `detect_env.py` 例外）。
 
@@ -71,4 +65,4 @@ else:
 | `$TASK_DIR` | Step 1 create_task_dir.py | 任务工作目录 |
 | `$BA_PYTHON` | Step 3 env_cache.json | 带第三方包的 venv Python |
 
-其他变量（`$AGENT_DIR`、`$SHARED_DIR`、`$IDAT`）由 Plugin 在每轮注入，不在此流程中初始化。
+其他变量（`$AGENT_DIR`、`$SHARED_DIR`、`$IDAT`、`$PYTHON_CMD`）由 Plugin 在每轮注入，不在此流程中初始化。

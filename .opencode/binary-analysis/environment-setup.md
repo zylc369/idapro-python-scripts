@@ -150,7 +150,7 @@ clang --version && ~/bw-security-analysis/.venv/bin/python -c "import capstone; 
 
 ## 自动检测
 
-所有平台统一使用环境检测脚本：
+所有平台统一使用环境检测脚本（Windows 用 `python`，Linux/macOS 用 `python3`）：
 
 ```bash
 # 检测全部工具（默认）
@@ -162,6 +162,8 @@ python3 detect_env.py --force --agent binary-analysis
 # 仅检测 mobile-analysis 需要的工具
 python3 detect_env.py --force --agent mobile-analysis
 ```
+
+> **Windows 用户**：将上面的 `python3` 替换为 `python`。
 
 成功输出：
 ```json

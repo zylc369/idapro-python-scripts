@@ -297,6 +297,51 @@
 - 时间窗口内的双重使用
 - TOCTOU（检查时间/使用时间不一致）
 
+### 1.6 Middleware CT 覆盖漏洞
+
+**场景**：框架中间件（如 Next.js middleware）允许请求中的 `Content-Type` 头覆盖响应的 Content-Type。
+
+**漏洞模式**：
+
+```typescript
+// 危险：middleware 允许请求 CT 覆盖响应 CT
+const contentType = request.headers.get('content-type');
+if (contentType) {
+  response.headers.set('Content-Type', processCT(contentType));
+}
+```
+
+**利用条件**：
+1. 应用有中间件处理 CT
+2. 中间件允许 `text/html` 作为覆盖值
+3. 响应内容中存在未转义的用户输入（如 nonce 反射）
+
+**利用步骤**：
+1. 发送请求带 `Content-Type: text/html` 头
+2. 同时利用反射点注入 XSS（如通过 `x-nonce` 头注入 `<script>` 标签）
+3. 响应 CT 被覆盖为 `text/html`
+4. 浏览器将响应内容（可能是 flight data 等非 HTML 格式）当 HTML 解析
+5. 未转义的内容中的 `<script>` 标签被执行
+
+**案例**：futurejs 中 Next.js middleware 允许 CT 覆盖，flight data 中未转义的 nonce 值被浏览器当 HTML 解析执行。
+
+**安全写法**：
+
+```typescript
+// 安全：白名单验证，禁止覆盖为 text/html
+const allowedCTs = ['application/json', 'text/plain'];
+const contentType = request.headers.get('content-type');
+if (contentType && allowedCTs.includes(contentType.split(';')[0].trim())) {
+  response.headers.set('Content-Type', contentType);
+}
+```
+
+**检查清单**：
+- [ ] 搜索 middleware 中的 `Content-Type` 处理逻辑
+- [ ] 是否允许请求头覆盖响应 CT？
+- [ ] 是否验证 CT 值的白名单？
+- [ ] 响应内容中是否有未转义的用户输入？
+
 ---
 
 ## 6. 反向代理/基础设施类

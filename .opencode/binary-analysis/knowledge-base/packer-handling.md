@@ -162,7 +162,7 @@ if __name__ == "__main__":
 
 ### 步骤 3.4：执行与验证
 
-执行 `python3 "$TASK_DIR/unpacker.py" "<原始二进制文件>" "$TASK_DIR/<文件名>_unpacked"`，然后验证：
+执行 `$PYTHON_CMD "$TASK_DIR/unpacker.py" "<原始二进制文件>" "$TASK_DIR/<文件名>_unpacked"`，然后验证：
 - 输出文件存在且非空
 - `file` 命令显示合法可执行文件格式
 - 文件大小与原始加壳文件不同
@@ -216,7 +216,7 @@ IDA 调试器失败时使用 Frida。详见 `dynamic-analysis-frida.md`。
 从 `$SHARED_DIR` 推导项目根目录: `PROJECT_ROOT=$(dirname $(dirname "$SHARED_DIR"))`
 
 ```bash
-python3 "$PROJECT_ROOT/disassembler/frida_unpack.py" <目标二进制> -o "$TASK_DIR/<文件名>_unpacked" -w 30
+$PYTHON_CMD "$PROJECT_ROOT/disassembler/frida_unpack.py" <目标二进制> -o "$TASK_DIR/<文件名>_unpacked" -w 30
 ```
 
 ## 常见解壳模式参考

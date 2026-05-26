@@ -75,7 +75,7 @@ adb shell input tap <x> <y>
 ### 快速解析 UI XML（Python 一行）
 
 ```bash
-python3 -c "
+$PYTHON_CMD -c "
 import xml.etree.ElementTree as ET
 tree = ET.parse('ui.xml')
 for node in tree.getroot().iter():

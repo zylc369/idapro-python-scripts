@@ -52,7 +52,7 @@ adb shell getprop ro.product.cpu.abi
 # 从 https://github.com/frida/frida/releases 下载 frida-server-<version>-android-arm64.xz
 
 # 3. 生成随机名
-RANDOM_NAME=$(python3 -c "import secrets; print(secrets.token_hex(4))")
+RANDOM_NAME=$($PYTHON_CMD -c "import secrets; print(secrets.token_hex(4))")
 
 # 4. 推送到设备（随机目录）
 adb push frida-server /data/local/tmp/.tmp_${RANDOM_NAME}/${RANDOM_NAME}

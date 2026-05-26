@@ -31,6 +31,35 @@
       "example_call": "import sys; sys.path.insert(0, '$AGENT_DIR/scripts'); from param_bomb import build_two_stage_bomb",
       "added_at": "2026-05-25",
       "verified": false
+    },
+    {
+      "name": "markdown_fuzz",
+      "file": "markdown_fuzz.py",
+      "description": "Markdown 解析器 XSS 注入系统化测试：8 种注入分类（HTML 混合、alt 注入、URL 属性注入、title 注入、href 协议注入、嵌套结构、decode-reprocess、代码块逃逸），支持本地和远程测试，自动检测漏洞并生成报告",
+      "params": [],
+      "example_call": "import sys; sys.path.insert(0, '$AGENT_DIR/scripts'); from markdown_fuzz import MarkdownFuzzer, generate_payloads",
+      "added_at": "2026-05-26",
+      "verified": false
+    },
+    {
+      "name": "sandbox_escape",
+      "file": "sandbox_escape.py",
+      "description": "iframe Sandbox 逃逸测试与 payload 生成：generate_sandbox_test_payload（sandbox 逃逸 JS）、generate_controller_page（控制器页面 HTML）、generate_notebook_payload（恶意 notebook JSON）、generate_sso_bypass_url（SSO blob URL 绕过）。纯标准库",
+      "params": [],
+      "example_call": "import sys; sys.path.insert(0, '$AGENT_DIR/scripts'); from sandbox_escape import generate_controller_page",
+      "added_at": "2026-05-26",
+      "verified": false
+    },
+    {
+      "name": "bot_analyze",
+      "file": "bot_analyze.py",
+      "description": "Bot server.js 自动分析：提取关键参数（flag 位置、内部 URL、超时、浏览器配置）、分类 Bot 模式（单页/双页）、生成攻击时间线和策略建议。纯标准库",
+      "params": [
+        {"name": "filepath", "desc": "Bot server.js 文件路径"}
+      ],
+      "example_call": "python bot_analyze.py /path/to/bot/server.js",
+      "added_at": "2026-05-26",
+      "verified": false
     }
   ]
 }

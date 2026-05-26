@@ -8,6 +8,7 @@ import {
 } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
+import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
@@ -161,6 +162,45 @@ function getToolsForAgent(
   return Object.entries(config.tools)
     .filter(([, tool]) => !tool.agents || tool.agents.includes(agentName))
     .map(([name, tool]) => ({ name, ...tool }));
+}
+
+// ─── Python 命令检测 ────────────────────────────────────────────────
+//
+// 通过实际执行 Python 代码验证命令可用性。
+// 不依赖 exit code（Windows App Execution Alias 的 python3 静默返回 0），
+// 不假设平台（python3 在 Linux 上也可能不存在），而是运行已知代码验证输出。
+// 结果在 Plugin 进程生命周期内缓存。
+
+let cachedPythonCmd: string | undefined;
+
+function detectPythonCmd(): string {
+  if (cachedPythonCmd !== undefined) return cachedPythonCmd;
+
+  const candidates = process.platform === "win32"
+    ? ["python", "python3"]
+    : ["python3", "python"];
+
+  for (const cmd of candidates) {
+    try {
+      const output = execSync(`${cmd} -c "print('OK')"`, {
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 5000,
+        encoding: "utf-8",
+      });
+      if (output.trim() === "OK") {
+        cachedPythonCmd = cmd;
+        debugLog(`detectPythonCmd: ${cmd} verified`);
+        return cachedPythonCmd;
+      }
+      debugLog(`detectPythonCmd: ${cmd} output unexpected: "${output.trim()}"`);
+    } catch (e) {
+      debugLog(`detectPythonCmd: ${cmd} failed: ${(e as Error).message.split("\n")[0]}`);
+    }
+  }
+
+  cachedPythonCmd = "python";
+  debugLog(`detectPythonCmd: no candidate passed, fallback to python`);
+  return cachedPythonCmd;
 }
 
 // 根据实际 agent 名获取脚本目录；子 agent（如 "general"）不在映射表中时，
@@ -341,6 +381,7 @@ function buildEnvSection(
   envSection += `- 共享目录 ($SHARED_DIR): ${idaScriptsDir}\n`;
   const idaPath = config.ida_path || "未配置";
   envSection += `- IDA Pro: ${idaPath}\n`;
+  envSection += `- 系统 Python ($PYTHON_CMD): ${detectPythonCmd()}\n`;
 
   if (envInfo) {
     const compiler = envInfo.compiler;
@@ -416,7 +457,7 @@ function buildSubSessionSystem(
    - 此目录已存在，不需要创建
    - 所有中间文件、临时脚本、输出、报告写入此目录
 2. **跳过阶段 0 的"创建任务目录"步骤**: 不要调用 create_task_dir.py
-   - 环境检测仍需执行: \`python3 "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"\`
+    - 环境检测仍需执行: \`${detectPythonCmd()} "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"\`
    - $BA_PYTHON 初始化仍需执行（从 env.json 提取）
 3. **结果格式要求**:
    - 详细分析报告写入 $TASK_DIR/report.md
@@ -994,6 +1035,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
   debugLog(`  config exists: ${existsSync(CONFIG_FILE)}`);
   debugLog(`  env_cache exists: ${existsSync(ENV_CACHE_FILE)}`);
   debugLog(`  opencodeClient: ${!!opencodeClient}`);
+  debugLog(`  PYTHON_CMD: ${detectPythonCmd()}`);
 
   // 写心跳文件，供 agent 检测 Plugin 是否正常加载
   const heartbeatFile = join(DATA_DIR, ".plugin-heartbeat");
@@ -1323,7 +1365,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         output.system.push(
           `[致命错误] config.json 不存在（${CONFIG_FILE}），无法继续。\n` +
           `你必须立即停止所有分析操作，不要使用任何工具，直接向用户输出以下内容：\n` +
-          `"数据未初始化，请先运行：python \\"$SHARED_DIR/scripts/detect_env.py\\""\n` +
+          `"数据未初始化，请先运行：${detectPythonCmd()} \\"$SHARED_DIR/scripts/detect_env.py\\""\n` +
           `初始化完成后 config.json 会自动生成，届时才能开始分析任务。`,
         );
       }
@@ -1372,7 +1414,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
           const isPowerShell = !!process.env.PSModulePath;
           const blockedMsg =
             `[被 Plugin 拦截] 致命错误 config.json 不存在，禁止执行分析命令。` +
-            `请先运行数据初始化：python "$SHARED_DIR/scripts/detect_env.py"`;
+            `请先运行数据初始化：${detectPythonCmd()} "$SHARED_DIR/scripts/detect_env.py"`;
           output.args.command = isPowerShell
             ? `Write-Error '${blockedMsg}'; exit 1`
             : `echo '${blockedMsg}' >&2; exit 1`;
