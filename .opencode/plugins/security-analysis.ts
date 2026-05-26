@@ -459,6 +459,18 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * 从子会话获取消息列表（提取为独立函数供 pollSubSession 复用）
+ */
+async function fetchSessionMessages(sessionID: string): Promise<SessionMessage[]> {
+  if (!opencodeClient) return [];
+  const messagesResult = await opencodeClient.session.messages({
+    path: { id: sessionID },
+  });
+  const rawData = messagesResult.data;
+  return Array.isArray(rawData) ? rawData : [];
+}
+
+/**
  * 判断子会话是否已完成（不再有 LLM 调用或工具执行）
  * 逻辑参考 oh-my-openagent sync-session-poller.ts isSessionComplete
  */
@@ -506,7 +518,17 @@ async function pollSubSession(
 
   while (Date.now() - startTime < timeoutMs) {
     // 检查框架是否取消了当前 tool 调用（用户取消/强杀时 abortSignal 会触发）
+    // 优雅降级：先尝试获取消息，如果子会话恰好已完成，不中断
     if (abortSignal.aborted) {
+      try {
+        const finalMessages = await fetchSessionMessages(subSessionID);
+        if (isSessionComplete(finalMessages)) {
+          debugLog(`delegate_analysis: 取消信号已触发但子会话已完成，正常返回`, parentSessionID);
+          return null;
+        }
+      } catch (e) {
+        debugLog(`delegate_analysis: 取消后获取消息失败，继续中断 subSession=${subSessionID}`, parentSessionID);
+      }
       debugLog(`delegate_analysis: 框架已取消 tool 调用，终止轮询`, parentSessionID);
       await abortSubSession(subSessionID, "tool_aborted");
       return "错误: 父会话已取消当前操作，子任务被终止";
@@ -544,11 +566,7 @@ async function pollSubSession(
     // 状态为 idle 或不在 status 中，检查消息确认是否完成
     let messages: SessionMessage[];
     try {
-      const messagesResult = await opencodeClient.session.messages({
-        path: { id: subSessionID },
-      });
-      const rawData = messagesResult.data;
-      messages = Array.isArray(rawData) ? rawData : [];
+      messages = await fetchSessionMessages(subSessionID);
     } catch (e) {
       debugLog(`delegate_analysis: 获取消息失败，重试 subSession=${subSessionID}`, parentSessionID);
       continue;
@@ -586,10 +604,7 @@ async function fetchSubSessionResult(subSessionID: string, subTaskDir: string): 
   if (!opencodeClient) return "错误: OpenCode client 未初始化";
 
   try {
-    const messagesResult = await opencodeClient.session.messages({
-      path: { id: subSessionID },
-    });
-    const messages = Array.isArray(messagesResult.data) ? messagesResult.data as SessionMessage[] : [];
+    const messages = await fetchSessionMessages(subSessionID);
 
     // 按 time.created 降序排列 assistant 消息，找到有 text content 的
     const assistantMessages = messages
@@ -597,7 +612,8 @@ async function fetchSubSessionResult(subSessionID: string, subTaskDir: string): 
       .sort((a, b) => (b.info?.time?.created ?? 0) - (a.info?.time?.created ?? 0));
 
     for (const msg of assistantMessages) {
-      const textParts = msg.parts?.filter((p) => p.type === "text" && p.text) ?? [];
+      // 匹配 text 和 reasoning 类型（思考模式输出在 reasoning parts 中）
+      const textParts = msg.parts?.filter((p) => (p.type === "text" || p.type === "reasoning") && p.text) ?? [];
       const content = textParts.map((p) => p.text!).join("\n");
       if (content.trim()) return content;
     }
@@ -1045,7 +1061,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
                 parentID: context.sessionID,
                 title: `${description || subdir_name}: ${target_agent} 子任务`,
                 // 禁止子 Agent 使用 question 工具提问用户
-                // （子 Agent 在同步模式下运行，提问会阻塞且让用户困惑）
+                // （子 Agent 在后台执行，提问会阻塞且让用户困惑）
                 permission: [{ permission: "question", action: "deny", pattern: "*" }],
               },
               query: { directory: context.directory },

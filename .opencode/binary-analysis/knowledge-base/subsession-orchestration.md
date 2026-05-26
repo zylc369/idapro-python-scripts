@@ -109,9 +109,9 @@ await client.session.abort({
 
 | 场景 | 处理 |
 |------|------|
-| promptAsync 返回 error | 立即返回错误，不需要 abort |
+| promptAsync 返回 error | abort 子会话（子会话已创建但未启动，需清理）+ 返回错误 |
 | 轮询超时 | abort 子会话 + 返回超时错误 |
-| 父会话被取消 | 用 `context.abort`（AbortSignal）检测，abort 子会话 + 返回取消错误 |
+| 父会话被取消 | 用 `context.abort`（AbortSignal）检测。先尝试获取消息，如果子会话恰好已完成则正常返回；否则 abort 子会话 + 返回取消错误 |
 | messages 读取失败 | 重试几次，仍失败则 abort |
 | 子 Agent 无文本输出 | 返回兜底信息（"未返回文本结果"） |
 

@@ -183,7 +183,7 @@ $TASK_DIR/summary.md
 **行为**:
 - 创建子目录 `parent_task_dir/subdir_name/`
 - 子 Agent 在此目录中工作
-- 同步执行：等待子 Agent 完成后返回摘要
+- 异步轮询模式：发送任务后轮询等待子 Agent 完成，返回摘要（支持用户取消时优雅终止）
 - 子 Agent 的详细报告写入 `parent_task_dir/subdir_name/report.md`
 
 ---
