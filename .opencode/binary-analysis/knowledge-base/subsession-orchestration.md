@@ -111,7 +111,7 @@ await client.session.abort({
 |------|------|
 | promptAsync 返回 error | 立即返回错误，不需要 abort |
 | 轮询超时 | abort 子会话 + 返回超时错误 |
-| 父会话被取消 | abort 子会话 + 返回取消错误 |
+| 父会话被取消 | 用 `context.abort`（AbortSignal）检测，abort 子会话 + 返回取消错误 |
 | messages 读取失败 | 重试几次，仍失败则 abort |
 | 子 Agent 无文本输出 | 返回兜底信息（"未返回文本结果"） |
 
@@ -137,3 +137,4 @@ await client.session.abort({
 | 不设超时 | 子 Agent 可能无限循环，必须设超时上限 |
 | 超时后不 abort | 子 Agent 变成孤儿，继续消耗 LLM token |
 | 忘记在 finally 中清理 sessions Map | 子会话的 hook 处理会残留 |
+| 用 `sessions.get(parentID)` 检测取消 | sessions Map 由 Plugin 自管理，框架强杀 tool 时不会清理条目，检查永远不触发。必须用 `context.abort`（AbortSignal） |

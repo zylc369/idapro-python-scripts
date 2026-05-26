@@ -490,11 +490,13 @@ function isSessionComplete(messages: SessionMessage[]): boolean {
 
 /**
  * 轮询子会话状态直到完成或超时
+ * @param abortSignal 框架提供的取消信号（tool 被强杀时触发）
  * @returns null 表示正常完成，string 表示错误信息
  */
 async function pollSubSession(
   parentSessionID: string,
   subSessionID: string,
+  abortSignal: AbortSignal,
   timeoutMs: number = DEFAULT_POLL_TIMEOUT_MS,
 ): Promise<string | null> {
   if (!opencodeClient) return "错误: OpenCode client 未初始化";
@@ -503,13 +505,11 @@ async function pollSubSession(
   let pollCount = 0;
 
   while (Date.now() - startTime < timeoutMs) {
-    // 检查父会话是否还在运行（如果父会话已结束，应终止子会话）
-    // 通过检查 sessions Map 判断父会话是否仍活跃
-    const parentSession = sessions.get(parentSessionID);
-    if (!parentSession) {
-      debugLog(`delegate_analysis: 父会话已不在 sessions Map，终止轮询`, parentSessionID);
-      await abortSubSession(subSessionID, "parent_session_gone");
-      return "错误: 父会话已终止，子任务被取消";
+    // 检查框架是否取消了当前 tool 调用（用户取消/强杀时 abortSignal 会触发）
+    if (abortSignal.aborted) {
+      debugLog(`delegate_analysis: 框架已取消 tool 调用，终止轮询`, parentSessionID);
+      await abortSubSession(subSessionID, "tool_aborted");
+      return "错误: 父会话已取消当前操作，子任务被终止";
     }
 
     await sleep(POLL_INTERVAL_MS);
@@ -1104,8 +1104,8 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
             debugLog(`delegate_analysis: promptAsync 已发送 subSession=${subSessionID}`, context.sessionID);
 
-            // 6. 轮询子会话状态直到完成或超时
-            const pollError = await pollSubSession(context.sessionID, subSessionID);
+            // 6. 轮询子会话状态直到完成或超时（传入 abortSignal 以检测取消）
+            const pollError = await pollSubSession(context.sessionID, subSessionID, context.abort);
             if (pollError) {
               return pollError;
             }
