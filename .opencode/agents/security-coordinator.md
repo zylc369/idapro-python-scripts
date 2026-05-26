@@ -195,7 +195,7 @@ $TASK_DIR/summary.md
 | **阶段 0 强制** | 必须先执行 `python3 "$SHARED_DIR/scripts/create_task_dir.py"`，拿到 `$TASK_DIR` 后才能进入阶段 1。无论后续走 delegate 还是降级直接分析，都使用这个目录 |
 | **子任务失败** | 子 Agent 返回错误 → 分析原因，决定重试还是调整方案，不要静默跳过 |
 | **降级处理** | 如果 `delegate_analysis` 反复超时或不可用，可以降级为 coordinator 直接分析，但：① 仍在 `$TASK_DIR` 下写报告 ② 产出的知识库文档/脚本仍然必须被 Agent prompt 引用 ③ 向用户说明降级原因 |
-| **超时** | 子任务超过 5 分钟无响应 → 检查是否卡住，考虑调整 task_prompt |
+| **超时** | 子任务默认超时 10 分钟（可通过 `~/bw-security-analysis/config.json` 的 `delegate_timeout_minutes` 调整）。如果子任务耗时异常长，检查是否卡住或考虑调整 task_prompt |
 | **上下文控制** | 每个子任务摘要控制在 1000 字以内，避免上下文撑爆 |
 | **用户确认** | 不需要确认，直接分发执行。如果所需工具未安装，停止并告知用户去安装 |
 
