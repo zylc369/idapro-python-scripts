@@ -441,6 +441,173 @@ function buildSubSessionSystem(
 ${envSection}`;
 }
 
+// ─── delegate_analysis 轮询常量与辅助函数 ────────────────────────────
+//
+// 基于 oh-my-openagent 的 promptAsync + poll 模式
+// 参考: vendor/oh-my-openagent/src/tools/delegate-task/
+
+const POLL_INTERVAL_MS = 2000;
+const DEFAULT_POLL_TIMEOUT_MS = 30 * 60 * 1000; // 30 分钟
+
+interface SessionMessage {
+  info: { role: string; finish?: string; id: string; time?: { created: number } };
+  parts?: Array<{ type: string; text?: string }>;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 判断子会话是否已完成（不再有 LLM 调用或工具执行）
+ * 逻辑参考 oh-my-openagent sync-session-poller.ts isSessionComplete
+ */
+function isSessionComplete(messages: SessionMessage[]): boolean {
+  let lastUser: SessionMessage | undefined;
+  let lastAssistant: SessionMessage | undefined;
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!lastAssistant && msg.info?.role === "assistant") lastAssistant = msg;
+    if (!lastUser && msg.info?.role === "user") lastUser = msg;
+    if (lastUser && lastAssistant) break;
+  }
+
+  // 没有 assistant 回复 → 未完成
+  if (!lastAssistant?.info?.finish) return false;
+  // finish 为 "tool-calls" → 还有工具在执行
+  if (["tool-calls", "unknown"].includes(lastAssistant.info.finish)) return false;
+  // 还有 pending 的 tool parts
+  const hasToolParts = lastAssistant.parts?.some(
+    (p) => p.type === "tool" || p.type === "tool_use" || p.type === "tool-call",
+  );
+  if (hasToolParts) return false;
+  // user 和 assistant 都必须有 id
+  if (!lastUser?.info?.id || !lastAssistant?.info?.id) return false;
+  // assistant 必须在 user 之后
+  return lastUser.info.id < lastAssistant.info.id;
+}
+
+/**
+ * 轮询子会话状态直到完成或超时
+ * @returns null 表示正常完成，string 表示错误信息
+ */
+async function pollSubSession(
+  parentSessionID: string,
+  subSessionID: string,
+  timeoutMs: number = DEFAULT_POLL_TIMEOUT_MS,
+): Promise<string | null> {
+  if (!opencodeClient) return "错误: OpenCode client 未初始化";
+
+  const startTime = Date.now();
+  let pollCount = 0;
+
+  while (Date.now() - startTime < timeoutMs) {
+    // 检查父会话是否还在运行（如果父会话已结束，应终止子会话）
+    // 通过检查 sessions Map 判断父会话是否仍活跃
+    const parentSession = sessions.get(parentSessionID);
+    if (!parentSession) {
+      debugLog(`delegate_analysis: 父会话已不在 sessions Map，终止轮询`, parentSessionID);
+      await abortSubSession(subSessionID, "parent_session_gone");
+      return "错误: 父会话已终止，子任务被取消";
+    }
+
+    await sleep(POLL_INTERVAL_MS);
+    pollCount++;
+
+    // 查询子会话状态
+    let statusResult: { data?: Record<string, { type: string }> };
+    try {
+      statusResult = await opencodeClient.session.status();
+    } catch (e) {
+      debugLog(`delegate_analysis: 查询状态失败，重试 subSession=${subSessionID}`, parentSessionID);
+      continue;
+    }
+
+    const allStatuses = statusResult.data ?? {};
+    const sessionStatus = allStatuses[subSessionID];
+
+    // 每 10 次轮询记录一次日志（避免日志膨胀）
+    if (pollCount % 10 === 0) {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      debugLog(
+        `delegate_analysis: 轮询中 pollCount=${pollCount} elapsed=${elapsed}s status=${sessionStatus?.type ?? "not_found"}`,
+        parentSessionID,
+      );
+    }
+
+    // 状态不是 idle → 继续等待
+    if (sessionStatus && sessionStatus.type !== "idle") {
+      continue;
+    }
+
+    // 状态为 idle 或不在 status 中，检查消息确认是否完成
+    let messages: SessionMessage[];
+    try {
+      const messagesResult = await opencodeClient.session.messages({
+        path: { id: subSessionID },
+      });
+      const rawData = messagesResult.data;
+      messages = Array.isArray(rawData) ? rawData : [];
+    } catch (e) {
+      debugLog(`delegate_analysis: 获取消息失败，重试 subSession=${subSessionID}`, parentSessionID);
+      continue;
+    }
+
+    if (isSessionComplete(messages)) {
+      debugLog(`delegate_analysis: 子会话完成 subSession=${subSessionID} pollCount=${pollCount}`, parentSessionID);
+      return null; // 正常完成
+    }
+  }
+
+  // 超时
+  debugLog(`delegate_analysis: 轮询超时 subSession=${subSessionID} timeout=${timeoutMs}ms`, parentSessionID);
+  await abortSubSession(subSessionID, "poll_timeout");
+  return `错误: 子 Agent 执行超时（${Math.floor(timeoutMs / 60000)} 分钟），已终止。\n子会话 ID: ${subSessionID}`;
+}
+
+/**
+ * 中止子会话
+ */
+async function abortSubSession(subSessionID: string, reason: string): Promise<void> {
+  if (!opencodeClient) return;
+  debugLog(`delegate_analysis: 中止子会话 subSession=${subSessionID} reason=${reason}`);
+  try {
+    await opencodeClient.session.abort({ path: { id: subSessionID } });
+  } catch (e) {
+    debugLog(`delegate_analysis: 中止子会话失败 subSession=${subSessionID} error=${e}`);
+  }
+}
+
+/**
+ * 从子会话消息中提取最后一个 assistant 的文本输出
+ */
+async function fetchSubSessionResult(subSessionID: string, subTaskDir: string): Promise<string> {
+  if (!opencodeClient) return "错误: OpenCode client 未初始化";
+
+  try {
+    const messagesResult = await opencodeClient.session.messages({
+      path: { id: subSessionID },
+    });
+    const messages = Array.isArray(messagesResult.data) ? messagesResult.data as SessionMessage[] : [];
+
+    // 按 time.created 降序排列 assistant 消息，找到有 text content 的
+    const assistantMessages = messages
+      .filter((m) => m.info?.role === "assistant")
+      .sort((a, b) => (b.info?.time?.created ?? 0) - (a.info?.time?.created ?? 0));
+
+    for (const msg of assistantMessages) {
+      const textParts = msg.parts?.filter((p) => p.type === "text" && p.text) ?? [];
+      const content = textParts.map((p) => p.text!).join("\n");
+      if (content.trim()) return content;
+    }
+
+    return `子 Agent 已完成执行，但未返回文本结果。\n详细报告: ${subTaskDir}/report.md`;
+  } catch (e) {
+    return `错误: 读取子会话结果失败 - ${e}`;
+  }
+}
+
 // ─── session 管理 ──────────────────────────────────────────────────────
 //
 // 数据结构
@@ -497,6 +664,35 @@ let opencodeClient: {
       };
     }) => Promise<{
       data?: { parts?: Array<{ type: string; text?: string }> };
+      error?: unknown;
+    }>;
+    promptAsync: (options: {
+      path: { id: string };
+      body: {
+        agent?: string;
+        system?: string;
+        parts: Array<{ type: string; text?: string }>;
+      };
+    }) => Promise<{
+      data?: unknown;
+      error?: unknown;
+    }>;
+    status: () => Promise<{
+      data?: Record<string, { type: string }>;
+      error?: unknown;
+    }>;
+    messages: (options: {
+      path: { id: string };
+    }) => Promise<{
+      data?: Array<{
+        info: { role: string; finish?: string; id: string; time?: { created: number } };
+        parts?: Array<{ type: string; text?: string }>;
+      }>;
+      error?: unknown;
+    }>;
+    abort: (options: {
+      path: { id: string };
+    }) => Promise<{
       error?: unknown;
     }>;
   };
@@ -788,7 +984,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
     // ─── 自定义工具 ──────────────────────────────────────────────────
     //
     // delegate_analysis: Coordinator 用此工具分发任务到专业 Agent
-    // 创建子会话 → 注入 system → 同步等待完成 → 返回摘要
+    // 创建子会话 → promptAsync 异步发送 → 轮询状态 → 返回摘要
     tool: {
       delegate_analysis: tool({
         description: `将分析任务分发到专业安全分析 Agent。
@@ -802,9 +998,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 1. 创建子会话，指定目标 Agent
 2. Agent 在父任务目录的子目录中工作
 3. Agent 完成后返回结构化摘要
-4. 详细报告写入磁盘: parent_task_dir/subdir_name/report.md
-
-同步执行: 等待子 Agent 完成后才返回结果。`,
+4. 详细报告写入磁盘: parent_task_dir/subdir_name/report.md`,
 
         args: {
           target_agent: tool.schema.string().describe("目标 Agent: binary-analysis, mobile-analysis, web-analysis"),
@@ -892,9 +1086,9 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
             return `错误: 创建子会话异常 - ${e}`;
           }
 
-          // 5. 发送任务（同步阻塞，等待子 Agent 完成全部工作）
+          // 5. 异步发送任务（promptAsync 立即返回，不阻塞 tool execute）
           try {
-            const promptResult = await opencodeClient.session.prompt({
+            const promptResult = await opencodeClient.session.promptAsync({
               path: { id: subSessionID },
               body: {
                 agent: target_agent,
@@ -904,26 +1098,22 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
             });
 
             if (promptResult.error) {
-              return `错误: 子 Agent 执行失败 - ${JSON.stringify(promptResult.error)}`;
+              await abortSubSession(subSessionID, "prompt_failed");
+              return `错误: 发送任务失败 - ${JSON.stringify(promptResult.error)}`;
             }
 
-            // 6. 从响应提取文本
-            const data = promptResult.data as { parts?: Array<{ type: string; text?: string }> } | undefined;
-            if (data?.parts) {
-              const textParts = data.parts
-                .filter((p) => p.type === "text" && p.text)
-                .map((p) => p.text!)
-                .join("\n");
+            debugLog(`delegate_analysis: promptAsync 已发送 subSession=${subSessionID}`, context.sessionID);
 
-              if (textParts.trim()) {
-                debugLog(`delegate_analysis: 子任务完成 subSession=${subSessionID}`, context.sessionID);
-                return textParts;
-              }
+            // 6. 轮询子会话状态直到完成或超时
+            const pollError = await pollSubSession(context.sessionID, subSessionID);
+            if (pollError) {
+              return pollError;
             }
 
-            // 响应中没有文本部分，返回兜底信息
-            debugLog(`delegate_analysis: 子任务完成（无文本输出）subSession=${subSessionID}`, context.sessionID);
-            return `子 Agent (${target_agent}) 已完成执行，但未返回文本结果。\n详细报告: ${subTaskDir}/report.md`;
+            // 7. 从子会话消息中提取结果
+            const resultText = await fetchSubSessionResult(subSessionID, subTaskDir);
+            debugLog(`delegate_analysis: 子任务完成 subSession=${subSessionID}`, context.sessionID);
+            return resultText;
           } catch (e) {
             return `错误: 子 Agent 执行异常 - ${e}`;
           } finally {
