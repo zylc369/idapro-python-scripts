@@ -96,10 +96,18 @@ await client.session.abort({
 
 ## 5. 超时处理
 
-| 参数 | 推荐值 | 说明 |
+| 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `POLL_INTERVAL_MS` | 2000 | 轮询间隔 |
-| `DEFAULT_POLL_TIMEOUT_MS` | 30 * 60 * 1000 | 默认超时 30 分钟 |
+| `POLL_INTERVAL_MS` | 2000 | 轮询间隔（固定） |
+| `delegate_timeout_minutes` | 10 | 超时时间（分钟），通过 `~/bw-security-analysis/config.json` 配置 |
+
+配置示例：
+
+```json
+{
+  "delegate_timeout_minutes": 15
+}
+```
 
 超时后必须调用 `session.abort()` 终止子会话，否则子 Agent 会变成孤儿进程继续消耗资源。
 

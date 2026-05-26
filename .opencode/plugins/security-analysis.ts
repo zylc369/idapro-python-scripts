@@ -84,6 +84,7 @@ interface ToolConfig {
 
 interface ConfigData {
   ida_path?: string;
+  delegate_timeout_minutes?: number;
   tools?: Record<string, ToolConfig>;
 }
 
@@ -447,7 +448,19 @@ ${envSection}`;
 // 参考: vendor/oh-my-openagent/src/tools/delegate-task/
 
 const POLL_INTERVAL_MS = 2000;
-const DEFAULT_POLL_TIMEOUT_MS = 30 * 60 * 1000; // 30 分钟
+const DEFAULT_POLL_TIMEOUT_MS = 10 * 60 * 1000; // 默认 10 分钟，可通过 config.json delegate_timeout_minutes 覆盖
+
+/**
+ * 从配置文件读取 delegate 超时时间（毫秒）
+ */
+function getDelegateTimeoutMs(): number {
+  const config = readJsonSafe<ConfigData>(CONFIG_FILE);
+  const minutes = config?.delegate_timeout_minutes;
+  if (typeof minutes === "number" && minutes > 0) {
+    return minutes * 60 * 1000;
+  }
+  return DEFAULT_POLL_TIMEOUT_MS;
+}
 
 interface SessionMessage {
   info: { role: string; finish?: string; id: string; time?: { created: number } };
@@ -1121,7 +1134,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
             debugLog(`delegate_analysis: promptAsync 已发送 subSession=${subSessionID}`, context.sessionID);
 
             // 6. 轮询子会话状态直到完成或超时（传入 abortSignal 以检测取消）
-            const pollError = await pollSubSession(context.sessionID, subSessionID, context.abort);
+            const pollError = await pollSubSession(context.sessionID, subSessionID, context.abort, getDelegateTimeoutMs());
             if (pollError) {
               return pollError;
             }
