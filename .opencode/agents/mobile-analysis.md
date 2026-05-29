@@ -1,6 +1,6 @@
 ---
 description: 移动应用逆向分析 — 输入 APK/IPA 和分析需求，自动编排工具链完成分析
-mode: primary
+mode: all
 buwai-extension-id: mobile-analysis
 permission:
   external_directory:
