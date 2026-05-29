@@ -75,7 +75,7 @@ run_headless(_main)
 
 沉淀前必须：
 1. 基于 `_base.py` 骨架
-2. 通过语法检查：`python3 -c "compile(open('<脚本>').read(), '<脚本>', 'exec')"`
+2. 通过语法检查：`$PYTHON_CMD -c "compile(open('<脚本>').read(), '<脚本>', 'exec')"`
 3. 输出符合 `{"success": bool, "data": ..., "error": ...}` 格式
 4. 有完整的 docstring
 5. 包含中文日志

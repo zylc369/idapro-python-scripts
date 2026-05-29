@@ -4,7 +4,7 @@ description:
   封装 Web 安全分析中的高频操作（HTTP session 管理、CSRF 提取、注册登录、
   webhook.site 交互）。每个函数可独立使用，不强制组合调用。
 
-  依赖: requests, beautifulsoup4, lxml（通过 $BA_PYTHON 调用）
+  依赖: requests, beautifulsoup4, lxml（通过 $PYTHON_CMD 调用）
 
   调用方式:
     import sys

@@ -206,7 +206,7 @@ spawn(target) → attach(pid) → script = create_script(hook_code) → load →
 → 读取 Hook 输出的参数/返回值 → cleanup
 ```
 
-Agent 操作步骤: 读取 `frida-hook-templates.md` → 复制模板 1 → 替换地址和参数 → 保存为临时脚本 → 用 `$BA_PYTHON` 执行
+Agent 操作步骤: 读取 `frida-hook-templates.md` → 复制模板 1 → 替换地址和参数 → 保存为临时脚本 → 用 `$PYTHON_CMD` 执行
 
 ### Hook 读取结果
 
@@ -267,7 +267,7 @@ Hook strcmp 捕获字符串比较，在 `onEnter` 中读取两个字符串。
 当需要 patch 运行中的进程并捕获结果时，使用 `process_patch.py`（替代手写 ctypes 脚本）：
 
 ```bash
-"$BA_PYTHON" "$SHARED_DIR/scripts/process_patch.py" \
+"$PYTHON_CMD" "$SHARED_DIR/scripts/process_patch.py" \
   --exe TARGET.EXE \
   --patch 0x401234:EB \
   --capture 0x422480:16 \

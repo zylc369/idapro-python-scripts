@@ -6,7 +6,7 @@ description:
   支持渲染内容提取（markdown/text/html）和页面截图。
 
 usage:
-  $BA_PYTHON $SHARED_DIR/scripts/web_render.py --url URL [--format FORMAT] [--screenshot PATH] [选项]
+  $PYTHON_CMD $SHARED_DIR/scripts/web_render.py --url URL [--format FORMAT] [--screenshot PATH] [选项]
 
 level: intermediate
 

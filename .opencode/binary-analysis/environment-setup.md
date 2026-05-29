@@ -4,10 +4,11 @@
 
 ## 虚拟环境策略
 
-Python 第三方包（capstone、unicorn、gmpy2、frida）安装在专用虚拟环境中，**不污染全局 Python**。
+Python 第三方包（capstone、unicorn、gmpy2、frida 等）安装在专用虚拟环境中，**不污染全局 Python**。
 
 - **venv 位置**: `~/bw-security-analysis/.venv`
-- **自动管理**: `detect_env.py` 自动创建 venv 并安装依赖
+- **自动管理**: Plugin 启动时自动检测/创建 venv，无需手动操作
+- **包安装**: `detect_env.py` 自动在 venv 中安装缺失的包
 - **缓存**: 环境检测结果缓存在 `~/bw-security-analysis/env_cache.json`，24 小时有效期
 - **手动安装**:
   ```bash
@@ -17,14 +18,13 @@ Python 第三方包（capstone、unicorn、gmpy2、frida）安装在专用虚拟
   # Windows
   ~/bw-security-analysis/.venv/Scripts/python.exe -m pip install <包名>
   ```
-- **重建 venv**: 删除 `~/bw-security-analysis/.venv` 和 `~/bw-security-analysis/env_cache.json`，重新运行 `detect_env.py --force`
+- **重建 venv**: 删除 `~/bw-security-analysis/.venv` 和 `~/bw-security-analysis/env_cache.json`，重启 OpenCode（Plugin 会自动重建）
 
-**三类 Python 环境**:
+**两类 Python 环境**:
 
-| 环境 | 用途 | 可执行文件 |
-|------|------|-----------|
-| 系统 Python | detect_env.py、内联一行命令 | `python3`/`python` |
-| venv Python | 需要第三方包的独立脚本（Unicorn、Frida、gui_verify） | `$BA_PYTHON` |
+| 环境 | 用途 | 来源 |
+|------|------|------|
+| venv Python（`$PYTHON_CMD`） | 所有 Python 脚本和命令（含第三方包） | Plugin 启动时保证可用 |
 | IDA Python | IDAPython 脚本（query.py、update.py 等） | `$IDAT` |
 
 ## capstone vs IDA Pro — 为什么要装 capstone？
@@ -91,7 +91,6 @@ dir "C:\Program Files (x86)\Microsoft Visual Studio" /s /b | findstr vcvarsall.b
 
 - **frida 安装失败**：需要 Rust 编译环境，或尝试 `pip install frida --no-build-isolation`
 - **gmpy2 安装失败**：需要 MPIR 库，建议用 conda：`conda install -c conda-forge gmpy2`
-- **python3 命令不存在**：Windows 上 IDA 自带 Python 注册为 `python`，非 `python3`
 
 ---
 
@@ -150,17 +149,12 @@ clang --version && ~/bw-security-analysis/.venv/bin/python -c "import capstone; 
 
 ## 自动检测
 
-所有平台统一使用环境检测脚本：
+环境检测在 agent 会话启动时自动执行。Plugin 保证 venv 存在，`detect_env.py` 负责安装/检测包和工具。
 
-```bash
-# 检测全部工具（默认）
-python3 detect_env.py --force
+如需强制重新检测（手动排查问题时），在 agent 会话中执行：
 
-# 仅检测 binary-analysis 需要的工具
-python3 detect_env.py --force --agent binary-analysis
-
-# 仅检测 mobile-analysis 需要的工具
-python3 detect_env.py --force --agent mobile-analysis
+```
+$PYTHON_CMD "$SHARED_DIR/scripts/detect_env.py" --force
 ```
 
 成功输出：

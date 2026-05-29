@@ -56,7 +56,7 @@ permission:
 
 ---
 
-## 阶段 0：任务初始化（强制 — 每次分析前，不可跳过）
+## 阶段 0：任务初始化（强制）
 
 {{buwai-rule:task-initialization}}
 
@@ -188,6 +188,17 @@ permission:
 |------|------|---------|
 | `$SHARED_DIR/scripts/web_render.py` | Playwright 无头浏览器渲染（JS 执行 + 截图） | `--url <URL> --format markdown\|text\|html --screenshot <PATH>` |
 
+**页面内容获取工具选择**：
+
+| 场景 | 工具 | 原因 |
+|------|------|------|
+| 获取静态页面 HTML | webfetch | 快速，无 JS 执行开销 |
+| 获取 API/JSON 响应 | webfetch | 不需要渲染 |
+| 页面需要 JS 渲染才能看到内容（SPA） | web_render.py | 需要 JS 执行 |
+| 需要页面截图 | web_render.py | webfetch 无法截图 |
+| 需要登录后的页面内容 | 编写 Playwright 脚本（`$TASK_DIR/render_auth.py`），在脚本中设置 Cookie/Token 后渲染 | web_render.py 不支持传入认证信息，需要自行编写带认证的渲染脚本 |
+| 获取 CTF writeup / 技术文章 | webfetch | 文章类页面通常不需要 JS |
+
 ### 源码分析工具
 
 - **Read/Glob/Grep**: 读取和搜索源码文件（最常用的"工具"）
@@ -195,18 +206,44 @@ permission:
 
 ### Web 分析辅助库（通过 $AGENT_DIR 调用）
 
-> 高频操作封装库，减少测试脚本中的 boilerplate。通过 `$BA_PYTHON` 调用（依赖 requests + bs4 + lxml）。
+> 高频操作封装库，减少测试脚本中的 boilerplate。
 
-| 模块 | 用途 | 关键函数 |
-|------|------|---------|
-| `$AGENT_DIR/scripts/web_helpers.py` | HTTP session 管理、CSRF 提取、注册登录、webhook 交互 | `create_session`、`get_csrf`、`register_and_login`、`extract_flag_from_webhook`、`create_webhook` |
+| 模块 | 依赖 | 用途 | 关键函数/类 |
+|------|------|------|------------|
+| `$AGENT_DIR/scripts/web_helpers.py` | requests + bs4 + lxml | HTTP session 管理、CSRF 提取、注册登录、webhook 交互 | `create_session`、`get_csrf`、`register_and_login`、`extract_flag_from_webhook`、`create_webhook` |
+| `$AGENT_DIR/scripts/cache_poison.py` | 无（纯标准库） | 缓存投毒攻击框架、Bot AE 探测、缓存键分析、缓存中缓存渗出 | `CachePoison`（类：`poison`/`verify_cache_hit`/`trigger_bot`/`read_exfil`）、`probe_accept_encoding`、`probe_cache_key` |
+| `$AGENT_DIR/scripts/param_bomb.py` | 无（纯标准库） | PHP max_input_vars 参数炸弹生成（POST/GET/两阶段组合） | `build_bomb_post_data`、`build_bomb_get_url`、`build_two_stage_bomb`、`estimate_param_count` |
+| `$AGENT_DIR/scripts/markdown_fuzz.py` | 无（纯标准库） | Markdown 解析器 XSS 注入系统化测试（8 种分类，30+ payload） | `MarkdownFuzzer`（类）、`generate_payloads`、`PayloadCategory` |
+| `$AGENT_DIR/scripts/sandbox_escape.py` | 无（纯标准库） | iframe sandbox 逃逸 payload 生成：sandbox 测试 JS、控制器页面、notebook 注入、SSO blob URL 绕过 | `generate_sandbox_test_payload`、`generate_controller_page`、`generate_notebook_payload`、`generate_sso_bypass_url` |
+| `$AGENT_DIR/scripts/bot_analyze.py` | 无（纯标准库） | Bot server.js 自动分析：提取关键参数、分类模式（单页/双页）、生成攻击时间线 | `analyze_bot_file`、`analyze_bot_code`、`BotAnalysis` |
 
 **使用方式**（在临时脚本中）：
 
 ```python
 import sys
 sys.path.insert(0, "$AGENT_DIR/scripts")
+
+# Web 基础操作
 from web_helpers import create_session, get_csrf, register_and_login
+
+# 缓存投毒
+from cache_poison import CachePoison, probe_accept_encoding
+
+# PHP 参数炸弹
+from param_bomb import build_bomb_post_data, build_bomb_get_url, build_two_stage_bomb
+
+# Markdown XSS 测试
+from markdown_fuzz import MarkdownFuzzer, generate_payloads
+
+# Sandbox 逃逸
+from sandbox_escape import (
+    generate_sandbox_test_payload,
+    generate_controller_page,
+    generate_notebook_payload,
+)
+
+# Bot 代码分析（命令行: python bot_analyze.py <server.js>）
+from bot_analyze import analyze_bot_file
 ```
 
 ---
@@ -219,10 +256,14 @@ from web_helpers import create_session, get_csrf, register_and_login
 
 | 文档 | 触发条件 |
 |------|---------|
-| `web-methodology.md` | 分析规划阶段（阶段 B） |
-| `web-vulnerabilities.md` | 识别到潜在漏洞类型时 |
-| `cache-poisoning.md` | 检测到缓存机制 / Vary 头 / 反向代理 |
+| `web-methodology.md` | 分析规划阶段（阶段 B）。白盒/黑盒分析流程、PHP 应用分析方法、Bot 类题目分析 |
+| `web-vulnerabilities.md` | 识别到潜在漏洞类型时。XSS（含 Markdown 注入）、SSRF、iframe sandbox、Cookie 安全、开放重定向、Markdown 解析器安全测试方法论 |
+| `cache-poisoning.md` | 检测到缓存机制 / Vary 头 / 反向代理。含缓存中缓存渗出、Bot 请求头探测技术 |
 | `csp-bypass.md` | 检测到 CSP 头 / XSS 被 CSP 阻止 / PHP 应用 + 需要绕过安全头 |
+| `nextjs-analysis.md` | 识别到 Next.js 框架（特别是 App Router）。RSC/flight data 分析、middleware 审计、node_modules 源码阅读、框架内部不一致性探测 |
+| `spa-frontend-analysis.md` | 识别到 SvelteKit/SPA/纯前端应用（localStorage 认证、无后端数据库）。SvelteKit 路由分析、Notebook 导入攻击面、Bot localStorage 变体 + 异步 flag 时间差利用 |
+| `attack-orchestration.md` | 需要多步骤/多窗口攻击编排时。控制器页面模式、postMessage 攻击、popup 存活机制、SSO/OAuth 回调安全审计 |
+| `bot-patterns.md` | 分析 Bot server.js 时。Bot 代码通用结构、单页/双页模式快速分类、安全决策分析（URL 验证、httpOnly、Docker Chromium 特性）、攻击链决策树 |
 
 ### 通用知识库（$SHARED_DIR/knowledge-base/）
 

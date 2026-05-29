@@ -25,28 +25,28 @@
 
 ```bash
 # 基本用法：获取渲染后的 markdown 内容
-$BA_PYTHON "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format markdown
+$PYTHON_CMD "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format markdown
 
 # 获取纯文本
-$BA_PYTHON "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format text
+$PYTHON_CMD "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format text
 
 # 获取原始 HTML
-$BA_PYTHON "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format html
+$PYTHON_CMD "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format html
 
 # 同时截图
-$BA_PYTHON "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format markdown --screenshot "$TASK_DIR/page.jpg"
+$PYTHON_CMD "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format markdown --screenshot "$TASK_DIR/page.jpg"
 
 # 全页截图
-$BA_PYTHON "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format markdown --screenshot "$TASK_DIR/page.jpg" --screenshot-full-page
+$PYTHON_CMD "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format markdown --screenshot "$TASK_DIR/page.jpg" --screenshot-full-page
 
 # 等待特定元素出现（适用于已知页面结构的情况）
-$BA_PYTHON "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --wait-selector ".content-loaded" --format markdown
+$PYTHON_CMD "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --wait-selector ".content-loaded" --format markdown
 
 # 输出到文件而非 stdout
-$BA_PYTHON "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format markdown --output "$TASK_DIR/web.json"
+$PYTHON_CMD "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --format markdown --output "$TASK_DIR/web.json"
 
 # 自定义超时（默认 30 秒，最大 120 秒）
-$BA_PYTHON "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --timeout 60 --format markdown
+$PYTHON_CMD "$SHARED_DIR/scripts/web_render.py" --url "https://example.com" --timeout 60 --format markdown
 ```
 
 ## 参数说明
@@ -109,4 +109,4 @@ A: 某些 SPA 页面需要用户交互才能加载内容。尝试 `--wait-select
 A: 默认超时 30 秒，复杂页面可能需要更长。使用 `--timeout 60` 增加等待时间。最大 120 秒。
 
 **Q: playwright 未安装？**
-A: 运行 `python3 "$SHARED_DIR/scripts/detect_env.py" --force` 自动安装 playwright 和 Chromium 浏览器。
+A: 运行 `$PYTHON_CMD "$SHARED_DIR/scripts/detect_env.py" --force` 自动安装 playwright 和 Chromium 浏览器。

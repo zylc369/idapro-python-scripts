@@ -63,17 +63,21 @@ permission:
 
 ---
 
-## 阶段 0：任务初始化
+## 阶段 0：任务初始化（强制）
 
 > 每次分析前必须执行，不可跳过。
 
 ### 0.1 创建父任务目录
 
-```bash
-$TASK_DIR=$(python3 "$SHARED_DIR/scripts/create_task_dir.py")
+执行以下命令创建任务目录：
+
+```
+$PYTHON_CMD "$SHARED_DIR/scripts/create_task_dir.py"
 ```
 
-所有子 Agent 将在此目录下创建各自的子目录（如 `$TASK_DIR/binary-analysis/`）。
+`$PYTHON_CMD` 和 `$SHARED_DIR` 是 Plugin 注入到上下文中的值，不是 shell 环境变量——执行时替换为实际路径。
+
+**禁止手动 mkdir 或自造目录名**：必须走 `create_task_dir.py`，因为脚本会注册 sessionID 映射，用于压缩恢复。
 
 ### 0.2 变量初始化
 
@@ -181,7 +185,7 @@ $TASK_DIR/summary.md
 **行为**:
 - 创建子目录 `parent_task_dir/subdir_name/`
 - 子 Agent 在此目录中工作
-- 同步执行：等待子 Agent 完成后返回摘要
+- 异步轮询模式：发送任务后轮询等待子 Agent 完成，返回摘要（支持用户取消时优雅终止）
 - 子 Agent 的详细报告写入 `parent_task_dir/subdir_name/report.md`
 
 ---
@@ -190,8 +194,10 @@ $TASK_DIR/summary.md
 
 | 纪律 | 规则 |
 |------|------|
+| **阶段 0 强制** | 必须先执行 `$PYTHON_CMD "$SHARED_DIR/scripts/create_task_dir.py"`，拿到 `$TASK_DIR` 后才能进入阶段 1。无论后续走 delegate 还是降级直接分析，都使用这个目录 |
 | **子任务失败** | 子 Agent 返回错误 → 分析原因，决定重试还是调整方案，不要静默跳过 |
-| **超时** | 子任务超过 5 分钟无响应 → 检查是否卡住，考虑调整 task_prompt |
+| **降级处理** | 如果 `delegate_analysis` 反复超时或不可用，可以降级为 coordinator 直接分析，但：① 仍在 `$TASK_DIR` 下写报告 ② 产出的知识库文档/脚本仍然必须被 Agent prompt 引用 ③ 向用户说明降级原因 |
+| **超时** | 子任务默认超时 10 分钟（可通过 `~/bw-security-analysis/config.json` 的 `delegate_timeout_minutes` 调整）。如果子任务耗时异常长，检查是否卡住或考虑调整 task_prompt |
 | **上下文控制** | 每个子任务摘要控制在 1000 字以内，避免上下文撑爆 |
 | **用户确认** | 不需要确认，直接分发执行。如果所需工具未安装，停止并告知用户去安装 |
 

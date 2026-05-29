@@ -8,6 +8,7 @@ import {
 } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
+import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
@@ -84,6 +85,7 @@ interface ToolConfig {
 
 interface ConfigData {
   ida_path?: string;
+  delegate_timeout_minutes?: number;
   tools?: Record<string, ToolConfig>;
 }
 
@@ -161,6 +163,104 @@ function getToolsForAgent(
     .filter(([, tool]) => !tool.agents || tool.agents.includes(agentName))
     .map(([name, tool]) => ({ name, ...tool }));
 }
+
+// ─── Python 虚拟环境管理 ──────────────────────────────────────────────
+//
+// Plugin 启动时确保 ~/bw-security-analysis/.venv 存在且可用。
+// $PYTHON_CMD 指向 venv Python 绝对路径，所有 agent 统一使用。
+// venv 创建需要系统 Python（通过 findSystemPython 检测）。
+// 整个流程在 Plugin 加载时执行一次，失败则抛异常终止加载。
+
+const VENV_DIR = join(DATA_DIR, ".venv");
+
+// venv 内 Python 可能的路径（覆盖所有平台，按常见度排序）
+const VENV_PYTHON_CANDIDATES = [
+  join(VENV_DIR, "Scripts", "python.exe"),   // Windows 标准位置
+  join(VENV_DIR, "bin", "python"),           // Linux/macOS 标准位置
+  join(VENV_DIR, "Scripts", "python3.exe"),  // Windows（python3 别名）
+  join(VENV_DIR, "bin", "python3"),          // Linux/macOS（python3）
+];
+
+// 实际运行 Python 代码验证可用性（不依赖 exit code，不假设路径）
+function verifyPython(pathOrCmd: string): boolean {
+  try {
+    const output = execSync(`"${pathOrCmd}" -c "print('OK')"`, {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5000,
+      encoding: "utf-8",
+    });
+    return output.trim() === "OK";
+  } catch {
+    return false;
+  }
+}
+
+// 从 venv 中检测可用的 Python（不假设路径，逐个验证）
+function findVenvPython(): string | null {
+  for (const candidate of VENV_PYTHON_CANDIDATES) {
+    if (!existsSync(candidate)) continue;
+    if (verifyPython(candidate)) {
+      return candidate;
+    }
+    debugLog(`findVenvPython: ${candidate} exists but failed verification`);
+  }
+  return null;
+}
+
+// 检测系统 Python 命令（仅用于创建 venv）
+function findSystemPython(): string {
+  const candidates = process.platform === "win32"
+    ? ["python", "python3"]
+    : ["python3", "python"];
+
+  for (const cmd of candidates) {
+    if (verifyPython(cmd)) return cmd;
+  }
+  throw new Error(
+    `未找到可用的系统 Python。请安装 Python 3.8+ 后重试。\n` +
+    `已尝试: ${candidates.join(", ")}`
+  );
+}
+
+function ensureVenvPython(): string {
+  // 1. 已有 venv → 检测可用的 Python
+  const existing = findVenvPython();
+  if (existing) {
+    debugLog(`ensureVenvPython: ${existing} verified`);
+    return existing;
+  }
+
+  // 2. 需要创建 venv
+  const systemPython = findSystemPython();
+  debugLog(`ensureVenvPython: creating venv with ${systemPython}`);
+
+  try {
+    execSync(`"${systemPython}" -m venv "${VENV_DIR}"`, {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 120000,
+      encoding: "utf-8",
+    });
+  } catch (e) {
+    throw new Error(
+      `创建 Python 虚拟环境失败: ${(e as Error).message}\n` +
+      `请手动运行: ${systemPython} -m venv "${VENV_DIR}"`
+    );
+  }
+
+  // 3. 创建后重新检测（不假设路径，用同一套检测逻辑）
+  const created = findVenvPython();
+  if (created) {
+    debugLog(`ensureVenvPython: ${created} created and verified`);
+    return created;
+  }
+  throw new Error(
+    `虚拟环境创建成功但未检测到可用的 Python。\n` +
+    `请删除 "${VENV_DIR}" 后重试。`
+  );
+}
+
+// Plugin 加载时立即确保 venv 可用；失败则整个 Plugin 加载失败
+const PYTHON_CMD = ensureVenvPython();
 
 // 根据实际 agent 名获取脚本目录；子 agent（如 "general"）不在映射表中时，
 // 回退到 primaryAgent 对应的目录；均无映射则返回 undefined
@@ -340,6 +440,7 @@ function buildEnvSection(
   envSection += `- 共享目录 ($SHARED_DIR): ${idaScriptsDir}\n`;
   const idaPath = config.ida_path || "未配置";
   envSection += `- IDA Pro: ${idaPath}\n`;
+  envSection += `- Python ($PYTHON_CMD): ${PYTHON_CMD}\n`;
 
   if (envInfo) {
     const compiler = envInfo.compiler;
@@ -350,9 +451,6 @@ function buildEnvSection(
       }
     } else {
       envSection += `- 编译器: 未检测到\n`;
-    }
-    if (envInfo.venv_python) {
-      envSection += `- BA_PYTHON: ${envInfo.venv_python}\n`;
     }
     if (envInfo.packages) {
       const pkgs = Object.entries(envInfo.packages)
@@ -415,8 +513,8 @@ function buildSubSessionSystem(
    - 此目录已存在，不需要创建
    - 所有中间文件、临时脚本、输出、报告写入此目录
 2. **跳过阶段 0 的"创建任务目录"步骤**: 不要调用 create_task_dir.py
-   - 环境检测仍需执行: \`python3 "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"\`
-   - $BA_PYTHON 初始化仍需执行（从 env.json 提取）
+    - 环境检测仍需执行: \`$PYTHON_CMD "$SHARED_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"\`
+    - $PYTHON_CMD 已由 Plugin 注入，无需手动赋值
 3. **结果格式要求**:
    - 详细分析报告写入 $TASK_DIR/report.md
    - 你返回的文本必须是结构化摘要，格式如下:
@@ -439,6 +537,201 @@ function buildSubSessionSystem(
 \`\`\`
 
 ${envSection}`;
+}
+
+// ─── delegate_analysis 轮询常量与辅助函数 ────────────────────────────
+//
+// 基于 oh-my-openagent 的 promptAsync + poll 模式
+// 参考: vendor/oh-my-openagent/src/tools/delegate-task/
+
+const POLL_INTERVAL_MS = 2000;
+const DEFAULT_POLL_TIMEOUT_MS = 10 * 60 * 1000; // 默认 10 分钟，可通过 config.json delegate_timeout_minutes 覆盖
+
+/**
+ * 从配置文件读取 delegate 超时时间（毫秒）
+ */
+function getDelegateTimeoutMs(): number {
+  const config = readJsonSafe<ConfigData>(CONFIG_FILE);
+  const minutes = config?.delegate_timeout_minutes;
+  if (typeof minutes === "number" && minutes > 0) {
+    return minutes * 60 * 1000;
+  }
+  return DEFAULT_POLL_TIMEOUT_MS;
+}
+
+interface SessionMessage {
+  info: { role: string; finish?: string; id: string; time?: { created: number } };
+  parts?: Array<{ type: string; text?: string }>;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 从子会话获取消息列表（提取为独立函数供 pollSubSession 复用）
+ */
+async function fetchSessionMessages(sessionID: string): Promise<SessionMessage[]> {
+  if (!opencodeClient) return [];
+  const messagesResult = await opencodeClient.session.messages({
+    path: { id: sessionID },
+  });
+  const rawData = messagesResult.data;
+  return Array.isArray(rawData) ? rawData : [];
+}
+
+/**
+ * 判断子会话是否已完成（不再有 LLM 调用或工具执行）
+ * 逻辑参考 oh-my-openagent sync-session-poller.ts isSessionComplete
+ */
+function isSessionComplete(messages: SessionMessage[]): boolean {
+  let lastUser: SessionMessage | undefined;
+  let lastAssistant: SessionMessage | undefined;
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!lastAssistant && msg.info?.role === "assistant") lastAssistant = msg;
+    if (!lastUser && msg.info?.role === "user") lastUser = msg;
+    if (lastUser && lastAssistant) break;
+  }
+
+  // 没有 assistant 回复 → 未完成
+  if (!lastAssistant?.info?.finish) return false;
+  // finish 为 "tool-calls" → 还有工具在执行
+  if (["tool-calls", "unknown"].includes(lastAssistant.info.finish)) return false;
+  // 还有 pending 的 tool parts
+  const hasToolParts = lastAssistant.parts?.some(
+    (p) => p.type === "tool" || p.type === "tool_use" || p.type === "tool-call",
+  );
+  if (hasToolParts) return false;
+  // user 和 assistant 都必须有 id
+  if (!lastUser?.info?.id || !lastAssistant?.info?.id) return false;
+  // assistant 必须在 user 之后
+  return lastUser.info.id < lastAssistant.info.id;
+}
+
+/**
+ * 轮询子会话状态直到完成或超时
+ * @param abortSignal 框架提供的取消信号（tool 被强杀时触发）
+ * @returns null 表示正常完成，string 表示错误信息
+ */
+async function pollSubSession(
+  parentSessionID: string,
+  subSessionID: string,
+  abortSignal: AbortSignal,
+  timeoutMs: number = DEFAULT_POLL_TIMEOUT_MS,
+): Promise<string | null> {
+  if (!opencodeClient) return "错误: OpenCode client 未初始化";
+
+  const startTime = Date.now();
+  let pollCount = 0;
+
+  while (Date.now() - startTime < timeoutMs) {
+    // 检查框架是否取消了当前 tool 调用（用户取消/强杀时 abortSignal 会触发）
+    // 优雅降级：先尝试获取消息，如果子会话恰好已完成，不中断
+    if (abortSignal.aborted) {
+      try {
+        const finalMessages = await fetchSessionMessages(subSessionID);
+        if (isSessionComplete(finalMessages)) {
+          debugLog(`delegate_analysis: 取消信号已触发但子会话已完成，正常返回`, parentSessionID);
+          return null;
+        }
+      } catch (e) {
+        debugLog(`delegate_analysis: 取消后获取消息失败，继续中断 subSession=${subSessionID}`, parentSessionID);
+      }
+      debugLog(`delegate_analysis: 框架已取消 tool 调用，终止轮询`, parentSessionID);
+      await abortSubSession(subSessionID, "tool_aborted");
+      return "错误: 父会话已取消当前操作，子任务被终止";
+    }
+
+    await sleep(POLL_INTERVAL_MS);
+    pollCount++;
+
+    // 查询子会话状态
+    let statusResult: { data?: Record<string, { type: string }> };
+    try {
+      statusResult = await opencodeClient.session.status();
+    } catch (e) {
+      debugLog(`delegate_analysis: 查询状态失败，重试 subSession=${subSessionID}`, parentSessionID);
+      continue;
+    }
+
+    const allStatuses = statusResult.data ?? {};
+    const sessionStatus = allStatuses[subSessionID];
+
+    // 每 10 次轮询记录一次日志（避免日志膨胀）
+    if (pollCount % 10 === 0) {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      debugLog(
+        `delegate_analysis: 轮询中 pollCount=${pollCount} elapsed=${elapsed}s status=${sessionStatus?.type ?? "not_found"}`,
+        parentSessionID,
+      );
+    }
+
+    // 状态不是 idle → 继续等待
+    if (sessionStatus && sessionStatus.type !== "idle") {
+      continue;
+    }
+
+    // 状态为 idle 或不在 status 中，检查消息确认是否完成
+    let messages: SessionMessage[];
+    try {
+      messages = await fetchSessionMessages(subSessionID);
+    } catch (e) {
+      debugLog(`delegate_analysis: 获取消息失败，重试 subSession=${subSessionID}`, parentSessionID);
+      continue;
+    }
+
+    if (isSessionComplete(messages)) {
+      debugLog(`delegate_analysis: 子会话完成 subSession=${subSessionID} pollCount=${pollCount}`, parentSessionID);
+      return null; // 正常完成
+    }
+  }
+
+  // 超时
+  debugLog(`delegate_analysis: 轮询超时 subSession=${subSessionID} timeout=${timeoutMs}ms`, parentSessionID);
+  await abortSubSession(subSessionID, "poll_timeout");
+  return `错误: 子 Agent 执行超时（${Math.floor(timeoutMs / 60000)} 分钟），已终止。\n子会话 ID: ${subSessionID}`;
+}
+
+/**
+ * 中止子会话
+ */
+async function abortSubSession(subSessionID: string, reason: string): Promise<void> {
+  if (!opencodeClient) return;
+  debugLog(`delegate_analysis: 中止子会话 subSession=${subSessionID} reason=${reason}`);
+  try {
+    await opencodeClient.session.abort({ path: { id: subSessionID } });
+  } catch (e) {
+    debugLog(`delegate_analysis: 中止子会话失败 subSession=${subSessionID} error=${e}`);
+  }
+}
+
+/**
+ * 从子会话消息中提取最后一个 assistant 的文本输出
+ */
+async function fetchSubSessionResult(subSessionID: string, subTaskDir: string): Promise<string> {
+  if (!opencodeClient) return "错误: OpenCode client 未初始化";
+
+  try {
+    const messages = await fetchSessionMessages(subSessionID);
+
+    // 按 time.created 降序排列 assistant 消息，找到有 text content 的
+    const assistantMessages = messages
+      .filter((m) => m.info?.role === "assistant")
+      .sort((a, b) => (b.info?.time?.created ?? 0) - (a.info?.time?.created ?? 0));
+
+    for (const msg of assistantMessages) {
+      // 匹配 text 和 reasoning 类型（思考模式输出在 reasoning parts 中）
+      const textParts = msg.parts?.filter((p) => (p.type === "text" || p.type === "reasoning") && p.text) ?? [];
+      const content = textParts.map((p) => p.text!).join("\n");
+      if (content.trim()) return content;
+    }
+
+    return `子 Agent 已完成执行，但未返回文本结果。\n详细报告: ${subTaskDir}/report.md`;
+  } catch (e) {
+    return `错误: 读取子会话结果失败 - ${e}`;
+  }
 }
 
 // ─── session 管理 ──────────────────────────────────────────────────────
@@ -497,6 +790,35 @@ let opencodeClient: {
       };
     }) => Promise<{
       data?: { parts?: Array<{ type: string; text?: string }> };
+      error?: unknown;
+    }>;
+    promptAsync: (options: {
+      path: { id: string };
+      body: {
+        agent?: string;
+        system?: string;
+        parts: Array<{ type: string; text?: string }>;
+      };
+    }) => Promise<{
+      data?: unknown;
+      error?: unknown;
+    }>;
+    status: () => Promise<{
+      data?: Record<string, { type: string }>;
+      error?: unknown;
+    }>;
+    messages: (options: {
+      path: { id: string };
+    }) => Promise<{
+      data?: Array<{
+        info: { role: string; finish?: string; id: string; time?: { created: number } };
+        parts?: Array<{ type: string; text?: string }>;
+      }>;
+      error?: unknown;
+    }>;
+    abort: (options: {
+      path: { id: string };
+    }) => Promise<{
       error?: unknown;
     }>;
   };
@@ -679,6 +1001,78 @@ async function requireSessionWithPrimary(
   return undefined;
 }
 
+// ─── 时间线日志 ──────────────────────────────────────────────────────
+//
+// 记录工具执行和 session 事件的时间线，供事后复盘分析。
+// 内存 buffer → 文件 flush 策略，避免每次事件都写磁盘。
+
+type TimelineEventType = "tool.before" | "tool.after" | "session.status" | "session.error" | "heartbeat";
+
+interface TimelineEvent {
+  timestamp: number;
+  type: TimelineEventType;
+  tool?: string;
+  detail?: string;
+  duration?: number;
+}
+
+const MAX_TIMELINE_BUFFER = 500;
+const timelineBuffers = new Map<string, TimelineEvent[]>();
+
+// 工具开始执行时间戳（tool.execute.before → tool.execute.after 配对计算耗时）
+const toolStartTimes = new Map<string, number>();
+
+function formatTimelineEntry(event: TimelineEvent): string {
+  const date = new Date(event.timestamp);
+  const ts = date.toLocaleString("zh-CN", { hour12: false });
+  const obj: Record<string, unknown> = {
+    ts: event.timestamp,
+    type: event.type,
+  };
+  if (event.tool) obj.tool = event.tool;
+  if (event.detail) obj.detail = event.detail;
+  if (event.duration !== undefined) obj.duration = event.duration;
+  return `[${ts}] ${JSON.stringify(obj)}`;
+}
+
+function flushTimeline(sessionID: string): void {
+  const buffer = timelineBuffers.get(sessionID);
+  if (!buffer || buffer.length === 0) return;
+
+  const taskDir = getTaskDir(sessionID);
+  const logFile = taskDir
+    ? join(taskDir, "logs", "timeline.log")
+    : join(LOGS_DIR, `timeline-${sessionID}.log`);
+
+  try {
+    const lines = buffer.map(formatTimelineEntry).join("\n") + "\n";
+    mkdirSync(dirname(logFile), { recursive: true });
+    writeFileSync(logFile, lines, { flag: "a" });
+  } catch (e) {
+    debugLog(`flushTimeline failed: ${e}`, sessionID);
+  }
+
+  buffer.length = 0;
+}
+
+function recordTimeline(
+  sessionID: string,
+  event: TimelineEvent,
+  flush = false,
+): void {
+  let buffer = timelineBuffers.get(sessionID);
+  if (!buffer) {
+    buffer = [];
+    timelineBuffers.set(sessionID, buffer);
+  }
+  buffer.push(event);
+
+  // buffer 满时自动 flush
+  if (buffer.length >= MAX_TIMELINE_BUFFER || flush) {
+    flushTimeline(sessionID);
+  }
+}
+
 export const SecurityAnalysisPlugin: Plugin = async (input) => {
   const { client, directory } = input;
   opencodeClient = client;
@@ -697,6 +1091,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
   debugLog(`  config exists: ${existsSync(CONFIG_FILE)}`);
   debugLog(`  env_cache exists: ${existsSync(ENV_CACHE_FILE)}`);
   debugLog(`  opencodeClient: ${!!opencodeClient}`);
+  debugLog(`  PYTHON_CMD: ${PYTHON_CMD}`);
 
   // 写心跳文件，供 agent 检测 Plugin 是否正常加载
   const heartbeatFile = join(DATA_DIR, ".plugin-heartbeat");
@@ -716,7 +1111,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
     // ─── 自定义工具 ──────────────────────────────────────────────────
     //
     // delegate_analysis: Coordinator 用此工具分发任务到专业 Agent
-    // 创建子会话 → 注入 system → 同步等待完成 → 返回摘要
+    // 创建子会话 → promptAsync 异步发送 → 轮询状态 → 返回摘要
     tool: {
       delegate_analysis: tool({
         description: `将分析任务分发到专业安全分析 Agent。
@@ -730,9 +1125,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 1. 创建子会话，指定目标 Agent
 2. Agent 在父任务目录的子目录中工作
 3. Agent 完成后返回结构化摘要
-4. 详细报告写入磁盘: parent_task_dir/subdir_name/report.md
-
-同步执行: 等待子 Agent 完成后才返回结果。`,
+4. 详细报告写入磁盘: parent_task_dir/subdir_name/report.md`,
 
         args: {
           target_agent: tool.schema.string().describe("目标 Agent: binary-analysis, mobile-analysis, web-analysis"),
@@ -779,7 +1172,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
                 parentID: context.sessionID,
                 title: `${description || subdir_name}: ${target_agent} 子任务`,
                 // 禁止子 Agent 使用 question 工具提问用户
-                // （子 Agent 在同步模式下运行，提问会阻塞且让用户困惑）
+                // （子 Agent 在后台执行，提问会阻塞且让用户困惑）
                 permission: [{ permission: "question", action: "deny", pattern: "*" }],
               },
               query: { directory: context.directory },
@@ -820,9 +1213,9 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
             return `错误: 创建子会话异常 - ${e}`;
           }
 
-          // 5. 发送任务（同步阻塞，等待子 Agent 完成全部工作）
+          // 5. 异步发送任务（promptAsync 立即返回，不阻塞 tool execute）
           try {
-            const promptResult = await opencodeClient.session.prompt({
+            const promptResult = await opencodeClient.session.promptAsync({
               path: { id: subSessionID },
               body: {
                 agent: target_agent,
@@ -832,26 +1225,22 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
             });
 
             if (promptResult.error) {
-              return `错误: 子 Agent 执行失败 - ${JSON.stringify(promptResult.error)}`;
+              await abortSubSession(subSessionID, "prompt_failed");
+              return `错误: 发送任务失败 - ${JSON.stringify(promptResult.error)}`;
             }
 
-            // 6. 从响应提取文本
-            const data = promptResult.data as { parts?: Array<{ type: string; text?: string }> } | undefined;
-            if (data?.parts) {
-              const textParts = data.parts
-                .filter((p) => p.type === "text" && p.text)
-                .map((p) => p.text!)
-                .join("\n");
+            debugLog(`delegate_analysis: promptAsync 已发送 subSession=${subSessionID}`, context.sessionID);
 
-              if (textParts.trim()) {
-                debugLog(`delegate_analysis: 子任务完成 subSession=${subSessionID}`, context.sessionID);
-                return textParts;
-              }
+            // 6. 轮询子会话状态直到完成或超时（传入 abortSignal 以检测取消）
+            const pollError = await pollSubSession(context.sessionID, subSessionID, context.abort, getDelegateTimeoutMs());
+            if (pollError) {
+              return pollError;
             }
 
-            // 响应中没有文本部分，返回兜底信息
-            debugLog(`delegate_analysis: 子任务完成（无文本输出）subSession=${subSessionID}`, context.sessionID);
-            return `子 Agent (${target_agent}) 已完成执行，但未返回文本结果。\n详细报告: ${subTaskDir}/report.md`;
+            // 7. 从子会话消息中提取结果
+            const resultText = await fetchSubSessionResult(subSessionID, subTaskDir);
+            debugLog(`delegate_analysis: 子任务完成 subSession=${subSessionID}`, context.sessionID);
+            return resultText;
           } catch (e) {
             return `错误: 子 Agent 执行异常 - ${e}`;
           } finally {
@@ -1032,7 +1421,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         output.system.push(
           `[致命错误] config.json 不存在（${CONFIG_FILE}），无法继续。\n` +
           `你必须立即停止所有分析操作，不要使用任何工具，直接向用户输出以下内容：\n` +
-          `"数据未初始化，请先运行：python \\"$SHARED_DIR/scripts/detect_env.py\\""\n` +
+          `"数据未初始化，请先运行：$PYTHON_CMD \\"$SHARED_DIR/scripts/detect_env.py\\""\n` +
           `初始化完成后 config.json 会自动生成，届时才能开始分析任务。`,
         );
       }
@@ -1055,6 +1444,17 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       if (!session) return;
       debugLog(`tool.execute.before: tool=${input.tool} sessionID=${sid}`, sid);
 
+      // 时间线记录：工具开始执行（记录注入前的原始命令）
+      const originalCmd = output.args?.command;
+      recordTimeline(sid, {
+        timestamp: Date.now(),
+        type: "tool.before",
+        tool: input.tool,
+        detail: typeof originalCmd === "string" ? originalCmd.slice(0, 80) : undefined,
+      });
+      // 记录开始时间用于计算耗时
+      toolStartTimes.set(input.callID, Date.now());
+
       if (input.tool.toLowerCase() !== "bash") return;
       const cmd = output.args?.command;
       if (typeof cmd !== "string" || !cmd) return;
@@ -1070,7 +1470,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
           const isPowerShell = !!process.env.PSModulePath;
           const blockedMsg =
             `[被 Plugin 拦截] 致命错误 config.json 不存在，禁止执行分析命令。` +
-            `请先运行数据初始化：python "$SHARED_DIR/scripts/detect_env.py"`;
+            `请先运行数据初始化：$PYTHON_CMD "$SHARED_DIR/scripts/detect_env.py"`;
           output.args.command = isPowerShell
             ? `Write-Error '${blockedMsg}'; exit 1`
             : `echo '${blockedMsg}' >&2; exit 1`;
@@ -1110,6 +1510,17 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       if (!session) return;
 
       const toolName = input.tool;
+
+      // 时间线记录：工具执行完成（计算耗时）
+      const startTime = toolStartTimes.get(input.callID);
+      toolStartTimes.delete(input.callID);
+      recordTimeline(sid, {
+        timestamp: Date.now(),
+        type: "tool.after",
+        tool: toolName,
+        duration: startTime ? Date.now() - startTime : undefined,
+      });
+
       // 对自定义工具记录完整结果，对内置工具只记录调用
       if (toolName === "delegate_analysis") {
         const result = typeof output.output === "string"
@@ -1157,6 +1568,39 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       // 压缩完成：仅记录日志（状态恢复由 compacting hook 在压缩前注入）
       if (event.type === "session.compacted") {
         debugLog(`event: session.compacted id=${sessionID}`, sessionID);
+      }
+
+      // 时间线记录：session 状态变化和错误
+      if (sessionID && PRIMARY_AGENTS.includes(
+        sessions.get(sessionID)?.primaryAgent || ""
+      )) {
+        if (event.type === "session.status" || event.type === "session.idle") {
+          recordTimeline(sessionID, {
+            timestamp: Date.now(),
+            type: "session.status",
+            detail: event.type,
+          });
+          // session idle 时 flush 时间线 buffer
+          if (event.type === "session.idle") {
+            flushTimeline(sessionID);
+          }
+        }
+
+        if (event.type === "session.error" && props.error) {
+          recordTimeline(sessionID, {
+            timestamp: Date.now(),
+            type: "session.error",
+            detail: String(props.error).slice(0, 80),
+          });
+        }
+
+        // 心跳：Shell 有输出更新时记录（表示有活跃的工具执行）
+        if (event.type === "message.part.updated" && props.part?.type === "text") {
+          recordTimeline(sessionID, {
+            timestamp: Date.now(),
+            type: "heartbeat",
+          });
+        }
       }
     },
   };

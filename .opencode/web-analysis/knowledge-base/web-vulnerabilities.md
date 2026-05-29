@@ -121,6 +121,60 @@
 - 注入额外的响应头（CSP / CORS）
 - HTTP 请求走私（配合反向代理差异）
 
+### 1.5 iframe Sandbox 逃逸
+
+**场景**：页面使用 `<iframe sandbox="...">` 加载用户可控内容，sandbox 限制了 iframe 内 JS 的能力。目标是让恶意 JS 逃出 sandbox 限制，获得完整的浏览器 API 访问权限。
+
+**sandbox 权限标志含义**：
+
+| 标志 | 允许的行为 | 缺失后果 |
+|------|-----------|---------|
+| `allow-scripts` | 执行 JS | JS 无法运行（最基本，通常存在） |
+| `allow-same-origin` | 保留原始 origin | origin 变为 `null`，无法访问 Cookie/localStorage/同源页面 |
+| `allow-popups` | `window.open()` | 无法打开新窗口 |
+| `allow-popups-to-escape-sandbox` | 新窗口不受 sandbox 限制 | 新窗口也继承 sandbox 限制 |
+| `allow-forms` | 提交表单 | 表单提交被阻止 |
+
+**关键认知**：`allow-same-origin` 和 `allow-scripts` 同时存在时，iframe 内 JS 可以移除 sandbox 属性（通过 `frameElement.removeAttribute('sandbox')`），等于没有 sandbox。所以安全配置通常**只给 `allow-scripts`**，这导致 origin 变为 `null`。
+
+#### 逃逸技术 1：blob URL 作为顶级页面加载
+
+**原理**：在 sandboxed iframe 中创建 blob URL，通过 `window.open` 或重定向使 blob URL 成为顶级页面。blob URL 脱离 iframe 后，sandbox 限制消失。
+
+**blob URL 的 origin 继承**：`blob:` URL 继承创建者的 origin。在 sandboxed iframe 中（origin 为 `null`），创建的 blob URL 的 origin 也是 `null`。但如果应用通过其他方式（如 postMessage）将非 null origin 的 blob URL 传递给 iframe，该 blob URL 具有完整的 origin（详见第 7 节"开放重定向"中的 blob URL origin 继承机制）。
+
+**利用步骤**：
+1. 在 iframe 中构造恶意 JS payload
+2. JS 创建 blob URL（`URL.createObjectURL(new Blob([payload], {type: 'text/html'}))`）
+3. 通过 `window.open(blobUrl)` 或 `location.href = blobUrl` 使 blob URL 成为顶级页面
+4. 新页面不受 sandbox 限制，可执行完整 JS（访问 Cookie/localStorage 等）
+
+**条件**：sandbox 包含 `allow-popups`（允许 `window.open`）或存在重定向到 blob URL 的路径。
+
+#### 逃逸技术 2：postMessage 传递 blob URL
+
+**原理**：iframe 中的 JS 通过 `postMessage` 将 blob URL 传给外部页面，外部页面构造重定向使 blob URL 成为顶级页面。本节只描述逃逸的利用方式，blob URL 为什么能通过 origin 检查的原理在第 7 节。
+
+**利用步骤**：
+1. 在 sandboxed iframe 中构造恶意 JS
+2. JS 将 payload 编码为 blob URL
+3. 通过 `window.parent.postMessage(blobUrl, '*')` 发送到父页面
+4. 父页面接收后，通过 `location.href = blobUrl` 重定向（或构造 `window.open`）
+5. blob URL 作为顶级页面加载，sandbox 消失
+
+**识别方法**：
+1. 搜索源码中 `<iframe sandbox` 看权限标志组合
+2. 检查 `allow-popups` 和 `allow-same-origin` 的存在情况
+3. 查看父页面是否有 `postMessage` 监听器 + 重定向逻辑
+4. 检查应用是否有 SSO/OAuth 回调中的 `return`/`redirect` 参数（可与 blob URL 组合）
+
+**检查清单**：
+- [ ] sandbox 标志中是否包含 `allow-scripts`（无则无法执行 JS，无逃逸可能）
+- [ ] 是否有 `allow-popups`（逃逸技术 1 必要条件）
+- [ ] 是否有 `allow-same-origin`（同时有 `allow-scripts` 则等于无 sandbox）
+- [ ] 父页面是否有 postMessage → location 重定向链路
+- [ ] 应用是否有开放重定向（与 blob URL 组合利用，见第 7 节）
+
 ---
 
 ## 2. 认证/会话类
@@ -243,6 +297,51 @@
 - 时间窗口内的双重使用
 - TOCTOU（检查时间/使用时间不一致）
 
+### 1.6 Middleware CT 覆盖漏洞
+
+**场景**：框架中间件（如 Next.js middleware）允许请求中的 `Content-Type` 头覆盖响应的 Content-Type。
+
+**漏洞模式**：
+
+```typescript
+// 危险：middleware 允许请求 CT 覆盖响应 CT
+const contentType = request.headers.get('content-type');
+if (contentType) {
+  response.headers.set('Content-Type', processCT(contentType));
+}
+```
+
+**利用条件**：
+1. 应用有中间件处理 CT
+2. 中间件允许 `text/html` 作为覆盖值
+3. 响应内容中存在未转义的用户输入（如 nonce 反射）
+
+**利用步骤**：
+1. 发送请求带 `Content-Type: text/html` 头
+2. 同时利用反射点注入 XSS（如通过 `x-nonce` 头注入 `<script>` 标签）
+3. 响应 CT 被覆盖为 `text/html`
+4. 浏览器将响应内容（可能是 flight data 等非 HTML 格式）当 HTML 解析
+5. 未转义的内容中的 `<script>` 标签被执行
+
+**案例**：futurejs 中 Next.js middleware 允许 CT 覆盖，flight data 中未转义的 nonce 值被浏览器当 HTML 解析执行。
+
+**安全写法**：
+
+```typescript
+// 安全：白名单验证，禁止覆盖为 text/html
+const allowedCTs = ['application/json', 'text/plain'];
+const contentType = request.headers.get('content-type');
+if (contentType && allowedCTs.includes(contentType.split(';')[0].trim())) {
+  response.headers.set('Content-Type', contentType);
+}
+```
+
+**检查清单**：
+- [ ] 搜索 middleware 中的 `Content-Type` 处理逻辑
+- [ ] 是否允许请求头覆盖响应 CT？
+- [ ] 是否验证 CT 值的白名单？
+- [ ] 响应内容中是否有未转义的用户输入？
+
 ---
 
 ## 6. 反向代理/基础设施类
@@ -271,3 +370,133 @@
 - 密码重置链接中毒
 - 缓存投毒（Host 是缓存键的一部分）
 - SSRF（Host 被用于反向代理上游请求）
+
+---
+
+## 7. 开放重定向与 URL 验证绕过
+
+**场景**：SSO/OAuth 回调中的 `return`/`redirect` 参数、登录后的跳转 URL 等，服务端通常做 origin 检查，只允许同域跳转。
+
+> SSO 审计的完整攻击编排流程（含 iframe sandbox 逃逸 + blob URL 组合利用），见 `$AGENT_DIR/knowledge-base/attack-orchestration.md` §4。
+
+### 典型验证逻辑
+
+```javascript
+// 服务端验证回调 URL 的 origin
+const candidate = req.query.return;
+if (new URL(candidate).origin === window.location.origin) {
+  redirect(candidate);  // 安全？不一定
+}
+```
+
+### blob URL 绕过（核心）
+
+**关键特性**：`new URL('blob:https://example.com/uuid-1234').origin` 返回 `'https://example.com'`。
+
+blob URL 继承创建者的 origin。当页面 `https://example.com` 上执行 `URL.createObjectURL(blob)` 创建的 blob URL，其 origin 为 `https://example.com`，能通过同域检查。
+
+**利用步骤**：
+1. 在目标域上找到可注入 JS 的位置（XSS/Markdown 注入等）
+2. 构造恶意页面内容，生成 blob URL
+3. 将 blob URL 作为 `return` 参数传递给 SSO/OAuth 回调
+4. 服务端验证 `new URL(blobUrl).origin === 'https://example.com'` → **通过**
+5. 用户被重定向到 blob URL，恶意 JS 在目标域的 origin 下执行
+
+**与其他漏洞的组合**（与第 1.5 节 sandbox 逃逸的关系）：
+- 1.5 节的逃逸技术需要让 blob URL 成为顶级页面来脱离 sandbox
+- 本节的开放重定向是"让 blob URL 成为顶级页面"的一种手段
+- blob URL 继承创建者 origin 的特性是两者共同的基础
+
+### 其他绕过方式
+
+| 方式 | URL 示例 | `new URL().origin` | 说明 |
+|------|---------|-------------------|------|
+| `javascript:` | `javascript:alert(1)` | `"null"` | 仅在 `=== null` 比较时可能绕过 |
+| `data:` | `data:text/html,<script>alert(1)</script>` | `"null"` | 同上 |
+| `@` 混淆 | `https://evil.com@good.com/` | `"https://good.com"` | origin 是 `@` 后的域名 |
+| 协议降级 | `http://good.com.evil.com/` | `"http://good.com.evil.com"` | 依赖子域名控制 |
+
+### 识别方法
+
+1. 搜索源码中的 `redirect`、`return`、`callback`、`next` 参数
+2. 搜索 `window.location.assign`、`window.location.replace`、`location.href =`
+3. 搜索 `new URL(candidate).origin` 检查逻辑
+4. 检查 SSO/OAuth 登录流程的回调 URL 处理
+
+### 检查清单
+
+- [ ] 找到所有用户可控的跳转 URL 参数
+- [ ] 验证逻辑是否只检查 `origin`（blob URL 可绕过）
+- [ ] 是否允许 `javascript:` 或 `data:` 协议
+- [ ] 跳转目标是否作为顶级页面加载（sandbox 逃逸的利用路径）
+- [ ] **协议白名单**：验证逻辑是否要求协议为 `http:` 或 `https:`（拒绝 `blob:`）
+- [ ] **hash 参数**：回调 URL 是否也从 URL hash（`#return=xxx`）中读取（额外的绕过点）
+
+---
+
+## 8. Markdown 解析器安全测试方法论
+
+### 8.1 系统化测试流程
+
+```
+阶段 1：基础探测
+  ├── 提交纯文本 → 确认渲染正常
+  ├── 提交标准 Markdown → 确认语法支持
+  └── 检查 HTML 混合模式：提交 <b>test</b> → 是否被渲染为加粗？
+
+阶段 2：HTML 混合模式测试（如果开启）
+  ├── <img src=x onerror=alert(1)>  → 直接 XSS
+  ├── <script>alert(1)</script>     → 直接 XSS
+  └── 如果这里能 XSS，不需要继续测试
+
+阶段 3：标准语法边界测试
+  ├── 图片 alt 文本注入：![alt"><script>alert(1)</script>](url)
+  ├── 链接 title 注入：[link](url "title"><script>alert(1)</script>)
+  ├── 代码块逃逸：```代码块内注入```
+  └── 检查每个语法元素是否正确转义特殊字符
+
+阶段 4：嵌套/非标准结构测试（重点！）
+  ├── 嵌套方括号：![[x](url1)](url2 extra_attrs)
+  ├── 未闭合的方括号/圆括号
+  ├── URL 中的空格和特殊字符
+  └── 解析器的边界处理通常是弱点
+
+阶段 5：确认 CSP 保护
+  ├── 响应中是否有 Content-Security-Policy 头？
+  ├── CSP 是否阻止内联脚本和内联事件处理器？
+  └── 如果有 CSP，需要结合 CSP 绕过技术
+```
+
+### 8.2 常见解析器漏洞模式
+
+| 漏洞 | Payload 示例 | 原因 |
+|------|-------------|------|
+| URL 属性注入 | `![[x](url1)](url2 onerror=alert(1) x=)` | 解析器把 URL 后的内容当作 HTML 属性 |
+| alt 属性注入 | `!["><script>alert(1)</script>](url)` | alt 文本未转义 `"` 和 `<` |
+| href 属性注入 | `[link](javascript:alert(1))` | URL 未过滤 `javascript:` 协议 |
+| HTML 混合 | `<img src=x onerror=alert(1)>` | 解析器直接透传 HTML |
+
+### 8.3 PHP 自定义 Markdown 解析器特有问题
+
+自定义 Markdown 解析器（非标准库）通常有更多边界问题：
+
+```php
+// 典型的有漏洞模式：先全局 htmlspecialchars，再用正则替换
+$text = htmlspecialchars($text, ENT_QUOTES, 'UTF-8');  // 转义所有 HTML
+$text = preg_replace_callback('/!\[(.*?)\]\((.*?)\)/', function($m) {
+    // 正则匹配后再处理，可能引入新的注入点
+    $url = safe_markdown_url(htmlspecialchars_decode($m[2])); // 解码后再处理
+    return '<img src="' . $url . '" ...>';
+}, $text);
+```
+
+**关键问题**：`htmlspecialchars_decode` 撤销了之前的转义，然后在正则替换中可能产生新的注入机会。
+
+### 8.4 检查清单
+
+- [ ] 确认 Markdown 渲染功能存在
+- [ ] 测试 HTML 混合模式是否开启
+- [ ] 测试标准语法中的边界情况
+- [ ] **重点测试嵌套/非标准结构**（解析器的最大弱点）
+- [ ] 确认渲染后页面的 CSP 保护
+- [ ] 如果是自定义解析器，检查源码中是否有 decode→reprocess 模式

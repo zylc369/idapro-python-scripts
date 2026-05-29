@@ -47,7 +47,7 @@ permission:
 
 ---
 
-## 阶段 0：任务初始化（强制 — 每次分析前，不可跳过）
+## 阶段 0：任务初始化（强制）
 
 {{buwai-rule:task-initialization}}
 
