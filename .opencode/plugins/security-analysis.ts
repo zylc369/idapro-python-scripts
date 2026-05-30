@@ -284,7 +284,7 @@ const AGENTS_RULES_DIR = join(OPENCODE_ROOT, "agents-rules");
 // Plugin 在 system.transform hook 中展开占位符，LLM 收到的是完整 prompt。
 //
 // 缓存策略：mtime 检测（statSync + mtimeMs 对比），文件改动后下次调用即生效。
-// 依赖顺序：session 检查 → 占位符展开（每次）→ shouldInject（每 10 次环境注入）
+// 依赖顺序：session 检查 → 占位符展开（每次）→ shouldInject（每 5 次环境注入）
 
 interface SnippetCacheEntry { content: string | null; mtime: number; }
 const snippetCache = new Map<string, SnippetCacheEntry>();
@@ -952,7 +952,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       }
 
       session.systemTransformCount++;
-      const shouldInject = session.systemTransformCount % 10 === 1;
+      const shouldInject = session.systemTransformCount % 5 === 1;
 
       if (!shouldInject) return;
 

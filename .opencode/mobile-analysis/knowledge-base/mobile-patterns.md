@@ -106,6 +106,126 @@ Java.perform(function() {
 });
 ```
 
+### Native 层 Root 检测绕过
+
+部分应用不仅通过 Java API 检测 Root，还通过 native 层的系统调用检测。Java 层 Hook 不够用，需要同时 Hook native 函数。
+
+#### 检测的 native 系统调用
+
+| 系统调用 | 用途 | 参数 |
+|---------|------|------|
+| `access(path, F_OK)` | 检查文件是否存在 | `access("/system/bin/su", 0)` |
+| `stat(path, &buf)` | 获取文件信息 | `stat("/sbin/magisk", &buf)` |
+| `openat(dirfd, path, flags)` | 尝试打开文件 | `openat(AT_FDCWD, "/sbin/su", O_RDONLY)` |
+| `Runtime.exec()` 多重载 | 执行 shell 命令 | `exec("which su")`, `exec(new String[]{"which", "su"})` |
+
+#### 完整绕过脚本
+
+```javascript
+// 同时覆盖 Java 层 + Native 层的 Root 检测
+Java.perform(function() {
+    // === Java 层 ===
+    
+    // 1. File.exists() — 隐藏路径
+    var File = Java.use("java.io.File");
+    File.exists.implementation = function() {
+        var path = this.getAbsolutePath();
+        var blocked = ["/sbin/su", "/system/bin/su", "/system/xbin/su",
+                       "/data/local/bin/su", "/system/app/Superuser.apk",
+                       "/sbin/magisk"];
+        if (blocked.indexOf(path) !== -1) {
+            console.log("[*] Root check bypassed (File.exists): " + path);
+            return false;
+        }
+        return this.exists();
+    };
+    
+    // 2. Runtime.exec() — 拦截命令执行（注意多重载）
+    var Runtime = Java.use("java.lang.Runtime");
+    Runtime.exec.overload('[Ljava.lang.String;', '[Ljava.lang.String;', 'java.io.File').implementation = function(cmdArray, envp, dir) {
+        var cmd = cmdArray[0];
+        if (cmd.indexOf("su") !== -1 || cmd.indexOf("magisk") !== -1) {
+            console.log("[*] Root check bypassed (exec array): " + cmd);
+            throw Java.use("java.io.IOException").$new("Permission denied");
+        }
+        return this.exec(cmdArray, envp, dir);
+    };
+    Runtime.exec.overload('java.lang.String').implementation = function(cmd) {
+        if (cmd.indexOf("su") !== -1 || cmd.indexOf("magisk") !== -1 || cmd.indexOf("which") !== -1) {
+            console.log("[*] Root check bypassed (exec string): " + cmd);
+            throw Java.use("java.io.IOException").$new("Permission denied");
+        }
+        return this.exec(cmd);
+    };
+});
+
+// === Native 层 ===
+
+var libc = Process.getModuleByName("libc.so");
+
+// 3. Hook access() — 拦截文件存在性检查
+Interceptor.attach(libc.getExportByName("access"), {
+    onEnter: function(args) {
+        var path = args[0].readUtf8String();
+        var blocked = ["/system/bin/su", "/system/xbin/su", "/sbin/su",
+                       "/sbin/magisk", "/system/app/Superuser.apk"];
+        if (blocked.indexOf(path) !== -1) {
+            console.log("[*] Root check bypassed (access): " + path);
+            this.isBlocked = true;
+        }
+    },
+    onLeave: function(retval) {
+        if (this.isBlocked) {
+            retval.replace(-1);  // ENOENT
+        }
+    }
+});
+
+// 4. Hook stat() — 拦截文件信息获取
+Interceptor.attach(libc.getExportByName("stat"), {
+    onEnter: function(args) {
+        var path = args[0].readUtf8String();
+        var blocked = ["/system/bin/su", "/system/xbin/su", "/sbin/su",
+                       "/sbin/magisk"];
+        if (blocked.indexOf(path) !== -1) {
+            console.log("[*] Root check bypassed (stat): " + path);
+            this.isBlocked = true;
+        }
+    },
+    onLeave: function(retval) {
+        if (this.isBlocked) {
+            retval.replace(-1);  // 文件不存在
+        }
+    }
+});
+
+// 5. Hook openat() — 拦截文件打开
+Interceptor.attach(libc.getExportByName("openat"), {
+    onEnter: function(args) {
+        // args[1] 是路径（args[0] 是 dirfd）
+        var path = args[1].readUtf8String();
+        var blocked = ["/system/bin/su", "/system/xbin/su", "/sbin/su",
+                       "/sbin/magisk"];
+        if (blocked.indexOf(path) !== -1) {
+            console.log("[*] Root check bypassed (openat): " + path);
+            this.isBlocked = true;
+        }
+    },
+    onLeave: function(retval) {
+        if (this.isBlocked) {
+            retval.replace(-1);  // 打开失败
+        }
+    }
+});
+
+console.log("[+] Root bypass loaded (Java + Native layers)");
+```
+
+**注意事项**：
+- `Runtime.exec()` 有多个重载（String/String数组+envp+dir），需要分别 Hook
+- `openat` 的第一个参数是 `dirfd`（通常是 `AT_FDCWD = -100`），路径在第二个参数 `args[1]`
+- Hook 的 `onLeave` 中修改返回值比在 `onEnter` 中修改参数更可靠（不会影响其他调用路径）
+
 ### iOS 越狱检测
 
 | 检测方法 | 分析位置 |
