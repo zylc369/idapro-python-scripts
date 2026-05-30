@@ -219,20 +219,7 @@ class LLMSimulator:
         )
         elapsed = time.time() - start_time
 
-        # 自动提取结构化信息
-        extracted = ResponseParser.extract(result["content"])
-        if extract_patterns:
-            extracted.update(ResponseParser.extract_patterns(result["content"], extract_patterns))
-
-        qr = QueryResult(
-            raw_response=result["content"],
-            reasoning=result.get("reasoning_content"),
-            usage=result.get("usage"),
-            model=result.get("model", ""),
-            finish_reason=result.get("finish_reason", ""),
-            elapsed_seconds=round(elapsed, 2),
-            extracted_data=extracted,
-        )
+        qr = self._build_result(result, elapsed, extract_patterns)
 
         if self.output_dir:
             self._save_result(qr)
@@ -269,20 +256,7 @@ class LLMSimulator:
         )
         elapsed = time.time() - start_time
 
-        extracted = ResponseParser.extract(result["content"])
-        if extract_patterns:
-            extracted.update(ResponseParser.extract_patterns(result["content"], extract_patterns))
-
-        qr = QueryResult(
-            raw_response=result["content"],
-            reasoning=result.get("reasoning_content"),
-            usage=result.get("usage"),
-            model=result.get("model", ""),
-            finish_reason=result.get("finish_reason", ""),
-            elapsed_seconds=round(elapsed, 2),
-            extracted_data=extracted,
-        )
-        return qr
+        return self._build_result(result, elapsed, extract_patterns)
 
     def query_batch(
         self,
@@ -322,6 +296,26 @@ class LLMSimulator:
         path.write_text(
             json.dumps(result.to_dict(), ensure_ascii=False, indent=2),
             encoding="utf-8",
+        )
+
+    def _build_result(
+        self,
+        raw: Dict[str, Any],
+        elapsed: float,
+        extract_patterns: Optional[Dict[str, str]] = None,
+    ) -> QueryResult:
+        """从 API 响应构造 QueryResult（提取结构化信息）"""
+        extracted = ResponseParser.extract(raw["content"])
+        if extract_patterns:
+            extracted.update(ResponseParser.extract_patterns(raw["content"], extract_patterns))
+        return QueryResult(
+            raw_response=raw["content"],
+            reasoning=raw.get("reasoning_content"),
+            usage=raw.get("usage"),
+            model=raw.get("model", ""),
+            finish_reason=raw.get("finish_reason", ""),
+            elapsed_seconds=round(elapsed, 2),
+            extracted_data=extracted,
         )
 
 
