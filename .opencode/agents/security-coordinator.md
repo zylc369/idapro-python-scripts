@@ -41,6 +41,7 @@ permission:
 | `binary-analysis` | IDA Pro 二进制逆向 | .exe/.dll/.so 的逆向分析、算法还原、漏洞挖掘、壳检测 |
 | `mobile-analysis` | 移动应用分析 | APK/IPA 反编译、Java/Native 分析、设备交互、Frida Hook |
 | `web-analysis` | Web 安全分析 | URL/源码的漏洞审计、攻击链构造、框架安全、缓存投毒 |
+| `ai-security-analysis` | AI 安全分析 | LLM 应用的提示注入、越狱、数据泄露、对抗性输入 |
 
 ---
 

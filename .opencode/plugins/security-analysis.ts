@@ -28,6 +28,7 @@ const KEEP_SIZE = 2 * 1024 * 1024;
 const AGENT_BINARY_ANALYSIS = "binary-analysis";
 const AGENT_MOBILE_ANALYSIS = "mobile-analysis";
 const AGENT_WEB_ANALYSIS = "web-analysis";
+const AGENT_AI_SECURITY_ANALYSIS = "ai-security-analysis";
 const AGENT_SECURITY_ANALYSIS_EVOLVE = "security-analysis-evolve";
 const AGENT_SECURITY_COORDINATOR = "security-coordinator";
 
@@ -35,6 +36,7 @@ const PRIMARY_AGENTS = [
   AGENT_BINARY_ANALYSIS,
   AGENT_MOBILE_ANALYSIS,
   AGENT_WEB_ANALYSIS,
+  AGENT_AI_SECURITY_ANALYSIS,
   AGENT_SECURITY_ANALYSIS_EVOLVE,
   AGENT_SECURITY_COORDINATOR,
 ];
