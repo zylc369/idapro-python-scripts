@@ -260,3 +260,29 @@ $PYTHON_CMD "$PROJECT_ROOT/disassembler/frida_unpack.py" <目标二进制> -o "$
 | `read_data`（加壳数据区） | **允许** | 验证对算法的理解 |
 | `segments` | **允许** | 确定数据布局 |
 | `initial_analysis.py` | **允许** | 一键获取全部基础信息（含上述允许的查询） |
+
+---
+
+## VMProtect 内核驱动特殊处理
+
+### 识别特征
+
+- PE 段表中有异常名称的段（如 `.\a`、`.vmp0`），大小通常 4MB+
+- IDA 自动分析无限卡住（idat 进程 CPU 100% 不结束）
+- .text 段中只有少量跳板代码，真正的逻辑在 VMP 段中
+
+### 分析策略
+
+**不要尝试让 IDA 完整分析 VMP 段**。改用以下方法：
+
+1. **PE 文件常量搜索**：VMP 虚拟化了代码，但常量（IOCTL code、magic number、算法参数）以明文存在于 PE 文件中。用 `struct.pack` + `find()` 搜索
+2. **双机调试**：用 kd.exe 进行运行时反汇编和内存 dump。详见 `kernel-driver-analysis.md`
+3. **IAT 分析**：VMP 不隐藏导入表。通过导入的 API 推导功能（如 `ZwOpenEvent` → 事件通信）
+4. **.text 段跳板分析**：非 VMP 的 .text 段代码（DriverEntry、IOCTL 入口跳板）可以正常反汇编，提供调用链线索
+
+### 常见 VMP 段常量模式
+
+VMP 段中的关键代码通常按以下模式组织：
+- IOCTL 分发：连续的 `cmp edx, <IOCTL_CODE>` + `jz/jnz`
+- 算法常量：`xor edx, <MAGIC>` 直接可见
+- 方向编码/映射表：可能以查找表或即时计算形式存在
