@@ -38,5 +38,20 @@
     "output_format": "通过 send() 发送 DEX 二进制数据",
     "note": "仅用于 frida CLI（REPL 内置 Java bridge）。Python SDK 请使用 dex_dump.py",
     "requires_venv": false
+  },
+  {
+    "name": "mitm_proxy",
+    "description": "HTTPS MITM 代理 — 拦截并篡改 API JSON 响应字段。配合自签 CA + TrustBuiltinRoots SSL bypass 使用",
+    "file": "mitm_proxy.py",
+    "language": "python",
+    "runner": "$PYTHON_CMD",
+    "usage": "$PYTHON_CMD $AGENT_DIR/scripts/mitm_proxy.py --workdir <DIR> --target-host <HOST> --tamper-field <FIELD> --tamper-value <VALUE> [--gen-ca] [--listen-port 44300]",
+    "output_format": "HTTPS 代理日志（stdout），篡改后的 HTTP 响应返回给客户端",
+    "actions": {
+      "gen-ca": "生成自签 CA 密钥和证书（首次使用时执行一次）",
+      "proxy": "启动 HTTPS 代理（默认行为，需指定 --target-host）"
+    },
+    "note": "需要 openssl 命令行工具。CA 安装到设备后配合 Frida getaddrinfo+connect hook 使用。详见 $AGENT_DIR/knowledge-base/mitm-methodology.md §2.5 方案 D",
+    "requires_venv": false
   }
 ]
