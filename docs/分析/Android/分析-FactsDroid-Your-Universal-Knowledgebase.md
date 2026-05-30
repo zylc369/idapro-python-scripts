@@ -8,11 +8,11 @@ Wrapped in vibrant gradients and an intuitive layout, FactsDroid turns everyday 
 
 ## 安装包
 
-/Users/aserlili/Documents/Codes/idapro-python-scripts/examples/android/FactsDroid.apk
+examples/android/FactsDroid.apk
 
 ## 安装信息
 
-APK已经安装到了`emulator-5554	device`设备上。
+APK已经安装到了 `emulator-5554	device`设备上。
 
 ## Objective
 
