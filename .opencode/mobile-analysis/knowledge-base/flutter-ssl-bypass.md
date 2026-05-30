@@ -123,33 +123,31 @@ void* sub_XXXXX(void* dart_obj) {
 Hook native peer 提取器，在其 `onEnter` 中获取 peer 指针，然后用 `NativeFunction` 调用 `TrustBuiltinRoots`：
 
 ```javascript
-// Frida: 借鸡生蛋调用 TrustBuiltinRoots
-Java.perform(function() {
-    var libflutter = Process.getModuleByName("libflutter.so");
-    
-    // TrustBuiltinRoots 地址（从 IDA 确认）
-    var TrustBuiltinRoots = new NativeFunction(
-        libflutter.base.add(0xXXXXXX),  // 替换为实际偏移
-        'pointer',
-        ['pointer']
-    );
-    
-    // Hook native peer 提取器（sub_XXXXX）
-    var peerExtractor = libflutter.base.add(0xYYYYYY);  // 替换为实际偏移
-    Interceptor.attach(peerExtractor, {
-        onEnter: function(args) {
-            // args[0] 就是 native peer
-            var peer = args[0];
-            
-            // 调用 TrustBuiltinRoots(peer) 重新加载系统 CA
-            try {
-                TrustBuiltinRoots(peer);
-                console.log("[+] TrustBuiltinRoots called with peer: " + peer);
-            } catch (e) {
-                console.log("[-] TrustBuiltinRoots failed: " + e);
-            }
+// Frida: 借鸡生蛋调用 TrustBuiltinRoots（纯 native，不需要 Java.perform）
+var libflutter = Process.getModuleByName("libflutter.so");
+
+// TrustBuiltinRoots 地址（从 IDA 确认）
+var TrustBuiltinRoots = new NativeFunction(
+    libflutter.base.add(0xXXXXXX),  // 替换为实际偏移
+    'pointer',
+    ['pointer']
+);
+
+// Hook native peer 提取器（sub_XXXXX）
+var peerExtractor = libflutter.base.add(0xYYYYYY);  // 替换为实际偏移
+Interceptor.attach(peerExtractor, {
+    onEnter: function(args) {
+        // args[0] 就是 native peer
+        var peer = args[0];
+        
+        // 调用 TrustBuiltinRoots(peer) 重新加载系统 CA
+        try {
+            TrustBuiltinRoots(peer);
+            console.log("[+] TrustBuiltinRoots called with peer: " + peer);
+        } catch (e) {
+            console.log("[-] TrustBuiltinRoots failed: " + e);
         }
-    });
+    }
 });
 ```
 
@@ -262,6 +260,9 @@ Release 模式下 `TrustBuiltinRoots` 字符串可能被优化掉。替代方案
 // flutter_ssl_bypass.js — Flutter SSL Pinning Bypass
 // 使用方式: frida -U -f com.target.app -l flutter_ssl_bypass.js --no-pause
 //
+// 注意: TrustBuiltinRoots 是 native 函数，Interceptor 是 native API，
+//       不需要 Java.perform（纯 native 操作）
+//
 // 使用前必须修改:
 //   TRUST_BUILTIN_ROOTS_OFFSET — TrustBuiltinRoots 偏移（从 IDA 确认）
 //   PEER_EXTRACTOR_OFFSET — native peer 提取器偏移（从 IDA 确认）
@@ -269,29 +270,27 @@ Release 模式下 `TrustBuiltinRoots` 字符串可能被优化掉。替代方案
 var TRUST_BUILTIN_ROOTS_OFFSET = 0xXXXXXX;  // TODO: 从 IDA 确认
 var PEER_EXTRACTOR_OFFSET = 0xYYYYYY;        // TODO: 从 IDA 确认
 
-Java.perform(function() {
-    var libflutter = Process.getModuleByName("libflutter.so");
-    console.log("[*] libflutter base: " + libflutter.base);
-    
-    var TrustBuiltinRoots = new NativeFunction(
-        libflutter.base.add(TRUST_BUILTIN_ROOTS_OFFSET),
-        'pointer',
-        ['pointer']
-    );
-    
-    Interceptor.attach(libflutter.base.add(PEER_EXTRACTOR_OFFSET), {
-        onEnter: function(args) {
-            var peer = args[0];
-            console.log("[*] Captured native peer: " + peer);
-            try {
-                TrustBuiltinRoots(peer);
-                console.log("[+] TrustBuiltinRoots called — system CA loaded");
-            } catch (e) {
-                console.log("[-] Error: " + e);
-            }
+var libflutter = Process.getModuleByName("libflutter.so");
+console.log("[*] libflutter base: " + libflutter.base);
+
+var TrustBuiltinRoots = new NativeFunction(
+    libflutter.base.add(TRUST_BUILTIN_ROOTS_OFFSET),
+    'pointer',
+    ['pointer']
+);
+
+Interceptor.attach(libflutter.base.add(PEER_EXTRACTOR_OFFSET), {
+    onEnter: function(args) {
+        var peer = args[0];
+        console.log("[*] Captured native peer: " + peer);
+        try {
+            TrustBuiltinRoots(peer);
+            console.log("[+] TrustBuiltinRoots called — system CA loaded");
+        } catch (e) {
+            console.log("[-] Error: " + e);
         }
-    });
-    
-    console.log("[+] Flutter SSL bypass script loaded");
+    }
 });
+
+console.log("[+] Flutter SSL bypass script loaded");
 ```

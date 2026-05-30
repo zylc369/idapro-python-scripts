@@ -96,6 +96,23 @@ Payload/
         3. IDA Pro 分析 .so → 找 JNI_OnLoad 和 Java_* 导出
         4. （可选）Frida Hook 验证参数和返回值
       知识库加载: android-tools.md + IDA 知识库 + mobile-frida.md
+│
+└── 路径 6: Flutter 应用分析
+      触发: APK 包含 libflutter.so、flutter_assets/、单 Activity、Dart 代码
+      识别特征（满足 2 个以上即可判定）:
+        - lib/ 下有 libflutter.so（通常 15-30MB）
+        - assets/flutter_assets/ 目录存在
+        - assets/flutter_assets/kernel_blob.bin 或 libapp.so 存在
+        - AndroidManifest.xml 只有 1 个 Activity（Flutter 管理 UI）
+        - jadx 反编译后 Java 代码极少，只有 MainActivity
+      工具链: apktool + IDA Pro（arm64 分析）+ Frida
+      步骤:
+        1. 确认实际运行架构: adb shell uname -m（不是 getprop ro.product.cpu.abi）
+        2. 拉取对应架构的 libflutter.so 到本地
+        3. IDA Pro 分析 libflutter.so（通常无符号，需要字符串搜索定位函数）
+        4. Frida Hook native 层（Java 层 Hook 对 Flutter 无效）
+      知识库加载: flutter-ssl-bypass.md + arm64-reverse-methodology.md（$SHARED_DIR）+ mobile-frida.md
+      关键注意: Flutter 不走 Java TLS，SSL Pinning bypass 必须在 native 层
 ```
 
 ### jadx-smali 分层分析原则
@@ -127,6 +144,7 @@ Payload/
 | "Root检测"、"越狱检测"、"反调试" | mobile-patterns.md | android-tools.md + mobile-patterns.md |
 | "Hook"、"动态分析"、"运行时" | mobile-frida.md | mobile-frida.md |
 | "SO分析"、"native库"、"ELF" | 路径 3（Native） | android-tools.md + IDA 知识库 |
+| "Flutter"、"libflutter"、"Dart"、"Flutter应用" | 路径 6（Flutter） | flutter-ssl-bypass.md + mobile-frida.md |
 
 ---
 

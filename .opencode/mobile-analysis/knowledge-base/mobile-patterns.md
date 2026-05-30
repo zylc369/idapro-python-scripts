@@ -123,17 +123,21 @@ Java.perform(function() {
 
 ```javascript
 // 同时覆盖 Java 层 + Native 层的 Root 检测
+// 路径列表集中定义，新增路径只需改一处
+var BLOCKED_PATHS = [
+    "/sbin/su", "/system/bin/su", "/system/xbin/su",
+    "/data/local/bin/su", "/system/app/Superuser.apk",
+    "/sbin/magisk"
+];
+
+// === Java 层 ===
+
 Java.perform(function() {
-    // === Java 层 ===
-    
     // 1. File.exists() — 隐藏路径
     var File = Java.use("java.io.File");
     File.exists.implementation = function() {
         var path = this.getAbsolutePath();
-        var blocked = ["/sbin/su", "/system/bin/su", "/system/xbin/su",
-                       "/data/local/bin/su", "/system/app/Superuser.apk",
-                       "/sbin/magisk"];
-        if (blocked.indexOf(path) !== -1) {
+        if (BLOCKED_PATHS.indexOf(path) !== -1) {
             console.log("[*] Root check bypassed (File.exists): " + path);
             return false;
         }
@@ -160,61 +164,43 @@ Java.perform(function() {
 });
 
 // === Native 层 ===
+// access/stat/openat 三个 Hook 结构相同，用工厂函数生成
 
 var libc = Process.getModuleByName("libc.so");
 
-// 3. Hook access() — 拦截文件存在性检查
-Interceptor.attach(libc.getExportByName("access"), {
-    onEnter: function(args) {
-        var path = args[0].readUtf8String();
-        var blocked = ["/system/bin/su", "/system/xbin/su", "/sbin/su",
-                       "/sbin/magisk", "/system/app/Superuser.apk"];
-        if (blocked.indexOf(path) !== -1) {
-            console.log("[*] Root check bypassed (access): " + path);
-            this.isBlocked = true;
+function hookNativePathCheck(funcName, pathArgIndex) {
+    Interceptor.attach(libc.getExportByName(funcName), {
+        onEnter: function(args) {
+            var path = args[pathArgIndex].readUtf8String();
+            if (BLOCKED_PATHS.indexOf(path) !== -1) {
+                console.log("[*] Root check bypassed (" + funcName + "): " + path);
+                this.isBlocked = true;
+            }
+        },
+        onLeave: function(retval) {
+            if (this.isBlocked) {
+                retval.replace(-1);
+            }
         }
-    },
-    onLeave: function(retval) {
-        if (this.isBlocked) {
-            retval.replace(-1);  // ENOENT
-        }
-    }
-});
+    });
+}
 
-// 4. Hook stat() — 拦截文件信息获取
-Interceptor.attach(libc.getExportByName("stat"), {
-    onEnter: function(args) {
-        var path = args[0].readUtf8String();
-        var blocked = ["/system/bin/su", "/system/xbin/su", "/sbin/su",
-                       "/sbin/magisk"];
-        if (blocked.indexOf(path) !== -1) {
-            console.log("[*] Root check bypassed (stat): " + path);
-            this.isBlocked = true;
-        }
-    },
-    onLeave: function(retval) {
-        if (this.isBlocked) {
-            retval.replace(-1);  // 文件不存在
-        }
-    }
-});
+hookNativePathCheck("access", 0);   // access(path, mode)
+hookNativePathCheck("stat", 0);     // stat(path, buf)
 
-// 5. Hook openat() — 拦截文件打开
+// openat 必须单独处理：在 onEnter 中替换路径参数，而非 onLeave 改返回值
+// 原因：openat 会真正打开文件，产生文件描述符。如果只改返回值，
+//       内核已经打开了 su 文件，fd 泄露到 /proc/self/fd/ 可被检测到
 Interceptor.attach(libc.getExportByName("openat"), {
     onEnter: function(args) {
-        // args[1] 是路径（args[0] 是 dirfd）
-        var path = args[1].readUtf8String();
-        var blocked = ["/system/bin/su", "/system/xbin/su", "/sbin/su",
-                       "/sbin/magisk"];
-        if (blocked.indexOf(path) !== -1) {
-            console.log("[*] Root check bypassed (openat): " + path);
-            this.isBlocked = true;
-        }
-    },
-    onLeave: function(retval) {
-        if (this.isBlocked) {
-            retval.replace(-1);  // 打开失败
-        }
+        try {
+            var path = args[1].readUtf8String();  // openat 的路径在 args[1]（args[0] 是 dirfd）
+            if (path && BLOCKED_PATHS.indexOf(path) !== -1) {
+                console.log("[*] Root check bypassed (openat): " + path);
+                // 替换路径参数为不存在的路径，从根本上阻止打开
+                args[1] = Memory.allocUtf8String("/nonexistent_path_bypass");
+            }
+        } catch(e) {}
     }
 });
 
@@ -224,7 +210,8 @@ console.log("[+] Root bypass loaded (Java + Native layers)");
 **注意事项**：
 - `Runtime.exec()` 有多个重载（String/String数组+envp+dir），需要分别 Hook
 - `openat` 的第一个参数是 `dirfd`（通常是 `AT_FDCWD = -100`），路径在第二个参数 `args[1]`
-- Hook 的 `onLeave` 中修改返回值比在 `onEnter` 中修改参数更可靠（不会影响其他调用路径）
+- `access`/`stat` 用 onLeave 改返回值即可（只查询不产生副作用）
+- `openat` 必须在 onEnter 中替换路径参数（不能等 onLeave，因为内核已经打开了文件，会泄露 fd）
 
 ### iOS 越狱检测
 

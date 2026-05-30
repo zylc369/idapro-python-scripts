@@ -171,6 +171,7 @@ permission:
 | `android-unpacking.md` | 检测到加固/需要脱壳时（识别特征 + dump 策略） |
 | `flutter-ssl-bypass.md` | 分析 Flutter 应用，需要绕过 SSL pinning 时 |
 | `mitm-methodology.md` | 需要拦截/篡改移动应用 HTTPS 通信时 |
+| `tls-traffic-interception.md` | 需要追踪 SSL 连接、识别 TLS 流量（与 MITM 配合） |
 
 ### frida 17.x Bridge 核心规则
 
@@ -192,6 +193,8 @@ permission:
 | `crypto-validation-patterns.md` | 检测到密码学特征时 |
 | `technology-selection.md` | 需要实现算法、性能敏感计算时 |
 | `web-rendering.md` | webfetch 失败后需要渲染 SPA 页面、获取页面截图 |
+| `arm64-reverse-methodology.md` | 分析 arm64 无符号 .so，需要通过字符串引用定位函数时 |
+| `frida-native-shell-tricks.md` | Frida 中 Java bridge 不可用/不稳定时（popen/fgets 替代方案） |
 
 ---
 

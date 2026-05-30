@@ -204,6 +204,8 @@ results = sim.query_batch(["输入"] * 3, temperature=0.3)
 | `llm-attack-methodology.md` | 分析规划阶段（阶段 B）。攻击面识别、渐进式实验、payload 构造、社会工程学要素 |
 | `prompt-injection-patterns.md` | 构造 payload 时。直接/间接/社会工程学/多轮注入模式 + payload 模板 |
 | `ai-security-defense.md` | 分析防御方案时。输入层/System Prompt/输出层/架构层防御方案 |
+| `carrier-construction-guide.md` | 构造注入载体时。高质量载体构造方法、质量标准、按类型策略、验证方法 |
+| `payload-effectiveness-evaluation.md` | 评估注入效果时。真实性评估维度、检查方法、评分卡、常见失败模式 |
 
 ### 通用知识库（$SHARED_DIR/knowledge-base/）
 
