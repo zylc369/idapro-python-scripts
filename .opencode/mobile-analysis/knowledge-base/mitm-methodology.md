@@ -105,7 +105,9 @@ adb shell ls -la /system/etc/security/cacerts/${HASH}.0
 使用 `$AGENT_DIR/scripts/mitm_proxy.py`（已沉淀的通用脚本）:
 
 ```bash
+# --workdir 是必须参数，用于存放 CA 密钥和证书
 python3 $AGENT_DIR/scripts/mitm_proxy.py \
+  --workdir /tmp/mitm \
   --listen-port 44300 \
   --target-host api.target.com \
   --target-port 443 \
@@ -122,50 +124,12 @@ adb reverse tcp:44300 tcp:44300
 
 **步骤 5: Frida Hook 脚本关键部分**
 
-```javascript
-// DNS 重定向（预分配字符串，避免 GC 回收）
-var redirectStr = Memory.allocUtf8String("127.0.0.1");
-Interceptor.attach(libc.getExportByName("getaddrinfo"), {
-    onEnter: function(args) {
-        try {
-            var host = args[0].readUtf8String();
-            if (host && host.indexOf("target.com") !== -1) {
-                args[0] = redirectStr;
-            }
-        } catch(e) {}
-    }
-});
+需要三部分 Hook：
+1. **SSL bypass** — 详见 `$AGENT_DIR/knowledge-base/flutter-ssl-bypass.md` §6 完整模板（TrustBuiltinRoots + native peer 捕获）
+2. **DNS 重定向** + **端口重定向（含 IPv6 处理）** — 完整模板见下方 §3.4，使用时修改 `target.com` 和端口常量即可
+3. **组合时序**：先启动 SSL bypass Hook，确保 TrustBuiltinRoots 在首次 HTTPS 请求前生效；再启动 DNS+connect Hook 重定向流量到代理
 
-// 端口重定向（处理 IPv4 和 IPv6）
-Interceptor.attach(libc.getExportByName("connect"), {
-    onEnter: function(args) {
-        try {
-            var sockaddr = args[1];
-            var family = sockaddr.readU16();
-            var PROXY_PORT = 44300;
-            if (family === 2) { // AF_INET
-                var port = (sockaddr.add(2).readU8() << 8) | sockaddr.add(3).readU8();
-                if (port === 443) {
-                    sockaddr.add(2).writeU8(PROXY_PORT >> 8);
-                    sockaddr.add(3).writeU8(PROXY_PORT & 0xFF);
-                }
-            } else if (family === 10) { // AF_INET6 — 转为 IPv4
-                var port6 = (sockaddr.add(2).readU8() << 8) | sockaddr.add(3).readU8();
-                if (port6 === 443) {
-                    var newAddr = Memory.alloc(16);
-                    newAddr.writeU16(2);
-                    newAddr.add(2).writeU8(PROXY_PORT >> 8);
-                    newAddr.add(3).writeU8(PROXY_PORT & 0xFF);
-                    newAddr.add(4).writeU8(127); newAddr.add(5).writeU8(0);
-                    newAddr.add(6).writeU8(0);   newAddr.add(7).writeU8(1);
-                    args[1] = newAddr;
-                    args[2] = ptr(16);
-                }
-            }
-        } catch(e) {}
-    }
-});
-```
+> ⚠ `indexOf("target.com")` 是子字符串匹配，如需精确匹配请改用 `=== "target.com"` 或正则。
 
 **⚠ 关键时序**: TrustBuiltinRoots 必须在 APP 发起 HTTPS 请求之前被调用（由 Frida SSL bypass Hook 保证）。CA 安装必须在 APP 启动前完成。
 
@@ -236,6 +200,8 @@ Interceptor.attach(libc.getExportByName("getaddrinfo"), {
     onEnter: function(args) {
         try {
             var host = args[0].readUtf8String();
+            // ⚠ indexOf 是子字符串匹配，可能误匹配 not-target.com 等域名
+            // 如需精确匹配，改用: host === "api.target.com"
             if (host && host.indexOf("target.com") !== -1) {
                 args[0] = redirectStr;
                 console.log("[DNS] Redirected " + host + " → 127.0.0.1");

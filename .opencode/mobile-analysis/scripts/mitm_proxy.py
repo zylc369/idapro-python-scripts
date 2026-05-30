@@ -24,6 +24,7 @@ HTTPS MITM 代理 — 拦截并篡改指定 JSON 字段
 import argparse
 import json
 import os
+import shutil
 import socket
 import ssl
 import subprocess
@@ -97,7 +98,6 @@ def generate_ca(workdir):
     hash_val = result.stdout.decode().strip()
     system_cert = os.path.join(workdir, f"{hash_val}.0")
 
-    import shutil
     shutil.copy2(ca_crt, system_cert)
     print(f"[CA] CA 证书: {ca_crt}")
     print(f"[CA] 系统证书文件: {system_cert}")

@@ -96,12 +96,14 @@ console.log("[*] TLS traffic interception loaded");
 
 ## 3. 与 MITM 方案的关系
 
-本模板是 MITM 方案 B（SSL bypass + 流量拦截）的流量拦截组件。完整 MITM 方案选型见 `$AGENT_DIR/knowledge-base/mitm-methodology.md`。
+本模板是 MITM 方案 B（SSL bypass + 流量拦截，仅日志）的流量拦截组件。完整 MITM 方案选型（含可注入到 APP 的方案 D）见 `$AGENT_DIR/knowledge-base/mitm-methodology.md`。
 
 典型组合：
 1. SSL bypass（让应用信任系统 CA）→ 详见 `$AGENT_DIR/knowledge-base/flutter-ssl-bypass.md`
 2. TLS 流量拦截（本文件）→ 检测 HTTP 响应到达
-3. 响应篡改（popen + curl）→ 详见 `$SHARED_DIR/knowledge-base/frida-native-shell-tricks.md` §2.2
+3. 响应篡改（popen + curl，仅日志）→ 详见 `$SHARED_DIR/knowledge-base/frida-native-shell-tricks.md` §2.2
+
+> ⚠ 本文件描述的方案 B 只能日志/证明拦截，不能让 APP 显示篡改内容。如需真实 MITM 注入，使用方案 D（系统 CA + SSL Bypass + HTTPS 代理），详见 `$AGENT_DIR/knowledge-base/mitm-methodology.md` §2.5。
 
 ---
 
