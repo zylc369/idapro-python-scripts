@@ -106,6 +106,113 @@ Java.perform(function() {
 });
 ```
 
+### Native 层 Root 检测绕过
+
+部分应用不仅通过 Java API 检测 Root，还通过 native 层的系统调用检测。Java 层 Hook 不够用，需要同时 Hook native 函数。
+
+#### 检测的 native 系统调用
+
+| 系统调用 | 用途 | 参数 |
+|---------|------|------|
+| `access(path, F_OK)` | 检查文件是否存在 | `access("/system/bin/su", 0)` |
+| `stat(path, &buf)` | 获取文件信息 | `stat("/sbin/magisk", &buf)` |
+| `openat(dirfd, path, flags)` | 尝试打开文件 | `openat(AT_FDCWD, "/sbin/su", O_RDONLY)` |
+| `Runtime.exec()` 多重载 | 执行 shell 命令 | `exec("which su")`, `exec(new String[]{"which", "su"})` |
+
+#### 完整绕过脚本
+
+```javascript
+// 同时覆盖 Java 层 + Native 层的 Root 检测
+// 路径列表集中定义，新增路径只需改一处
+var BLOCKED_PATHS = [
+    "/sbin/su", "/system/bin/su", "/system/xbin/su",
+    "/data/local/bin/su", "/system/app/Superuser.apk",
+    "/sbin/magisk"
+];
+
+// === Java 层 ===
+
+Java.perform(function() {
+    // 1. File.exists() — 隐藏路径
+    var File = Java.use("java.io.File");
+    File.exists.implementation = function() {
+        var path = this.getAbsolutePath();
+        if (BLOCKED_PATHS.indexOf(path) !== -1) {
+            console.log("[*] Root check bypassed (File.exists): " + path);
+            return false;
+        }
+        return this.exists();
+    };
+    
+    // 2. Runtime.exec() — 拦截命令执行（注意多重载）
+    var Runtime = Java.use("java.lang.Runtime");
+    Runtime.exec.overload('[Ljava.lang.String;', '[Ljava.lang.String;', 'java.io.File').implementation = function(cmdArray, envp, dir) {
+        var cmd = cmdArray[0];
+        if (cmd.indexOf("su") !== -1 || cmd.indexOf("magisk") !== -1) {
+            console.log("[*] Root check bypassed (exec array): " + cmd);
+            throw Java.use("java.io.IOException").$new("Permission denied");
+        }
+        return this.exec(cmdArray, envp, dir);
+    };
+    Runtime.exec.overload('java.lang.String').implementation = function(cmd) {
+        if (cmd.indexOf("su") !== -1 || cmd.indexOf("magisk") !== -1 || cmd.indexOf("which") !== -1) {
+            console.log("[*] Root check bypassed (exec string): " + cmd);
+            throw Java.use("java.io.IOException").$new("Permission denied");
+        }
+        return this.exec(cmd);
+    };
+});
+
+// === Native 层 ===
+// access/stat/openat 三个 Hook 结构相同，用工厂函数生成
+
+var libc = Process.getModuleByName("libc.so");
+
+function hookNativePathCheck(funcName, pathArgIndex) {
+    Interceptor.attach(libc.getExportByName(funcName), {
+        onEnter: function(args) {
+            var path = args[pathArgIndex].readUtf8String();
+            if (BLOCKED_PATHS.indexOf(path) !== -1) {
+                console.log("[*] Root check bypassed (" + funcName + "): " + path);
+                this.isBlocked = true;
+            }
+        },
+        onLeave: function(retval) {
+            if (this.isBlocked) {
+                retval.replace(-1);
+            }
+        }
+    });
+}
+
+hookNativePathCheck("access", 0);   // access(path, mode)
+hookNativePathCheck("stat", 0);     // stat(path, buf)
+
+// openat 必须单独处理：在 onEnter 中替换路径参数，而非 onLeave 改返回值
+// 原因：openat 会真正打开文件，产生文件描述符。如果只改返回值，
+//       内核已经打开了 su 文件，fd 泄露到 /proc/self/fd/ 可被检测到
+Interceptor.attach(libc.getExportByName("openat"), {
+    onEnter: function(args) {
+        try {
+            var path = args[1].readUtf8String();  // openat 的路径在 args[1]（args[0] 是 dirfd）
+            if (path && BLOCKED_PATHS.indexOf(path) !== -1) {
+                console.log("[*] Root check bypassed (openat): " + path);
+                // 替换路径参数为不存在的路径，从根本上阻止打开
+                args[1] = Memory.allocUtf8String("/nonexistent_path_bypass");
+            }
+        } catch(e) {}
+    }
+});
+
+console.log("[+] Root bypass loaded (Java + Native layers)");
+```
+
+**注意事项**：
+- `Runtime.exec()` 有多个重载（String/String数组+envp+dir），需要分别 Hook
+- `openat` 的第一个参数是 `dirfd`（通常是 `AT_FDCWD = -100`），路径在第二个参数 `args[1]`
+- `access`/`stat` 用 onLeave 改返回值即可（只查询不产生副作用）
+- `openat` 必须在 onEnter 中替换路径参数（不能等 onLeave，因为内核已经打开了文件，会泄露 fd）
+
 ### iOS 越狱检测
 
 | 检测方法 | 分析位置 |

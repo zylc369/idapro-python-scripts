@@ -1,6 +1,6 @@
 ---
 description: 移动应用逆向分析 — 输入 APK/IPA 和分析需求，自动编排工具链完成分析
-mode: primary
+mode: all
 buwai-extension-id: mobile-analysis
 permission:
   external_directory:
@@ -169,6 +169,9 @@ permission:
 | `frida-hook-principles.md` | 编写任何 Frida Hook 时（4 条铁律 + Java Bridge 陷阱 + 检查清单） |
 | `frida-hook-templates.md` | 需要 Hook 模板时（标准模板 + 拦截器链 + Native Hook） |
 | `android-unpacking.md` | 检测到加固/需要脱壳时（识别特征 + dump 策略） |
+| `flutter-ssl-bypass.md` | 分析 Flutter 应用，需要绕过 SSL pinning 时 |
+| `mitm-methodology.md` | 需要拦截/篡改移动应用 HTTPS 通信时 |
+| `tls-traffic-interception.md` | 需要追踪 SSL 连接、识别 TLS 流量（与 MITM 配合） |
 
 ### frida 17.x Bridge 核心规则
 
@@ -190,6 +193,8 @@ permission:
 | `crypto-validation-patterns.md` | 检测到密码学特征时 |
 | `technology-selection.md` | 需要实现算法、性能敏感计算时 |
 | `web-rendering.md` | webfetch 失败后需要渲染 SPA 页面、获取页面截图 |
+| `arm64-reverse-methodology.md` | 分析 arm64 无符号 .so，需要通过字符串引用定位函数时 |
+| `frida-native-shell-tricks.md` | Frida 中 Java bridge 不可用/不稳定时（popen/fgets 替代方案） |
 
 ---
 
@@ -227,3 +232,5 @@ permission:
 - frida-server 使用非默认端口和随机文件名
 - 设备操作前校验设备在线状态
 - 失败后不静默忽略，必须说明失败原因
+- **首次需要操作 frida-server 时，必须先读取 `$AGENT_DIR/knowledge-base/mobile-frida.md`**。该文档包含反检测规范（端口、文件名、启动参数），不读就操作可能导致应用检测到 Frida
+- **架构确认优先**：分析 .so 文件前必须用 `adb shell uname -m` 确认实际运行架构，不要假设

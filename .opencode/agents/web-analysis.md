@@ -1,6 +1,6 @@
 ---
 description: Web 安全分析 — 输入 URL 或源码目录和分析需求，自动完成 Web 安全分析
-mode: primary
+mode: all
 buwai-extension-id: web-analysis
 permission:
   external_directory:
