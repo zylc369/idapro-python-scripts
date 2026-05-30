@@ -154,8 +154,67 @@ permission:
 |------|------|---------|
 | `$PYTHON_CMD` + llm_sim.py | 本地模拟目标系统 | `$PYTHON_CMD $AGENT_DIR/scripts/llm_sim.py --system-prompt "..." --input "..."` |
 | `$PYTHON_CMD` + deepseek_client.py | LLM API 交互 | `$PYTHON_CMD $AGENT_DIR/scripts/deepseek_client.py --interactive` |
+| opencode-runner | 大模型靶场（攻击任意 LLM） | 见下方「大模型靶场」节 |
 | curl | HTTP 请求（黑盒探测） | `curl -v URL` |
 | python -c | 快速脚本 | `python -c "..."` |
+
+### 大模型靶场 (opencode-runner)
+
+通过 OpenCode Go API 向目标模型发送提示词并获取回复。支持多轮会话上下文保持。AI Agent 自身构思攻击策略，通过 opencode-runner 发给目标模型。
+
+**工具选择指引**：
+
+| 场景 | 用什么 |
+|------|--------|
+| 已知目标 system prompt，本地模拟测试 | `llm_sim.py` |
+| 直接调用某个 LLM API | `deepseek_client.py` |
+| 攻击特定模型（非 DeepSeek），或多轮对话探测 | `opencode-runner` |
+
+**CLI 参数**：
+
+| 参数 | 必需 | 说明 |
+|------|------|------|
+| `-t / --target-model` | ✅ | 目标模型 ID，格式 `opencode-go/<id>` |
+| `-m / --mode` | ❌ | `single`（默认）或 `multi` |
+| `-p / --prompt` | single 时必需 | 提示词 |
+| `--host` | ❌ | multi 监听地址（默认 `127.0.0.1`） |
+| `--port` | ❌ | multi 监听端口（默认 `9876`） |
+
+**可用模型**（格式 `opencode-go/<id>`）：
+`glm-5.1` `glm-5` `kimi-k2.5` `kimi-k2.6` `deepseek-v4-pro` `deepseek-v4-flash` `mimo-v2.5` `mimo-v2.5-pro` `minimax-m2.7` `minimax-m2.5` `qwen3.7-max` `qwen3.6-plus`
+
+**启动前检查**（防止多实例内存泄漏）：
+
+```bash
+curl -sf http://127.0.0.1:<端口>/health && echo "已运行" || echo "未运行"
+```
+
+如果已运行则复用，**绝对禁止启动多个实例**。
+
+**Single 模式**（一次性调用，输出 JSON 到 stdout）：
+
+```bash
+# 示例
+$PYTHON_CMD tools/opencode-runner/main.py -t opencode-go/kimi-k2.6 -p "提示词"
+```
+
+**Multi 模式**（HTTP 服务器，支持多轮。模型和端口按实际需求替换）：
+
+```bash
+# 启动服务器（后台）
+$PYTHON_CMD tools/opencode-runner/main.py -t <目标模型> -m multi --port <端口> &
+
+# 以下用 <base> 代表 http://127.0.0.1:<端口>
+
+# 发送提示词（维护多轮上下文）
+curl -s -X POST <base>/prompt -H "Content-Type: application/json" -d '{"content": "..."}'
+
+# 新会话（重置对话历史）
+curl -s -X POST <base>/session/new
+
+# 关闭服务器
+curl -s -X POST <base>/shutdown
+```
 
 ### AI 分析辅助库（通过 $AGENT_DIR 调用）
 
@@ -249,4 +308,6 @@ results = sim.query_batch(["输入"] * 3, temperature=0.3)
 
 - **不向生产环境发送破坏性请求**（CTF 靶机和授权测试环境除外）
 - **不发送大量请求导致 DoS**（即使是测试环境也注意速率控制）
+- **opencode-runner 单实例约束**：启动前必须 `curl -sf http://127.0.0.1:<端口>/health` 检查是否已有实例。已存在则复用，**绝对禁止启动多个实例**导致内存泄漏
+- **opencode-runner 用完必须关闭**：分析结束后 `curl -s -X POST http://127.0.0.1:<端口>/shutdown` 关闭服务器
 - 失败后不静默忽略，必须说明失败原因

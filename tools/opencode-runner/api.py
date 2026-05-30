@@ -51,13 +51,18 @@ class OpenCodeGoClient:
             raise ValueError(f"未知模型: {model}")
 
         url = f"{self.base_url}/{info['endpoint']}"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
 
         if info["format"] == "openai":
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
             return self._call_openai(url, headers, model, messages, timeout)
+
+        headers = {
+            "x-api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
         return self._call_anthropic(url, headers, model, messages, timeout)
 
     def _call_openai(self, url, headers, model, messages, timeout):
@@ -68,7 +73,11 @@ class OpenCodeGoClient:
             timeout=timeout,
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        data = resp.json()
+        try:
+            return data["choices"][0]["message"]["content"]
+        except (KeyError, TypeError, IndexError) as exc:
+            raise ValueError(f"OpenAI 响应格式异常: {data}") from exc
 
     def _call_anthropic(self, url, headers, model, messages, timeout):
         resp = requests.post(
@@ -78,6 +87,10 @@ class OpenCodeGoClient:
             timeout=timeout,
         )
         resp.raise_for_status()
-        return "".join(
-            block["text"] for block in resp.json()["content"] if block["type"] == "text"
-        )
+        data = resp.json()
+        try:
+            return "".join(
+                block["text"] for block in data["content"] if block["type"] == "text"
+            )
+        except (KeyError, TypeError) as exc:
+            raise ValueError(f"Anthropic 响应格式异常: {data}") from exc

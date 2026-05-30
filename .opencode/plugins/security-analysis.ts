@@ -284,7 +284,7 @@ const AGENTS_RULES_DIR = join(OPENCODE_ROOT, "agents-rules");
 // Plugin 在 system.transform hook 中展开占位符，LLM 收到的是完整 prompt。
 //
 // 缓存策略：mtime 检测（statSync + mtimeMs 对比），文件改动后下次调用即生效。
-// 依赖顺序：session 检查 → 占位符展开（每次）→ shouldInject（每 5 次环境注入）
+// 依赖顺序：session 检查 → 占位符展开（每次）→ 环境信息注入（每次）
 
 interface SnippetCacheEntry { content: string | null; mtime: number; }
 const snippetCache = new Map<string, SnippetCacheEntry>();
@@ -905,7 +905,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
     // 每次 LLM 请求前触发（awaited）
     // 职责：按 agent 注入环境信息到系统提示
     // 注意：output.system 每次请求都重建，不会累积
-    //       每 10 次 LLM 请求注入一次完整环境信息，中间请求由 LLM 从对话历史获取路径值
+    //       前 2 次必注入（标题生成 #1 + 主聊天 #2），之后每 10 次注入一次
     "experimental.chat.system.transform": async (input, output) => {
       const sessionID = (input as { sessionID?: string })?.sessionID;
       // DEBUG: 诊断 OpenCode hook input 结构（确认后可删除）
@@ -918,7 +918,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
       const agentName = session.agentName;
 
-      // 占位符展开（每次 LLM 调用都执行，不受 shouldInject 控制）
+      // 占位符展开（每次 LLM 调用都执行）
       if (agentName) {
         const agentFile = join(AGENTS_DIR, `${agentName}.md`);
         if (hasBuwaiExtensionId(agentFile)) {
@@ -942,7 +942,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         }
       }
 
-      // 每次都注入 Plugin 完整性检查 + Agent 身份（不受 shouldInject 控制）
+      // 每次都注入 Plugin 完整性检查 + Agent 身份
       // 放在 output.system 最前面，确保 LLM 优先看到
       // 如果 Plugin 未加载，这段不会出现，agent 应立即停止并告知用户
       if (agentName) {
@@ -951,8 +951,14 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         );
       }
 
+      // 环境信息注入频率：
+      // 前 2 次都注入（新会话 step=1 时标题生成请求先触发 #1，主聊天 #2，
+      //   两者都需要拿到环境信息才能正确解析 $SHARED_DIR 等变量）
+      // 之后每 10 次注入一次（节省 token）
       session.systemTransformCount++;
-      const shouldInject = session.systemTransformCount % 5 === 1;
+      const shouldInject =
+        session.systemTransformCount <= 2 ||
+        session.systemTransformCount % 10 === 0;
 
       if (!shouldInject) return;
 
