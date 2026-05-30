@@ -14,7 +14,7 @@
 
 - [第一章：你需要先知道的知识](#第一章你需要先知道的知识)
 - [第二章：APK 静态分析——摸清目标是什么](#第二章apk-静态分析摸清目标是什么)
-- [第三章：Root 检测绕过——Java + Native 三层 Hook](#第三章root-检测绕过java--native-三层-hook)
+- [第三章：Root 检测绕过——六层 Hook 全覆盖](#第三章root-检测绕过六层-hook-全覆盖)
 - [第四章：SSL Pinning 分析——为什么常规方法全部失效](#第四章ssl-pinning-分析为什么常规方法全部失效)
 - [第五章：arm64 逆向——在大海捞针中定位 TrustBuiltinRoots](#第五章arm64-逆向在大海捞针中定位-trustbuiltinroots)
 - [第六章：SSL Pinning Bypass——直接调用内部函数](#第六章ssl-pinning-bypass直接调用内部函数)
@@ -315,13 +315,13 @@ $ curl -s https://uselessfacts.jsph.pl/api/v2/facts/random | python3 -m json.too
 
 ---
 
-## 第三章：Root 检测绕过——Java + Native 三层 Hook
+## 第三章：Root 检测绕过——六层 Hook 全覆盖
 
 ### 3.1 Root 检测的原理
 
 Root 检测是 Android 安全的常见防线。Root 后的设备可以运行任意命令（包括 Frida），应用通过检测 root 特征来拒绝在 root 设备上工作。
 
-FactsDroid 使用了**三层检测机制**：
+FactsDroid 的 Root 检测可以从两个维度看：**从应用的检测手段来看，有三类检测方法**（Java 文件检查、Java 命令执行、Native 系统调用）；**从我们的绕过策略来看，需要六个 Hook 点**全部拦截。下文先按检测手段分类讲解原理，最后给出六层 Hook 的完整汇总。
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -499,22 +499,24 @@ Interceptor.attach(libc.findExportByName("openat"), {
 });
 ```
 
-> 💡 **为什么 openat 的处理不同？** `access()` 和 `stat()` 是"查询型"调用，我们可以在它们执行完后改返回值。但 `openat()` 是"操作型"调用——如果让内核真的打开了 su 文件，再改返回值就晚了。所以我们在调用前就把路径参数改掉，让内核去打开一个不存在的文件。
+> 💡 **为什么 openat 的处理不同？** `access()` 和 `stat()` 只是"查询文件是否存在"，即使让它们真的执行了，也没什么副作用，事后改返回值就行。但 `openat()` 会**真正打开文件**——如果让内核打开了 su 文件，就产生了一个文件描述符，可能泄露信息（比如通过 `/proc/self/fd/` 能看到 su 被打开了）。所以我们在调用前就把路径参数改掉，让内核去打开一个不存在的文件，从根本上避免打开 su。
 
-### 3.5 五层 Hook 的完整效果
+### 3.5 六层 Hook 的完整效果
 
 ```
 应用的 Root 检测：                    我们的 Hook：
 ┌───────────────────┐               ┌───────────────────┐
 │ File.exists("/su")│ ──Hook 1──→  │ return false      │
 ├───────────────────┤               ├───────────────────┤
-│ Runtime.exec("su")│ ──Hook 2──→  │ throw IOException │
+│ Runtime.exec("su")│ ──Hook 2──→  │ throw IOException │  (String 版)
 ├───────────────────┤               ├───────────────────┤
-│ access("/su")     │ ──Hook 3──→  │ return -1         │
+│ Runtime.exec(su[])│ ──Hook 3──→  │ throw IOException │  (String[] 版)
 ├───────────────────┤               ├───────────────────┤
-│ stat("/su")       │ ──Hook 4──→  │ return -1         │
+│ access("/su")     │ ──Hook 4──→  │ return -1         │
 ├───────────────────┤               ├───────────────────┤
-│ openat("/su")     │ ──Hook 5──→  │ 改路径为 /xxx     │
+│ stat("/su")       │ ──Hook 5──→  │ return -1         │
+├───────────────────┤               ├───────────────────┤
+│ openat("/su")     │ ──Hook 6──→  │ 改路径为 /xxx     │
 └───────────────────┘               └───────────────────┘
          ↓                                   ↓
   所有检测都返回 "su 不存在"
@@ -765,7 +767,9 @@ function doHook() {
 }
 ```
 
-运行结果：**找到了字符串！** 但这只是字符串的位置，我们需要找到**代码中谁引用了这个字符串**。
+运行结果：**找到了字符串！** 这证实了 `SecurityContext_TrustBuiltinRoots` 这个 native 函数确实存在于 libflutter 中。但找到字符串的位置还不够——我们需要找到**代码中谁引用了这个函数名**（Dart VM 的 native 函数注册表），从而定位到函数的实际代码地址。
+
+但这里有一个捷径：我们已经知道这个函数的功能是加载 `/system/etc/security/cacerts` 目录下的系统 CA 证书。所以我们可以直接搜索引用这个**路径字符串**的代码，跳过函数注册表这一层。这就进入了下一步：理解 ARM64 的字符串引用机制，然后用 IDA 定位引用点。
 
 ### 5.4 第二步：理解 ARM64 如何引用字符串
 
@@ -913,22 +917,30 @@ __int64 sub_8413F8() {
 
 3. **X509_STORE 访问公式**：`store = *(*(peer + 16) + 104)`
 
+   这需要两步解引用：
+   1. `*(peer + 16)` → 取出 peer 对象偏移 16 处的指针，得到 `SecurityContextData*`
+   2. `*(... + 104)` → 在 SecurityContextData 偏移 104 处取出指针，得到 `X509_STORE*`
+
    ```
-   peer 对象的内存布局：
+   peer 对象的内存布局（本版本 libflutter.so）：
    ┌──────────┐
-   │ peer + 0 │  ???（可能是 vtable）
+   │ peer + 0 │  vtable 指针
    ├──────────┤
-   │ peer + 8 │  ???（可能是 flags）
+   │ peer + 8 │  其他字段
    ├──────────┤
-   │ peer +16 │ ──→ SecurityContext 内部结构
-   │          │     ┌─────────────┐
-   │          │     │ ...+0       │
-   │          │     │ ...+8       │
-   │          │     │ ...         │
-   │          │     │ ...+96      │
-   │          │     │ ...+104 ──→ X509_STORE ← 这就是 BoringSSL 的证书存储！
-   │          │     └─────────────┘
-   └──────────┘
+   │ peer +16 │ ──→ SecurityContextData 结构
+   └──────────┘           │
+                          ↓
+                  SecurityContextData 布局：
+                  ┌──────────────────┐
+                  │ offset 0         │  ...
+                  │ offset 8         │  ...
+                  │ ...              │
+                  │ offset 96        │  ...
+                  │ offset 104 ──→ X509_STORE*  ← BoringSSL 的证书存储
+                  └──────────────────┘
+                  （注意：SecurityContextData 不是 peer 的内嵌字段，
+                    而是通过 peer+16 处的指针间接引用的独立结构）
    ```
 
 ### 5.7 函数偏移地址汇总
@@ -1116,8 +1128,9 @@ Interceptor.attach(libc.findExportByName("connect"), {
         var port = (args[1].add(2).readU8() << 8) | args[1].add(3).readU8();
         if (port === 443) {
             // 把 443 改成 44300（代理监听的端口）
-            args[1].add(2).writeU8(0x69);  // 44300 >> 8 = 0xAD
-            args[1].add(3).writeU8(0x5C);  // 44300 & 0xFF = 0x5C
+            // 44300 = 0xAD0C，高字节 0xAD，低字节 0x0C
+            args[1].add(2).writeU8(0xAD);  // 44300 >> 8 = 0xAD
+            args[1].add(3).writeU8(0x0C);  // 44300 & 0xFF = 0x0C
         }
     }
 });
@@ -1344,7 +1357,7 @@ function modifyFactText() {
 // 前提: frida-server 已在设备上运行，端口转发已设置
 
 // ═══════════════════════════════════════════════════════
-// 第一部分：Root 检测绕过（Java 层 + Native 层，共 5 个 Hook）
+// 第一部分：Root 检测绕过（Java 层 3 个 + Native 层 3 个，共 6 个 Hook）
 // ═══════════════════════════════════════════════════════
 
 Java.perform(function() {
@@ -1606,8 +1619,8 @@ frida -H 127.0.0.1:6655 -f com.eightksec.factsdroid -l factsdroid_mitm.js
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 1. Root Bypass（5 层 Hook）                                     │
-│    Java File.exists + Runtime.exec                              │
+│ 1. Root Bypass（6 层 Hook）                                     │
+│    Java File.exists + Runtime.exec ×2                           │
 │    Native access + stat + openat                                │
 │    → 应用认为设备未 Root，"Random Fact" 按钮可用                │
 └──────────────────────────┬──────────────────────────────────────┘
