@@ -81,6 +81,24 @@
       "example_call": "$PYTHON_CMD $SHARED_DIR/scripts/web_render.py --url https://example.com --format markdown",
       "added_at": "2026-05-03",
       "verified": true
+    },
+    {
+      "name": "detect_kernel_debug_env",
+      "file": "detect_kernel_debug_env.py",
+      "description": "双机调试环境检测：检查 vmrun、VM 运行状态、kd.exe、VM 调试配置（NET 传输）、VM 自动登录。输出结构化 JSON",
+      "params": ["--output", "--vm-name"],
+      "example_call": "$PYTHON_CMD $SHARED_DIR/scripts/detect_kernel_debug_env.py --output $TASK_DIR/kernel_env.json",
+      "added_at": "2026-05-30",
+      "verified": false
+    },
+    {
+      "name": "vm_login",
+      "file": "vm_login.py",
+      "description": "VM 登录管理：配置自动登录（--login）、检查状态（--status）、加密密码（--encrypt-password）。密码 Base64 存储，不输出到 stdout",
+      "params": ["--login", "--status", "--encrypt-password"],
+      "example_call": "$PYTHON_CMD $SHARED_DIR/scripts/vm_login.py --login",
+      "added_at": "2026-05-30",
+      "verified": false
     }
   ]
 }

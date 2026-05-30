@@ -101,7 +101,8 @@ class KDSession:
         """启动 kd 子进程 (CREATE_NEW_CONSOLE)"""
         cmd = [self.kd_path, f'-k net:port={self.port},key={self.key}']
         # 必须用 CREATE_NEW_CONSOLE (0x10)，否则 AttachConsole 失败
-        self.proc = subprocess.Popen(cmd, creationflags=0x10)
+        self.proc = subprocess.Popen(cmd, creationflags=0x10,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         time.sleep(3)  # 等待连接
     
     def _send_break(self):
@@ -115,12 +116,40 @@ class KDSession:
         ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False)
     
     def exec_commands(self, commands, cmd_delay=3):
-        """执行命令列表，返回输出"""
+        """执行命令列表，返回输出文本"""
         self._start_kd()
         self._send_break()
-        # 写入 .logopen 和命令到 log 文件
-        # ... (用 stdin 写入命令，等待 cmd_delay，读 log 文件)
-        # 最后发送 g + qd
+        
+        # 构建命令序列: 打开日志 → 执行命令 → 关闭日志 → 恢复 VM → 断开
+        all_cmds = [f'.logopen "{self.log_file}"'] + commands + ['.logclose', 'g', 'qd']
+        
+        # 逐行写入 kd 的 stdin
+        for cmd in all_cmds:
+            self.proc.stdin.write(cmd + '\n')
+            self.proc.stdin.flush()
+            time.sleep(cmd_delay if cmd not in ('g', 'qd', f'.logopen "{self.log_file}"', '.logclose') else 1)
+        
+        # 等待 kd 进程结束
+        try:
+            self.proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+        
+        # 读取日志输出
+        if self.log_file and os.path.isfile(self.log_file):
+            with open(self.log_file, 'r', encoding='utf-8', errors='replace') as f:
+                return f.read()
+        return ''
+    
+    def cleanup(self):
+        """清理残留 kd 进程"""
+        try:
+            if self.proc and self.proc.poll() is None:
+                self.proc.kill()
+        except Exception:
+            pass
+        # 确保没有残留 kd 进程占用端口
+        subprocess.run('taskkill /f /im kd.exe', shell=True, capture_output=True)
 ```
 
 ### 2.3 地址格式
@@ -363,10 +392,12 @@ cmp [r14+8], edx       ; verify checksum
 
 ## 7. 工具部署清单
 
-| 工具 | 用途 | 编译方式 |
-|------|------|---------|
-| `enum_drv.exe` | 枚举驱动基址 | `cl /MT enum_drv.c`（/MT 静态链接避免 UCRT 依赖） |
-| `kd_helper.py` | kd 会话封装 | 纯 Python，无额外依赖 |
+| 工具 | 用途 | 来源 |
+|------|------|------|
+| `enum_drv.exe` | 枚举驱动基址 | 编译: `cl /MT enum_drv.c`（/MT 静态链接避免 UCRT 依赖） |
+| `kd_helper.py` | kd 会话封装 | 纯 Python，见 §2.2 模板 |
 | `test_sign.bat` | 测试签名驱动 | makecert + signtool |
+| `detect_kernel_debug_env.py` | 双机调试环境自动检测 | `$SHARED_DIR/scripts/detect_kernel_debug_env.py --output env.json` |
+| `vm_login.py` | VM 登录管理（密码安全隔离） | `$SHARED_DIR/scripts/vm_login.py --login/--status/--encrypt-password` |
 
 **编译注意**：部署到 VM 的工具必须用 `/MT` 静态链接，VM 中可能缺少 UCRT 运行时。

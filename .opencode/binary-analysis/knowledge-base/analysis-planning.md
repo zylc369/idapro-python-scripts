@@ -83,6 +83,38 @@
 - 编辑控件文本设置：`SetDlgItemTextA` 可能不生效 → 必须用 `SendMessage(hwnd_edit, WM_SETTEXT, 0, text_ptr)`
 - 64-bit 环境调试 32-bit 进程（WoW64）时硬件断点可能不工作 → 优先 code cave 而非断点
 
+### 场景：kernel_driver（Windows 内核驱动）
+
+**场景标签**：`scene_tags` 包含 `"kernel_driver"`
+
+**目标**：使用双机调试分析 Windows 内核驱动（.sys），绕过 VMProtect 等混淆
+
+**前置条件**：
+- 目标为 Windows 内核驱动（通过 IAT 中的 `IoCreateDevice`、`IofCompleteRequest` 等内核 API 自动识别）
+- 宿主机有 VMware + vmrun
+- VM 已配置 NET 调试传输
+
+**方案模板**：
+
+| 步骤 | 操作 | 预期耗时 | 失败切换 |
+|------|------|---------|---------|
+| 1. 加载知识库 | 读取 `$SHARED_DIR/knowledge-base/kernel-driver-analysis.md` | 即时 | 无 |
+| 2. 环境检测 | `$PYTHON_CMD "$SHARED_DIR/scripts/detect_kernel_debug_env.py" --output "$TASK_DIR/kernel_env.json"` | 1-2 分钟 | 缺失项 → 告知用户配置 |
+| 3. IAT 分析 | 读取 `initial.json` 中的 imports → 推导通信机制和功能 | 2-3 分钟 | 无 |
+| 4. PE 常量搜索 | `struct.pack` + `find()` 搜索 IOCTL code、magic number | 3-5 分钟 | 无 |
+| 5. 双机调试 | kd.exe 连接 VM → 反汇编关键代码 → dump 运行时数据 | 10-30 分钟 | kd 连接失败 → 检查 VM 调试配置 |
+| 6. 算法还原 | 综合常量搜索和运行时反汇编 → 还原校验/编码算法 | 5-15 分钟 | — |
+
+**强制规则**：
+- **不要尝试让 IDA 完整分析 VMP 段** — 会无限卡住
+- 步骤 2 环境检测不通过时，停止分析并告知用户配置缺失项
+- 步骤 5 使用 kd.exe 封装模式（`.logopen` 写输出，`AttachConsole` 发 break）
+- 常量搜索优先于反汇编 — VMP 虚拟化了代码但常量不变
+
+**与 packed 场景的交互**：
+- 如果 `kernel_driver` 和 `packed` 同时存在（VMP 内核驱动），忽略 packed 的脱壳流程，直接走 kernel_driver 方案
+- VMP 内核驱动不能通过常规脱壳解决，必须走双机调试
+
 ### 场景：standard（标准二进制，无特殊标签）
 
 **方案模板**：
@@ -97,9 +129,10 @@
 ### 场景组合
 
 当 `scene_tags` 包含多个标签时，按优先级处理：
-1. **packed 优先** — 先脱壳，再重新分析
-2. **crypto 其次** — 脱壳后识别密码学特征
-3. **gui 最后** — 在密码学分析需要运行时验证时处理
+1. **kernel_driver 最优先** — 内核驱动必须走双机调试，忽略 packed
+2. **packed 其次** — 先脱壳，再重新分析
+3. **crypto 然后** — 脱壳后识别密码学特征
+4. **gui 最后** — 在密码学分析需要运行时验证时处理
 
 ---
 

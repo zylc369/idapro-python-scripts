@@ -19,8 +19,8 @@
 | 双机调试 (kd) | 第三梯队 | Windows 内核驱动（.sys）逆向 | VM + kd.exe + NET 传输 |
 
 **优先使用 IDA 内置调试器**。仅当 IDA 调试器不可用或失败时，才切换到后备方案：
-- 读取 `dynamic-analysis-frida.md`
-- **目标是内核驱动时**：读取 `kernel-driver-analysis.md`
+- 读取 `$SHARED_DIR/knowledge-base/dynamic-analysis-frida.md`
+- **目标是内核驱动时**：读取 `$SHARED_DIR/knowledge-base/kernel-driver-analysis.md`
 
 ---
 

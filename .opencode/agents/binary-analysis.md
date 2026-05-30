@@ -273,6 +273,7 @@ $PYTHON_CMD "$AGENT_DIR/scripts/detect_env.py" --output "$TASK_DIR/env.json"
 | `process-patch-reference.md` | 使用 process_patch.py 时的完整参数参考 |
 | `arm64-reverse-methodology.md` | arm64 无符号二进制中定位函数和数据（ADRP 搜索、调用约定） |
 | `frida-native-shell-tricks.md` | Frida 中 Java bridge 不可用时的 native 替代方案（popen/fgets） |
+| `kernel-driver-analysis.md` | 目标为 Windows 内核驱动（.sys）、VMP 混淆、需双机调试时 |
 
 ---
 

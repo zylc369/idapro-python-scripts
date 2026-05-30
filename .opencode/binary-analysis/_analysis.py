@@ -401,6 +401,23 @@ def classify_scene(packer_info, strings, import_names, architecture, file_type, 
     recommended_actions = []
     knowledge_base_loads = []
 
+    # 内核驱动检测（优先级最高: .sys 文件的 file_type 为 "exe"，不能靠 file_type 区分，
+    # 通过导入的内核驱动特有 API 识别）
+    _kernel_driver_apis = {
+        "IoCreateDevice", "IofCompleteRequest", "IoCreateSymbolicLink",
+        "IoDeleteDevice", "IoDeleteSymbolicLink",
+    }
+    _kernel_match = _kernel_driver_apis & import_names
+    if len(_kernel_match) >= 2:
+        scene_tags.append("kernel_driver")
+        recommended_actions.append({
+            "action": "kernel_driver_analysis",
+            "priority": 0,
+            "description": "检测到 Windows 内核驱动，需使用双机调试分析",
+            "detail": f"内核驱动 API: {sorted(_kernel_match)}",
+        })
+        knowledge_base_loads.append("kernel-driver-analysis.md")
+
     if packer_info["packer_detected"]:
         scene_tags.append("packed")
         recommended_actions.append({
