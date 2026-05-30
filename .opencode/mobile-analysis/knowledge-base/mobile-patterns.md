@@ -318,3 +318,165 @@ Java.perform(function() {
 2. Frida Hook 使校验函数始终返回成功
 3. 或直接 Patch 二进制（条件跳转 → 无条件跳转）
 ```
+
+---
+
+## IPC 安全漏洞
+
+### 概述
+
+Android 应用的四大组件（Activity/Service/Receiver/Provider）可以通过 `android:exported` 属性暴露给其他应用。如果 exported 组件没有配合 permission 保护，任何第三方应用都可以触发它，导致未授权操作。
+
+这是移动端最常见的架构级漏洞之一，不需要 Frida、不需要 root，只需要标准 Android API。
+
+### Exported Component 审计清单
+
+在 `AndroidManifest.xml` 中逐个检查以下危险信号：
+
+| 组件类型 | 危险信号 | 检查方法 |
+|---------|---------|---------|
+| `<service>` | `exported="true"` 且无 `android:permission` | grep `exported.*true` 后检查同标签是否有 `permission` 属性 |
+| `<receiver>` | `exported="true"` 且无 `android:permission` | 同上 |
+| `<provider>` | `exported="true"` 且无 `android:permission` | 同上，额外检查 `grantUriPermissions` |
+| `<activity>` | `exported="true"` 且无 intent-filter（不应导出） | 非入口 Activity 不应 exported |
+
+**快速审计命令**：
+
+```bash
+# 列出所有 exported 组件及其 permission 状态
+apktool d app.apk -o unpacked
+grep -n 'exported="true"' unpacked/AndroidManifest.xml
+# 对每个匹配行，检查同一标签是否有 android:permission 属性
+```
+
+**关键判断**：
+
+- `exported="true"` + 有 `android:permission` → ✅ 有保护（需检查 permission 级别）
+- `exported="true"` + 无 `android:permission` → 🚨 无保护，任何应用可调用
+- `exported="true"` + `<intent-filter>` → 在 Android 12+ 必须显式设 `exported="true"`，旧版本默认 exported
+
+### Permission 配置审计
+
+**正确 vs 错误对比**：
+
+```xml
+<!-- ❌ 错误：exported 但无 permission -->
+<service android:exported="true" android:name=".SecurityService"/>
+
+<!-- ❌ 错误：用了 normal/dangerous 级别 permission（第三方可申请） -->
+<permission android:name="com.example.MY_PERM" android:protectionLevel="normal"/>
+<service android:exported="true" android:permission="com.example.MY_PERM" .../>
+
+<!-- ✅ 正确：signature 级别 permission（只有同签名应用可获取） -->
+<permission android:name="com.example.MY_PERM" android:protectionLevel="signature"/>
+<uses-permission android:name="com.example.MY_PERM"/>
+<service android:exported="true" android:permission="com.example.MY_PERM" .../>
+```
+
+**protectionLevel 含义**：
+
+| 级别 | 谁能获取 | 安全性 |
+|------|---------|--------|
+| `normal` | 所有应用 | ❌ 无保护 |
+| `dangerous` | 用户授权 | ❌ 用户可能被诱导授权 |
+| `signature` | 同签名应用 | ✅ 安全 |
+| `signatureOrSystem` | 同签名或系统应用 | ✅ 安全 |
+
+### Broadcast 劫持
+
+**场景**：`BroadcastReceiver` 是 `exported=true` 且无 permission 保护，任何应用可以向它发送恶意广播。
+
+**攻击步骤**：
+
+```bash
+# 1. 从 Manifest 中找到 Receiver 的 action 名称
+#    <action android:name="com.example.SOME_ACTION"/>
+
+# 2. 发送广播（携带 extras 伪造参数）
+adb shell am broadcast \
+    -n com.example/.TargetReceiver \
+    -a com.example.SOME_ACTION \
+    --es key 'value'
+
+# 3. 如果 Receiver 转发给 Service，直接攻击 Receiver 通常更隐蔽
+#    因为 Receiver 不验证发送者身份
+```
+
+**常见利用场景**：
+
+| 场景 | action | 影响 |
+|------|--------|------|
+| 禁用安全功能 | `STOP_SECURITY` / `STOP_PROTECTION` | 安全服务停止 |
+| 启动未授权操作 | `START_*` 类 action | 触发付费/危险操作 |
+| 修改配置 | `UPDATE_CONFIG` / `SET_*` | 篡改应用状态 |
+| 绕过认证 | 携带伪造 token 的 extras | 伪造合法调用 |
+
+### Service 伪造
+
+**场景**：`Service` 是 `exported=true` 且无 permission 保护，任何应用可以 `startService` 或 `bindService`。
+
+**攻击步骤**：
+
+```bash
+# 1. 从 Manifest 找到 Service 类名
+#    <service android:exported="true" android:name=".SecurityService"/>
+
+# 2. 通过 am startservice 发送指令
+adb shell am startservice \
+    -n com.example/.SecurityService \
+    -a com.example.START_SECURITY \
+    --es security_token 'extracted_token'
+
+# 3. 验证 Service 状态变化
+adb shell dumpsys activity services com.example
+```
+
+### Token 提取配合 IPC 攻击
+
+当 IPC 组件需要 token 认证时，token 通常可以从以下位置提取：
+
+| Token 位置 | 提取方法 | 难度 |
+|-----------|---------|------|
+| Java 代码硬编码 | jadx 反编译 → 搜索字符串常量 | 低 |
+| Native library（.so） | `strings lib/*.so` → 搜索特征前缀 | 低 |
+| SharedPreferences | adb shell `cat /data/data/pkg/shared_prefs/*.xml`（需 root） | 中 |
+| APK 资源文件 | apktool 解包 → 搜索 res/assets | 低 |
+| 运行时从 APK 提取 | PackageManager.getSourceDir() → ZipInputStream → strings | 低 |
+
+**运行时提取示例（PoC 代码片段）**：
+
+```java
+// 从 victim APK 中提取 .so 文件并搜索 token
+ApplicationInfo info = pm.getApplicationInfo(victimPackage, 0);
+ZipInputStream zis = new ZipInputStream(new FileInputStream(info.sourceDir));
+// 遍历 ZIP 条目，找到 lib/*/libxxx.so
+// 在二进制数据中搜索已知前缀的可打印字符串
+```
+
+### 快速验证流程
+
+不需要写 PoC 就能快速验证 IPC 漏洞：
+
+```bash
+# Step 1: 确认 victim 应用已安装
+adb shell pm list packages | grep <victim>
+
+# Step 2: 启动 victim 的目标组件（通过 exported Service）
+adb shell am startservice -n <pkg>/.<Service> -a <ACTION> --es <key> '<value>'
+
+# Step 3: 检查组件状态变化
+adb shell dumpsys activity services <pkg>
+adb shell dumpsys activity broadcasts <pkg>
+
+# Step 4: 如果验证成功，再开发正式 PoC APK
+```
+
+### 防御建议
+
+| 防御点 | 具体措施 | 阻断的攻击 |
+|--------|---------|-----------|
+| Component exported | 不需要外部访问的组件设 `exported="false"` | 所有 IPC 攻击 |
+| Permission 保护 | exported 组件加 `android:permission` + `protectionLevel="signature"` | 第三方应用调用 |
+| Sender 验证 | 代码中检查 `Binder.getCallingUid()` 和包名 | 即使 token 泄露 |
+| Token 动态化 | 运行时生成 token，存储在 Android Keystore 中 | 静态提取攻击 |
+| Intent 验证 | 验证 intent 的 action、extras 类型和值范围 | 参数注入 |

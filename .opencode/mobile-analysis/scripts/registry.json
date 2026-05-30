@@ -53,5 +53,16 @@
     },
     "note": "需要 openssl 命令行工具。CA 安装到设备后配合 Frida getaddrinfo+connect hook 使用。详见 $AGENT_DIR/knowledge-base/mitm-methodology.md §2.5 方案 D",
     "requires_venv": false
+  },
+  {
+    "name": "build_apk",
+    "description": "命令行 APK 构建工具 — 从源码目录一键生成签名 APK（无需 Gradle）",
+    "file": "build_apk.py",
+    "language": "python",
+    "runner": "$PYTHON_CMD",
+    "usage": "$PYTHON_CMD $AGENT_DIR/scripts/build_apk.py --src <源码目录> --output <输出.apk> [--keystore <KS>] [--ks-pass <PASS>]",
+    "output_format": "签名 APK 文件写入 --output 路径",
+    "note": "需要 Android SDK（ANDROID_HOME）。自动检测 build-tools 和 platform。支持标准项目结构和扁平结构",
+    "requires_venv": false
   }
 ]

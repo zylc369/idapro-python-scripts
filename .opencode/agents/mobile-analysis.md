@@ -124,6 +124,12 @@ permission:
 | ldid | 伪签名 | `ldid -S binary` |
 | unzip | IPA 解压 | `unzip target.ipa -d dir` |
 
+### 移动端 Python 脚本（$AGENT_DIR/scripts/）
+
+| 脚本 | 用途 | 典型命令 |
+|------|------|---------|
+| build_apk.py | 命令行 APK 构建（无需 Gradle） | `$PYTHON_CMD $AGENT_DIR/scripts/build_apk.py --src dir --output app.apk` |
+
 ### IDA Pro 脚本（通过 $SHARED_DIR 调用）
 
 需要分析 .so/.dylib 时，使用 `$SHARED_DIR/` 下的 IDA 脚本：
