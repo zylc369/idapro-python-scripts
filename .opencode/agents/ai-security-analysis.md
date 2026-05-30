@@ -154,13 +154,13 @@ permission:
 |------|------|---------|
 | `$PYTHON_CMD` + llm_sim.py | 本地模拟目标系统 | `$PYTHON_CMD $AGENT_DIR/scripts/llm_sim.py --system-prompt "..." --input "..."` |
 | `$PYTHON_CMD` + deepseek_client.py | LLM API 交互 | `$PYTHON_CMD $AGENT_DIR/scripts/deepseek_client.py --interactive` |
-| opencode-runner | 大模型靶场（攻击任意 LLM） | 见下方「大模型靶场」节 |
+| `$PYTHON_CMD` + dialogue | 与目标模型多轮对话（攻防核心工具） | 见下方「目标模型对话工具」节 |
 | curl | HTTP 请求（黑盒探测） | `curl -v URL` |
 | python -c | 快速脚本 | `python -c "..."` |
 
-### 大模型靶场 (opencode-runner)
+### 目标模型对话工具 (ai-security-analysis-dialogue)
 
-通过 OpenCode Go API 向目标模型发送提示词并获取回复。支持多轮会话上下文保持。AI Agent 自身构思攻击策略，通过 opencode-runner 发给目标模型。
+通过 OpenCode serve API 与目标模型进行多轮对话。**同一个 session_id 下所有消息共享上下文**，天然支持多轮攻防：先建立基线、逐步引诱、持续追问。
 
 **工具选择指引**：
 
@@ -168,53 +168,52 @@ permission:
 |------|--------|
 | 已知目标 system prompt，本地模拟测试 | `llm_sim.py` |
 | 直接调用某个 LLM API | `deepseek_client.py` |
-| 攻击特定模型（非 DeepSeek），或多轮对话探测 | `opencode-runner` |
+| 攻击特定模型、多轮引诱对话、持续探测 | `dialogue`（本工具） |
 
-**CLI 参数**：
+**命令一览**（所有命令输出 JSON）：
 
-| 参数 | 必需 | 说明 |
-|------|------|------|
-| `-t / --target-model` | ✅ | 目标模型 ID，格式 `opencode-go/<id>` |
-| `-m / --mode` | ❌ | `single`（默认）或 `multi` |
-| `-p / --prompt` | single 时必需 | 提示词 |
-| `--host` | ❌ | multi 监听地址（默认 `127.0.0.1`） |
-| `--port` | ❌ | multi 监听端口（默认 `9876`） |
+```bash
+# 创建会话（返回 session_id，后续用这个 ID 多轮对话）
+$PYTHON_CMD tools/ai-security-analysis-dialogue/main.py create -t <模型> --provider opencode-go --title "攻击描述"
 
-**可用模型**（格式 `opencode-go/<id>`）：
+# 发送消息（同一个 session_id 多次调用 = 多轮对话，上下文自动保持）
+$PYTHON_CMD tools/ai-security-analysis-dialogue/main.py send -s <session_id> -p "消息内容"
+
+# 一次性对话（自动创建/删除会话，不需要 session_id）
+$PYTHON_CMD tools/ai-security-analysis-dialogue/main.py chat -t <模型> --provider opencode-go -p "消息"
+
+# 列出所有会话
+$PYTHON_CMD tools/ai-security-analysis-dialogue/main.py list
+
+# 查看会话消息历史
+$PYTHON_CMD tools/ai-security-analysis-dialogue/main.py messages -s <session_id>
+
+# 压缩会话上下文（对话轮次较多时使用，防止 token 超限）
+$PYTHON_CMD tools/ai-security-analysis-dialogue/main.py summarize -s <session_id>
+
+# 删除会话
+$PYTHON_CMD tools/ai-security-analysis-dialogue/main.py delete -s <session_id>
+```
+
+**可用模型**（`--provider` 默认 `opencode-go`，其他 provider 也可用）：
 `glm-5.1` `glm-5` `kimi-k2.5` `kimi-k2.6` `deepseek-v4-pro` `deepseek-v4-flash` `mimo-v2.5` `mimo-v2.5-pro` `minimax-m2.7` `minimax-m2.5` `qwen3.7-max` `qwen3.6-plus`
 
-**启动前检查**（防止多实例内存泄漏）：
+**多轮攻防工作流**：
 
-```bash
-curl -sf http://127.0.0.1:<端口>/health && echo "已运行" || echo "未运行"
+```
+1. create -t <目标模型> --title "攻击实验"     → 拿到 session_id
+2. send -s <session_id> -p "正常输入"           → 建立基线
+3. send -s <session_id> -p "轻微注入"           → 试探边界
+4. send -s <session_id> -p "加强注入"           → 逐步引诱
+5. ...重复 send...
+6. summarize -s <session_id>                    → 对话过长时压缩上下文
+7. delete -s <session_id>                       → 攻击结束，清理会话
 ```
 
-如果已运行则复用，**绝对禁止启动多个实例**。
-
-**Single 模式**（一次性调用，输出 JSON 到 stdout）：
-
-```bash
-# 示例
-$PYTHON_CMD tools/opencode-runner/main.py -t opencode-go/kimi-k2.6 -p "提示词"
-```
-
-**Multi 模式**（HTTP 服务器，支持多轮。模型和端口按实际需求替换）：
-
-```bash
-# 启动服务器（后台）
-$PYTHON_CMD tools/opencode-runner/main.py -t <目标模型> -m multi --port <端口> &
-
-# 以下用 <base> 代表 http://127.0.0.1:<端口>
-
-# 发送提示词（维护多轮上下文）
-curl -s -X POST <base>/prompt -H "Content-Type: application/json" -d '{"content": "..."}'
-
-# 新会话（重置对话历史）
-curl -s -X POST <base>/session/new
-
-# 关闭服务器
-curl -s -X POST <base>/shutdown
-```
+**注意事项**：
+- 无需启动/关闭服务器（直接调用本地 OpenCode serve，它已在运行）
+- session_id 必须保存好，丢失后无法继续同一对话（可用 `list` 找回）
+- 对话超过 20 轮时建议执行 `summarize` 压缩上下文
 
 ### AI 分析辅助库（通过 $AGENT_DIR 调用）
 
@@ -308,6 +307,5 @@ results = sim.query_batch(["输入"] * 3, temperature=0.3)
 
 - **不向生产环境发送破坏性请求**（CTF 靶机和授权测试环境除外）
 - **不发送大量请求导致 DoS**（即使是测试环境也注意速率控制）
-- **opencode-runner 单实例约束**：启动前必须 `curl -sf http://127.0.0.1:<端口>/health` 检查是否已有实例。已存在则复用，**绝对禁止启动多个实例**导致内存泄漏
-- **opencode-runner 用完必须关闭**：分析结束后 `curl -s -X POST http://127.0.0.1:<端口>/shutdown` 关闭服务器
+- **dialogue 会话管理**：攻击结束后用 `delete` 清理会话；对话过长时用 `summarize` 压缩上下文
 - 失败后不静默忽略，必须说明失败原因
