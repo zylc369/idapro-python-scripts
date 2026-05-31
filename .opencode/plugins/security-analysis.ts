@@ -1053,7 +1053,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       // const shouldInject =
       //   session.systemTransformCount <= 2 ||
       //   session.systemTransformCount % 10 === 0;
-      const shouldInject = false; // 目前调试阶段每次都注入，确认稳定后改回按频率注入
+      const shouldInject = true; // 目前调试阶段每次都注入，确认稳定后改回按频率注入
 
       if (!shouldInject) {
         debugLog(
@@ -1069,7 +1069,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       const envSection = buildEnvSection(agentName, config, envInfo, sessionID);
       output.system.push(envSection);
       debugLog(
-        `system.transform: #${session.systemTransformCount} 注入环境信息 sessionID=${sessionID}, agent=${agentName}, primaryAgent=${session.primaryAgent}, configMissing=${configMissing}, length=${envSection.length}, envSection=\n${envSection}`,
+        `[INFO] system.transform: #${session.systemTransformCount} 注入环境信息 sessionID=${sessionID}, agent=${agentName}, primaryAgent=${session.primaryAgent}, configMissing=${configMissing}, length=${envSection.length}, envSection=\n${envSection}`,
         sessionID,
       );
     },
