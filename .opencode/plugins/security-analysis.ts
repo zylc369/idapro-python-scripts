@@ -71,7 +71,8 @@ function writeLog(logFile: string, msg: string): void {
   try {
     mkdirSync(dirname(logFile), { recursive: true });
     trimLogFile(logFile);
-    const ts = new Date().toLocaleString("zh-CN", { hour12: false });
+    const now = new Date();
+    const ts = now.toLocaleString("zh-CN", { hour12: false }) + `.${String(now.getMilliseconds()).padStart(3, "0")}`;
     writeFileSync(logFile, `[${ts}] ${msg}\n`, { flag: "a" });
   } catch {}
 }

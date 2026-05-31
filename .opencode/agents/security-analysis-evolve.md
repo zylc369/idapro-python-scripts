@@ -19,9 +19,11 @@ Security Analysis 的完整架构（你必须理解并遵守这个分层）:
 ```
 $OPENCODE_ROOT/                              # 由插件注入，项目级 .opencode/ 或全局 ~/.config/opencode/
 ├── agents/
-│   ├── binary-analysis.md                # 二进制逆向 Agent（主 prompt，AI 编排器）
+│   ├── security-coordinator.md            # 复合安全任务编排 Agent（自动分发到专业 Agent）
+│   ├── binary-analysis.md                # 二进制逆向分析 Agent（主 prompt，AI 编排器）
 │   ├── mobile-analysis.md                # 移动端分析 Agent
 │   ├── web-analysis.md                   # Web 安全分析 Agent
+│   ├── ai-security-analysis.md           # AI 安全分析 Agent（提示注入 + 越狱攻击）
 │   └── security-analysis-evolve.md       # ← 你自己（本文件）
 ├── agents-rules/                         # Agent prompt 共享片段（Plugin 自动展开 {{buwai-rule:xxx}}）
 ├── plugins/
@@ -55,13 +57,21 @@ $OPENCODE_ROOT/                              # 由插件注入，项目级 .open
 │       ├── web-methodology.md            #   Web 安全分析方法论
 │       ├── web-vulnerabilities.md        #   Web 漏洞模式速查
 │       └── cache-poisoning.md            #   Web Cache Poisoning 专题
+├── ai-security-analysis/                 # AI 安全分析工具与知识库
+│   ├── scripts/                          # AI 安全分析脚本（LLM 模拟、客户端等）
+│   │   └── registry.json                 #   脚本注册表
+│   └── knowledge-base/                   # AI 安全知识库（按需加载）
+│       ├── llm-attack-methodology.md     #   LLM 攻击方法论
+│       ├── prompt-injection-patterns.md  #   提示注入模式
+│       └── ...                           #   其他 AI 安全文档
 └── commands/
     └── security-analysis-requirements/   # 进化需求文档
 
 归属规则:
   mobile-analysis/ 可引用 binary-analysis/ 的知识库和脚本（通过 $SHARED_DIR）
   web-analysis/ 可引用 binary-analysis/ 的知识库和脚本（通过 $SHARED_DIR）
-  binary-analysis/ 不可引用 mobile-analysis/ 或 web-analysis/ 的内容（单向依赖）
+  ai-security-analysis/ 可引用 binary-analysis/ 的知识库和脚本（通过 $SHARED_DIR）
+  binary-analysis/ 不可引用 mobile-analysis/、web-analysis/ 或 ai-security-analysis/ 的内容（单向依赖）
 
 依赖方向（单向，禁止反向）:
   _base.py ← _utils.py ← _analysis.py ← query.py / update.py / scripts/*.py
