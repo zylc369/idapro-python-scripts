@@ -430,7 +430,7 @@ function buildEnvSection(
   const fallbackAgent = getPrimaryAgent(sessionID);
   const scriptsDir = getScriptDir(agentName, fallbackAgent);
 
-  let envSection = `\n## 环境信息\n`;
+  let envSection = `\n## 全局环境和目录位置信息\n**Agent需要这些信息，它们非常关键。如果Agent忽略这些信息，Agent的运行将不符合预期！**\n`;
   envSection += `- 配置根目录 ($OPENCODE_ROOT): ${OPENCODE_ROOT}\n`;
 
   if (scriptsDir) {
