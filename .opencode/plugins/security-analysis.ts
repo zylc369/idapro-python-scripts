@@ -431,14 +431,14 @@ function buildEnvSection(
   const scriptsDir = getScriptDir(agentName, fallbackAgent);
 
   let envSection = `\n## 全局环境和目录位置信息\n**Agent需要这些信息，它们非常关键。如果Agent忽略这些信息，Agent的运行将不符合预期！**\n`;
-  envSection += `- 配置根目录 ($OPENCODE_ROOT): ${OPENCODE_ROOT}\n`;
+  envSection += `- 项目的OpenCode配置根目录 ($OPENCODE_ROOT)路径，即项目的\`.opencode\`路径，它里面包含项目的所有Agents、Plugins、知识库、工具、脚本: ${OPENCODE_ROOT}\n`;
 
   if (scriptsDir) {
-    envSection += `- Agent 目录 ($AGENT_DIR): ${scriptsDir}\n`;
+    envSection += `- Agent 目录 ($AGENT_DIR)路径，它是当前Agent所在目录，里面有专用于当前Agent的知识、工具和脚本: ${scriptsDir}\n`;
   }
 
-  const idaScriptsDir = join(OPENCODE_ROOT, AGENT_BINARY_ANALYSIS);
-  envSection += `- 共享目录 ($SHARED_DIR): ${idaScriptsDir}\n`;
+  const sharedDir = join(OPENCODE_ROOT, AGENT_BINARY_ANALYSIS);
+  envSection += `- 共享目录 ($SHARED_DIR)路径，它里面有共享的通用的知识、工具和脚本: ${sharedDir}\n`;
   const idaPath = config.ida_path || "未配置";
   envSection += `- IDA Pro: ${idaPath}\n`;
   envSection += `- Python ($PYTHON_CMD): ${PYTHON_CMD}\n`;
