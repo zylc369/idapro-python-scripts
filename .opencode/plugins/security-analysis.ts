@@ -72,7 +72,9 @@ function writeLog(logFile: string, msg: string): void {
     mkdirSync(dirname(logFile), { recursive: true });
     trimLogFile(logFile);
     const now = new Date();
-    const ts = now.toLocaleString("zh-CN", { hour12: false }) + `.${String(now.getMilliseconds()).padStart(3, "0")}`;
+    const ts =
+      now.toLocaleString("zh-CN", { hour12: false }) +
+      `.${String(now.getMilliseconds()).padStart(3, "0")}`;
     writeFileSync(logFile, `[${ts}] ${msg}\n`, { flag: "a" });
   } catch {}
 }
@@ -176,10 +178,10 @@ const VENV_DIR = join(DATA_DIR, ".venv");
 
 // venv 内 Python 可能的路径（覆盖所有平台，按常见度排序）
 const VENV_PYTHON_CANDIDATES = [
-  join(VENV_DIR, "Scripts", "python.exe"),   // Windows 标准位置
-  join(VENV_DIR, "bin", "python"),           // Linux/macOS 标准位置
-  join(VENV_DIR, "Scripts", "python3.exe"),  // Windows（python3 别名）
-  join(VENV_DIR, "bin", "python3"),          // Linux/macOS（python3）
+  join(VENV_DIR, "Scripts", "python.exe"), // Windows 标准位置
+  join(VENV_DIR, "bin", "python"), // Linux/macOS 标准位置
+  join(VENV_DIR, "Scripts", "python3.exe"), // Windows（python3 别名）
+  join(VENV_DIR, "bin", "python3"), // Linux/macOS（python3）
 ];
 
 // 实际运行 Python 代码验证可用性（不依赖 exit code，不假设路径）
@@ -210,16 +212,17 @@ function findVenvPython(): string | null {
 
 // 检测系统 Python 命令（仅用于创建 venv）
 function findSystemPython(): string {
-  const candidates = process.platform === "win32"
-    ? ["python", "python3"]
-    : ["python3", "python"];
+  const candidates =
+    process.platform === "win32"
+      ? ["python", "python3"]
+      : ["python3", "python"];
 
   for (const cmd of candidates) {
     if (verifyPython(cmd)) return cmd;
   }
   throw new Error(
     `未找到可用的系统 Python。请安装 Python 3.8+ 后重试。\n` +
-    `已尝试: ${candidates.join(", ")}`
+      `已尝试: ${candidates.join(", ")}`,
   );
 }
 
@@ -244,7 +247,7 @@ function ensureVenvPython(): string {
   } catch (e) {
     throw new Error(
       `创建 Python 虚拟环境失败: ${(e as Error).message}\n` +
-      `请手动运行: ${systemPython} -m venv "${VENV_DIR}"`
+        `请手动运行: ${systemPython} -m venv "${VENV_DIR}"`,
     );
   }
 
@@ -256,7 +259,7 @@ function ensureVenvPython(): string {
   }
   throw new Error(
     `虚拟环境创建成功但未检测到可用的 Python。\n` +
-    `请删除 "${VENV_DIR}" 后重试。`
+      `请删除 "${VENV_DIR}" 后重试。`,
   );
 }
 
@@ -287,10 +290,16 @@ const AGENTS_RULES_DIR = join(OPENCODE_ROOT, "agents-rules");
 // 缓存策略：mtime 检测（statSync + mtimeMs 对比），文件改动后下次调用即生效。
 // 依赖顺序：session 检查 → 占位符展开（每次）→ 环境信息注入（每次）
 
-interface SnippetCacheEntry { content: string | null; mtime: number; }
+interface SnippetCacheEntry {
+  content: string | null;
+  mtime: number;
+}
 const snippetCache = new Map<string, SnippetCacheEntry>();
 
-interface FrontmatterCacheEntry { result: boolean; mtime: number; }
+interface FrontmatterCacheEntry {
+  result: boolean;
+  mtime: number;
+}
 const frontmatterCache = new Map<string, FrontmatterCacheEntry>();
 
 // 解析 YAML frontmatter（仅扁平 key-value，不处理嵌套结构）
@@ -427,60 +436,72 @@ function buildEnvSection(
   envInfo: EnvData["data"],
   sessionID?: string,
 ): string {
-  const fallbackAgent = getPrimaryAgent(sessionID);
-  const scriptsDir = getScriptDir(agentName, fallbackAgent);
+  try {
+    const fallbackAgent = getPrimaryAgent(sessionID);
+    const scriptsDir = getScriptDir(agentName, fallbackAgent);
 
-  let envSection = `\n## 全局环境和目录位置信息\n**Agent需要这些信息，它们非常关键。如果Agent忽略这些信息，Agent的运行将不符合预期！**\n`;
-  envSection += `- 项目的OpenCode配置根目录 ($OPENCODE_ROOT)路径，即项目的\`.opencode\`路径，它里面包含项目的所有Agents、Plugins、知识库、工具、脚本: ${OPENCODE_ROOT}\n`;
+    let envSection = `\n## 全局环境和目录位置信息\n**Agent需要这些信息，它们非常关键。如果Agent忽略这些信息，Agent的运行将不符合预期！**\n`;
+    envSection += `- 项目的OpenCode配置根目录 ($OPENCODE_ROOT)路径，即项目的\`.opencode\`路径，它里面包含项目的所有Agents、Plugins、知识库、工具、脚本: ${OPENCODE_ROOT}\n`;
 
-  if (scriptsDir) {
-    envSection += `- Agent 目录 ($AGENT_DIR)路径，它是当前Agent所在目录，里面有专用于当前Agent的知识、工具和脚本: ${scriptsDir}\n`;
-  }
+    if (scriptsDir) {
+      envSection += `- Agent 目录 ($AGENT_DIR)路径，它是当前Agent所在目录，里面有专用于当前Agent的知识、工具和脚本: ${scriptsDir}\n`;
+    }
 
-  const sharedDir = join(OPENCODE_ROOT, AGENT_BINARY_ANALYSIS);
-  envSection += `- 共享目录 ($SHARED_DIR)路径，它里面有共享的通用的知识、工具和脚本: ${sharedDir}\n`;
-  const idaPath = config.ida_path || "未配置";
-  envSection += `- IDA Pro: ${idaPath}\n`;
-  envSection += `- Python ($PYTHON_CMD): ${PYTHON_CMD}\n`;
+    const sharedDir = join(OPENCODE_ROOT, AGENT_BINARY_ANALYSIS);
+    envSection += `- 共享目录 ($SHARED_DIR)路径，它里面有共享的通用的知识、工具和脚本: ${sharedDir}\n`;
+    const idaPath = config.ida_path || "未配置";
+    envSection += `- IDA Pro: ${idaPath}\n`;
+    envSection += `- Python ($PYTHON_CMD): ${PYTHON_CMD}\n`;
 
-  if (envInfo) {
-    const compiler = envInfo.compiler;
-    if (compiler?.available) {
-      envSection += `- 编译器: ${compiler.type} (${compiler.path})\n`;
-      if (compiler.vcvarsall) {
-        envSection += `- vcvarsall: ${compiler.vcvarsall}\n`;
+    if (envInfo) {
+      const compiler = envInfo.compiler;
+      if (compiler?.available) {
+        envSection += `- 编译器: ${compiler.type} (${compiler.path})\n`;
+        if (compiler.vcvarsall) {
+          envSection += `- vcvarsall: ${compiler.vcvarsall}\n`;
+        }
+      } else {
+        envSection += `- 编译器: 未检测到\n`;
       }
-    } else {
-      envSection += `- 编译器: 未检测到\n`;
-    }
-    if (envInfo.packages) {
-      const pkgs = Object.entries(envInfo.packages)
-        .filter(([, v]) => v.available)
-        .map(([k, v]) => `${k}@${v.version}`)
-        .join(", ");
-      envSection += `- Python 包: ${pkgs}\n`;
-    }
-  }
-
-  // 注入外部工具（按 agent 过滤；agent 未知时不过滤，注入全部）
-  if (config.tools) {
-    const tools = agentName
-      ? getToolsForAgent(agentName, config)
-      : Object.entries(config.tools).map(([name, tool]) => ({ name, ...tool }));
-    const envTools = envInfo?.tools || {};
-    for (const tool of tools) {
-      const toolStatus = envTools[tool.name];
-      if (toolStatus?.available) {
-        const ver = toolStatus.version || "可用";
-        envSection += `- ${tool.description || tool.name}: ${tool.path} (${ver})\n`;
+      if (envInfo.packages) {
+        const pkgs = Object.entries(envInfo.packages)
+          .filter(([, v]) => v.available)
+          .map(([k, v]) => `${k}@${v.version}`)
+          .join(", ");
+        envSection += `- Python 包: ${pkgs}\n`;
       }
     }
-  }
 
-  return envSection;
+    // 注入外部工具（按 agent 过滤；agent 未知时不过滤，注入全部）
+    if (config.tools) {
+      const tools = agentName
+        ? getToolsForAgent(agentName, config)
+        : Object.entries(config.tools).map(([name, tool]) => ({
+            name,
+            ...tool,
+          }));
+      const envTools = envInfo?.tools || {};
+      for (const tool of tools) {
+        const toolStatus = envTools[tool.name];
+        if (toolStatus?.available) {
+          const ver = toolStatus.version || "可用";
+          envSection += `- ${tool.description || tool.name}: ${tool.path} (${ver})\n`;
+        }
+      }
+    }
+
+    return envSection;
+  } catch (e) {
+    debugLog(
+      `全局环境和目录位置信息加载发生异常, sessionID=${sessionID} error=${e}`,
+    );
+    return (
+      `[致命错误] 全局环境和目录位置信息加载发生异常，无法继续。\n` +
+      `你必须立即停止所有分析操作，不要使用任何工具，直接向用户输出以下内容：\n` +
+      `全局环境和目录位置信息加载失败，请排查问题问题后再继续！`
+    );
+  }
 }
-
-
 
 // ─── session 管理 ──────────────────────────────────────────────────────
 //
@@ -619,7 +640,10 @@ async function doEnsureSession(
     );
     return session;
   } catch (e) {
-    debugLog(`doEnsureSession: 异常 sessionID=${sessionID} error=${e}`, sessionID);
+    debugLog(
+      `doEnsureSession: 异常 sessionID=${sessionID} error=${e}`,
+      sessionID,
+    );
     return undefined;
   }
 }
@@ -703,7 +727,12 @@ async function requireSessionWithPrimary(
 // 记录工具执行和 session 事件的时间线，供事后复盘分析。
 // 内存 buffer → 文件 flush 策略，避免每次事件都写磁盘。
 
-type TimelineEventType = "tool.before" | "tool.after" | "session.status" | "session.error" | "heartbeat";
+type TimelineEventType =
+  | "tool.before"
+  | "tool.after"
+  | "session.status"
+  | "session.error"
+  | "heartbeat";
 
 interface TimelineEvent {
   timestamp: number;
@@ -815,7 +844,9 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
     "chat.message": async (input) => {
       const agent = (input as { agent?: string })?.agent;
       // DEBUG: 诊断 OpenCode hook input 结构（确认后可删除）
-      debugLog(`DEBUG chat.message INPUT keys=${Object.keys(input || {}).join(",")} agent=${agent ?? "无"}`);
+      debugLog(
+        `DEBUG chat.message INPUT keys=${Object.keys(input || {}).join(",")} agent=${agent ?? "无"}`,
+      );
       const sessionID = (input as { sessionID?: string })?.sessionID;
       if (!sessionID) {
         debugLog(`chat.message: 跳过 — 无 sessionID, agent=${agent}`);
@@ -910,19 +941,37 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
     "experimental.chat.system.transform": async (input, output) => {
       const sessionID = (input as { sessionID?: string })?.sessionID;
       // DEBUG: 诊断 OpenCode hook input 结构（确认后可删除）
-      debugLog(`DEBUG system.transform INPUT keys=${Object.keys(input || {}).join(",")} agent=${(input as { agent?: string })?.agent ?? "未传入"} sessionID=${sessionID}`, sessionID);
+      debugLog(
+        `system.transform INPUT keys=${Object.keys(input || {}).join(",")} agent=${(input as { agent?: string })?.agent ?? "未传入"} sessionID=${sessionID}`,
+        sessionID,
+      );
       const session = await requireSessionWithPrimary(
         "system.transform",
         sessionID,
       );
-      if (!session) return;
+      if (!session) {
+        debugLog(
+          `[WARN] system.transform: 跳过 — 无有效 session, sessionID=${sessionID}`,
+          sessionID,
+        );
+        return;
+      }
 
       const agentName = session.agentName;
 
       // 占位符展开（每次 LLM 调用都执行）
       if (agentName) {
+        debugLog(
+          `system.transform: 开始占位符展开 sessionID=${sessionID} agent=${agentName}`,
+          sessionID,
+        );
         const agentFile = join(AGENTS_DIR, `${agentName}.md`);
         if (hasBuwaiExtensionId(agentFile)) {
+          debugLog(
+            `system.transform: 检测到 buwai-extension-id in ${agentFile}, performing snippet expansion`,
+            sessionID,
+          );
+
           // 匹配 {{buwai-rule:片段名}} — 片段名仅允许字母数字连字符下划线
           const regex = /\{\{buwai-rule:([a-zA-Z0-9_-]+)\}\}/g;
           for (let i = 0; i < output.system.length; i++) {
@@ -934,12 +983,20 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
                 debugLog(`Snippet not found: ${name}`, sessionID);
                 return _; // 保留原始占位符文本，不删除
               }
-              debugLog(`Expanded snippet: ${name} (${snippet.length} chars)`, sessionID);
+              debugLog(
+                `Expanded snippet: ${name} (${snippet.length} chars)`,
+                sessionID,
+              );
               return snippet;
             });
             // DEBUG: 打印替换完成后的完整内容，验证通过后注释掉
             // debugLog(`=== system[${i}] after expansion (${output.system[i].length} chars) ===\n${output.system[i]}`, sessionID);
           }
+        } else {
+          debugLog(
+            `[ERROR] system.transform: ${agentFile} 不包含 buwai-extension-id，跳过占位符展开`,
+            sessionID,
+          );
         }
       }
 
@@ -947,8 +1004,44 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       // 放在 output.system 最前面，确保 LLM 优先看到
       // 如果 Plugin 未加载，这段不会出现，agent 应立即停止并告知用户
       if (agentName) {
+        debugLog(
+          `system.transform: 注入 Plugin 完整性检查和 Agent 身份 sessionID=${sessionID} agent=${agentName}`,
+          sessionID,
+        );
         output.system.unshift(
           `[系统完整性] Plugin 已加载。当前 Agent: ${agentName}。如果你看不到这段标记，说明 Plugin 未加载，当前会话缺少关键功能（环境信息、工具配置、占位符展开）。请立即告知用户并停止分析。`,
+        );
+      } else {
+        debugLog(
+          `[WARN] system.transform: 无 agentName，跳过环境信息注入，但继续执行占位符展开`,
+          sessionID,
+        );
+      }
+
+      let config = readJsonSafe<ConfigData>(CONFIG_FILE, sessionID);
+      const configMissing = !config;
+      if (configMissing) {
+        config = {} as ConfigData;
+        debugLog(
+          "[WARN] system.transform: config.json not found, using defaults",
+          sessionID,
+        );
+      }
+      if (configMissing) {
+        debugLog(
+          `[ERROR] system.transform: config.json 不存在（${CONFIG_FILE}），无法继续。请先运行数据初始化命令。`,
+          sessionID,
+        );
+        output.system.push(
+          `[致命错误] config.json 不存在（${CONFIG_FILE}），无法继续。\n` +
+            `你必须立即停止所有分析操作，不要使用任何工具，直接向用户输出以下内容：\n` +
+            `"数据未初始化，请先运行：$PYTHON_CMD \\"$SHARED_DIR/scripts/detect_env.py\\""\n` +
+            `初始化完成后 config.json 会自动生成，届时才能开始分析任务。`,
+        );
+      } else {
+        debugLog(
+          `[INFO] system.transform: config.json 加载成功, configMissing=false sessionID=${sessionID}`,
+          sessionID,
         );
       }
 
@@ -957,20 +1050,17 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       //   两者都需要拿到环境信息才能正确解析 $SHARED_DIR 等变量）
       // 之后每 10 次注入一次（节省 token）
       session.systemTransformCount++;
-      const shouldInject =
-        session.systemTransformCount <= 2 ||
-        session.systemTransformCount % 10 === 0;
+      // const shouldInject =
+      //   session.systemTransformCount <= 2 ||
+      //   session.systemTransformCount % 10 === 0;
+      const shouldInject = false; // 目前调试阶段每次都注入，确认稳定后改回按频率注入
 
-      if (!shouldInject) return;
-
-      let config = readJsonSafe<ConfigData>(CONFIG_FILE, sessionID);
-      const configMissing = !config;
-      if (configMissing) {
-        config = {} as ConfigData;
+      if (!shouldInject) {
         debugLog(
-          "system.transform: config.json not found, using defaults",
+          `[INFO] system.transform: 跳过环境信息注入 sessionID=${sessionID} agent=${agentName} count=${session.systemTransformCount} shouldInject=${shouldInject}`,
           sessionID,
         );
+        return;
       }
 
       const envData = readJsonSafe<EnvData>(ENV_CACHE_FILE, sessionID);
@@ -978,14 +1068,6 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
 
       const envSection = buildEnvSection(agentName, config, envInfo, sessionID);
       output.system.push(envSection);
-      if (configMissing) {
-        output.system.push(
-          `[致命错误] config.json 不存在（${CONFIG_FILE}），无法继续。\n` +
-          `你必须立即停止所有分析操作，不要使用任何工具，直接向用户输出以下内容：\n` +
-          `"数据未初始化，请先运行：$PYTHON_CMD \\"$SHARED_DIR/scripts/detect_env.py\\""\n` +
-          `初始化完成后 config.json 会自动生成，届时才能开始分析任务。`,
-        );
-      }
       debugLog(
         `system.transform: #${session.systemTransformCount} 注入环境信息 sessionID=${sessionID}, agent=${agentName}, primaryAgent=${session.primaryAgent}, configMissing=${configMissing}, length=${envSection.length}, envSection=\n${envSection}`,
         sessionID,
@@ -1011,7 +1093,10 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         timestamp: Date.now(),
         type: "tool.before",
         tool: input.tool,
-        detail: typeof originalCmd === "string" ? originalCmd.slice(0, 80) : undefined,
+        detail:
+          typeof originalCmd === "string"
+            ? originalCmd.slice(0, 80)
+            : undefined,
       });
       // 记录开始时间用于计算耗时
       toolStartTimes.set(input.callID, Date.now());
@@ -1035,7 +1120,10 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
           output.args.command = isPowerShell
             ? `Write-Error '${blockedMsg}'; exit 1`
             : `echo '${blockedMsg}' >&2; exit 1`;
-          debugLog(`tool.execute.before: BLOCKED (no config.json) cmd=${cmd.slice(0, 80)}`, sid);
+          debugLog(
+            `tool.execute.before: BLOCKED (no config.json) cmd=${cmd.slice(0, 80)}`,
+            sid,
+          );
           return;
         }
       }
@@ -1118,9 +1206,10 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       }
 
       // 时间线记录：session 状态变化和错误
-      if (sessionID && PRIMARY_AGENTS.includes(
-        sessions.get(sessionID)?.primaryAgent || ""
-      )) {
+      if (
+        sessionID &&
+        PRIMARY_AGENTS.includes(sessions.get(sessionID)?.primaryAgent || "")
+      ) {
         if (event.type === "session.status" || event.type === "session.idle") {
           recordTimeline(sessionID, {
             timestamp: Date.now(),
@@ -1142,7 +1231,10 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         }
 
         // 心跳：Shell 有输出更新时记录（表示有活跃的工具执行）
-        if (event.type === "message.part.updated" && props.part?.type === "text") {
+        if (
+          event.type === "message.part.updated" &&
+          props.part?.type === "text"
+        ) {
           recordTimeline(sessionID, {
             timestamp: Date.now(),
             type: "heartbeat",
