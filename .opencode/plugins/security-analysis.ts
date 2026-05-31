@@ -24,6 +24,7 @@ const LOGS_DIR = join(DATA_DIR, "logs");
 const DEFAULT_LOG = join(LOGS_DIR, "plugin_debug.log");
 const MAX_LOG_SIZE = 5 * 1024 * 1024;
 const KEEP_SIZE = 2 * 1024 * 1024;
+const ENV_INJECTION_FREQUENCY = 5; // 每 N 次请求注入一次环境信息
 
 const AGENT_BINARY_ANALYSIS = "binary-analysis";
 const AGENT_MOBILE_ANALYSIS = "mobile-analysis";
@@ -937,7 +938,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
     // 每次 LLM 请求前触发（awaited）
     // 职责：按 agent 注入环境信息到系统提示
     // 注意：output.system 每次请求都重建，不会累积
-    //       前 2 次必注入（标题生成 #1 + 主聊天 #2），之后每 10 次注入一次
+    //       前 2 次必注入（标题生成 #1 + 主聊天 #2），之后每 X 次注入一次
     "experimental.chat.system.transform": async (input, output) => {
       const sessionID = (input as { sessionID?: string })?.sessionID;
       // DEBUG: 诊断 OpenCode hook input 结构（确认后可删除）
@@ -1048,16 +1049,16 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
       // 环境信息注入频率：
       // 前 2 次都注入（新会话 step=1 时标题生成请求先触发 #1，主聊天 #2，
       //   两者都需要拿到环境信息才能正确解析 $SHARED_DIR 等变量）
-      // 之后每 10 次注入一次（节省 token）
+      // 之后每 X 次注入一次（节省 token）
       session.systemTransformCount++;
-      // const shouldInject =
-      //   session.systemTransformCount <= 2 ||
-      //   session.systemTransformCount % 10 === 0;
-      const shouldInject = true; // 目前调试阶段每次都注入，确认稳定后改回按频率注入
+      const shouldInject =
+        session.systemTransformCount <= 3 ||
+        session.systemTransformCount % ENV_INJECTION_FREQUENCY === 0;
+      // const shouldInject = true; // 目前调试阶段每次都注入，确认稳定后改回按频率注入
 
       if (!shouldInject) {
         debugLog(
-          `[INFO] system.transform: 跳过环境信息注入 sessionID=${sessionID} agent=${agentName} count=${session.systemTransformCount} shouldInject=${shouldInject}`,
+          `[INFO] system.transform: #${session.systemTransformCount} 跳过环境信息注入 sessionID=${sessionID} agent=${agentName}`,
           sessionID,
         );
         return;
