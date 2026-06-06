@@ -127,11 +127,65 @@ CDP 中执行 JavaScript 的命令是 `Runtime.evaluate`：
 # 通过 CDP 在 Chrome 中执行 JavaScript
 cdp_session.send("Runtime.evaluate", {
     "expression": "1 + 2",           # 要执行的 JS 代码
-    "returnByValue": True,            # 返回值而不是引用
+    "returnByValue": True,            # 返回值而不是引用，下面有解释
     "includeCommandLineAPI": True,    # 关键！见下一节
 })
 # 返回: {"result": {"value": 3}}
 ```
+
+**`returnByValue` 是什么意思？**
+
+在 CDP 中，JavaScript 表达式的结果有两种返回方式：
+
+| 参数 | 行为 | 返回内容 |
+|------|------|---------|
+| `returnByValue: False`（默认） | 返回引用 | `{"type": "object", "objectId": "12345.abc"}` |
+| `returnByValue: True` | 返回值 | `{"type": "number", "value": 3}` |
+
+用类比来理解：
+
+```
+returnByValue: False（引用模式）
+  你问 Chrome: "1+2 等于多少？"
+  Chrome 回答: "结果在第三个抽屉里，自己去拿" → objectId（远程对象的句柄）
+  → 要看实际内容，还需要再发一次 CDP 请求：
+     cdp_session.send("Runtime.getProperties", {"objectId": "12345.abc"})
+
+returnByValue: True（值模式）
+  你问 Chrome: "1+2 等于多少？"
+  Chrome 回答: "3" → 直接序列化为 JSON 返回实际值
+```
+
+举个例子，对一个对象：
+
+```python
+# 引用模式（默认）
+result = cdp_session.send("Runtime.evaluate", {
+    "expression": "({name: 'Alice', age: 30})",
+    "returnByValue": False,
+})
+# 返回: {"result": {"type": "object", "objectId": "12345.abc"}}
+# 你只拿到一个 ID，看不到 name 和 age
+
+# 值模式
+result = cdp_session.send("Runtime.evaluate", {
+    "expression": "({name: 'Alice', age: 30})",
+    "returnByValue": True,
+})
+# 返回: {"result": {"type": "object", "value": {"name": "Alice", "age": 30}}}
+# 直接拿到完整数据
+```
+
+**什么时候用哪个？**
+
+| 场景 | 选择 | 原因 |
+|------|------|------|
+| 简单值（数字、字符串、布尔） | `True` | 直接拿到值，方便 |
+| 需要检查对象属性 | `True` | 大多数情况够用 |
+| 对象很大/嵌套很深 | `False` | 避免序列化开销 |
+| 需要继续操作这个对象 | `False` | 保留引用，可以后续调用方法 |
+
+本题中我们全部用 `returnByValue: True`，因为我们只需要简单的结果（step 值、success 布尔值）。
 
 ### 1.4 什么是 includeCommandLineAPI
 
@@ -158,6 +212,33 @@ cdp.send("Runtime.evaluate", {
 # 成功
 ```
 
+**Console Utilities API（命令行工具 API）完整列表**
+
+这些函数只存在于 DevTools Console 环境中，在网页的普通 `<script>` 标签或 Node.js 中都不存在：
+
+| 函数 | 作用 |
+|------|------|
+| `$(selector)` | 等价于 `document.querySelector()` |
+| `$$(selector)` | 等价于 `document.querySelectorAll()` |
+| `$0` | 当前在 Elements 面板中选中的元素 |
+| **`debug(fn)`** | **给函数设置断点（函数被调用时暂停）← 本题核心** |
+| **`undebug(fn)`** | **取消断点** |
+| `monitor(fn)` | 监控函数调用（Console 中打印调用信息） |
+| `unmonitor(fn)` | 取消监控 |
+| `copy(object)` | 复制对象到剪贴板 |
+| `clear()` | 清空 Console |
+| `keys(object)` | 返回对象的所有键名 |
+| `values(object)` | 返回对象的所有值 |
+| `table(data)` | 以表格形式展示数据 |
+
+```javascript
+// ✅ 在 DevTools Console 中直接输入 → 正常工作
+debug(myFunction);
+
+// ❌ 在网页的 <script> 标签中 → 报错
+// ReferenceError: debug is not defined
+```
+
 **这和我们手动在 DevTools Console 里输入命令有什么区别？**
 
 从 JavaScript 执行的角度看，**几乎没有区别**。`Runtime.evaluate` + `includeCommandLineAPI` 就是让 CDP 在和 Console 相同的环境中执行代码。
@@ -179,16 +260,19 @@ const greeting = `Hello, ${name}!`;  // "Hello, Alice!"
 
 ```javascript
 function myTag(strings, ...values) {
-    // strings: 不含表达式的字符串部分数组
-    // values: 表达式的值
+    // strings: ${} 之间的静态文本部分（数组）
+    // values: ${} 中表达式的求值结果（剩余参数）
     return strings[0] + values[0] + strings[1];
 }
 
 const name = "Alice";
 const result = myTag`Hello, ${name}!`;  // "Hello, Alice!"
+//                   ^^^^^   ^^^^^
+//                  strings[0]  values[0]="Alice"
+//                              strings[1]="!"
 ```
 
-当没有表达式时，标签函数收到一个单元素数组：
+当模板字符串中没有 `${}` 时，标签函数只收到 `strings` 数组（`values` 为空）：
 
 ```javascript
 function shout(parts) {
@@ -196,19 +280,27 @@ function shout(parts) {
 }
 
 shout`hello`;  // "HELLO"
+// parts = ["hello"]，没有 values
 ```
 
-**本题中的应用**：题目把 ROT13 函数（存储在变量名 `ﾠ` 中，即 U+FFA0）当作标签函数，对 pool 字符串进行隐式变换：
+**本题中的应用**：题目定义了一个变量，变量名是 `ﾠ`（U+FFA0，一个不可见字符），这个变量的值是一个**做 ROT13 变换的函数**。然后把它当作 tagged template 的标签函数，对 pool 字符串进行隐式变换：
 
 ```javascript
-// 表面上看：给 pool 赋一个模板字符串
-let pool = ﾠ`?o>...\`5`;
+// 1. 题目先定义了一个函数，变量名是不可见字符
+let ﾠ = function(s) { /* 做 ROT13 变换 */ };
 
-// 实际上：ﾠ(ROT13函数) 被当作标签函数调用，pool 得到的是 ROT13 的结果
-// 等价于：pool = rot13("?o>...`5")
+// 2. 然后用不可见变量名作为标签函数
+let pool = ﾠ`?o>...\`5`;
+//        ↑ 这个不可见字符实际上是一个函数名
+//        tagged template 会自动调用这个函数
+
+// 等价于：
+let pool = rot13("?o>...`5")
 ```
 
-这个trick非常隐蔽——代码看起来只是简单的赋值，但暗中调用了 ROT13 函数。
+这个 trick 非常隐蔽，有两层伪装：
+- **第一层**：变量名 `ﾠ`（U+FFA0）在编辑器中几乎不可见，阅读代码时很难注意到这里有一个标签函数
+- **第二层**：tagged template 语法让函数调用看起来像普通的字符串赋值
 
 ### 1.6 什么是 ROT13 和 ROT47 编码
 
@@ -219,14 +311,14 @@ ROT13("Hello") = "Uryyb"
 ROT13("Uryyb") = "Hello"
 ```
 
-**ROT47**：比 ROT13 更通用的版本，作用于 ASCII 可见字符范围（33-126）。每个字符的 ASCII 码移动 47 位。
+**ROT47**：比 ROT13 更通用的版本，作用于 ASCII 可见字符范围（33-126，共 94 个字符）。每个字符的 ASCII 码移动 47 位。和 ROT13 一样，ROT47 也是自逆的：对结果再做一次 ROT47 就还原了（47 × 2 = 94，刚好一圈）。
 
 ```
-ROT47("A")  → "p"   (65 → 112)
-ROT47("p")  → "A"   (112 → 65)
+ROT47("Hello") = "w*44>"
+ROT47("w*44>") = "Hello"
 ```
 
-本题中 pool 字符串经过 **ROT13 → ROT47** 两层变换，解码后得到真正的字符池。
+本题中 pool 字符串经过 **ROT13 → ROT47** 两层变换，解码后得到真正的字符池。详细的解码过程见 [3.9 机制八：tagged template 隐式 ROT13](#39-机制八tagged-template-隐式-rot13)。
 
 ### 1.7 JavaScript 中的 Unicode 隐身字符
 
@@ -245,24 +337,39 @@ console.log(window.step);    // 100
 console.log(window.stepﾠ);   // 5
 ```
 
-在本题中，`double()` 函数看似会修改 `window.step`（翻倍），实际上修改的是 `window.stepﾠ`——一个完全无关的变量。这就是一个障眼法。
+在本题中，`double()` 函数看似会修改 `window.step`（翻倍），实际上修改的是 `window.stepﾠ`——一个完全无关的变量。这就是一个障眼法。（`window.step` 是题目的核心计数器，详见 [2.4 三个核心函数](#24-三个核心函数anti-check-unlock) 和 [3.2 机制一](#32-机制一instrument-debug-condition-性能计数器)）
 
 ### 1.8 什么是 Proxy 和 Object.defineProperty
 
 这两个是 JavaScript 的高级特性，题目用它们来实现"每次调用数组方法都计数"的效果。
 
-**Object.defineProperty** 可以修改对象属性的描述符：
+**Object.defineProperty** 可以在对象上定义新属性或修改现有属性。第三个参数叫**属性描述符（descriptor）**，分为两种类型：
+
+| 类型 | 包含的字段 | 本质 |
+|------|-----------|------|
+| **数据描述符** | `value`、`writable` | 直接存一个值（任何类型） |
+| **访问器描述符** | `get`、`set` | 访问时调函数、赋值时调函数 |
 
 ```javascript
 const obj = { name: "Alice" };
 
-// 把 name 属性替换为 getter——每次访问时执行函数
+// 数据描述符——直接存值（默认行为）
+Object.defineProperty(obj, "age", {
+    value: 30,       // 存的值
+    writable: true,  // 可以修改
+});
+console.log(obj.age);  // 30，直接返回存的值
+
+// 访问器描述符——访问时执行函数
 Object.defineProperty(obj, "name", {
     get: () => { console.log("name 被访问了!"); return "Alice"; }
 });
 
 console.log(obj.name);  // 先打印 "name 被访问了!"，然后打印 "Alice"
+//                    ↑ 看起来像访问普通值，实际上调用了 get 函数
 ```
+
+**关键点**：从使用方式上无法区分一个属性是数据描述符还是访问器描述符——`obj.name` 在两种情况下写法完全一样。题目正是利用这一点，偷偷把数组方法替换成了带 `step++` 的访问器（详见 [3.3 机制二](#33-机制二instrumentprototype原型链-getter-劫持) 和 [3.4 机制三](#34-机制三instrumentprototypeofprototypeproxy-原型拦截)）。
 
 **Proxy** 可以拦截对象的所有操作：
 
