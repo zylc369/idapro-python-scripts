@@ -388,7 +388,7 @@ arr[0];      // 打印 "访问了属性: 0"
 
 在本题中：
 - `instrumentPrototype()` 用 `Object.defineProperty` 给 `Array.prototype` 上的方法（shift、splice 等）设置了 getter，每次访问这些方法时 `step++`
-- `instrumentPrototypeOfPrototype()` 用 `Proxy` 包裹了 `Array.prototype` 的原型，拦截所有属性查找，每次也 `step++`
+- `instrumentPrototypeOfPrototype()` 用 `Proxy` 包裹了 `Array.prototype` 的原型，拦截所有属性查找，每次也 `step++`（详见 [3.4 机制三](#34-机制三instrumentprototypeofprototypeproxy-原型拦截)）
 
 这两个机制共同构成了 step 计数器的一部分——即使没有 debug condition，这些 getter 和 proxy 也会在每次操作时增加 step。
 
@@ -678,6 +678,8 @@ function instrumentPrototype(o) {
 
 ### 3.4 机制三：instrumentPrototypeOfPrototype()——Proxy 原型拦截
 
+源码：
+
 ```javascript
 function instrumentPrototypeOfPrototype(o) {
     const handler = {};
@@ -688,15 +690,316 @@ function instrumentPrototypeOfPrototype(o) {
 }
 ```
 
-**逐步解读**：
+调用方式：
 
-1. `Object.getPrototypeOf(Array.prototype)` — 获取 Array.prototype 的原型，即 `Object.prototype`
-2. `new Proxy(Object.prototype, handler)` — 用 Proxy 包裹 Object.prototype
-3. `Object.setPrototypeOf(Array.prototype, proxy)` — 把 Array.prototype 的原型设为这个 Proxy
+```javascript
+instrumentPrototypeOfPrototype(Array.prototype);
+```
 
-Proxy 的 handler 拦截所有 Reflect 操作（get、set、has、deleteProperty 等），每次都 `step++`。
+所以函数内部 `o = Array.prototype`。
 
-**效果**：当在数组上查找一个**不在 Array.prototype 自身属性上**的属性（比如 `[0].step`），引擎会继续上溯到 Array.prototype 的原型（即 Proxy），触发 Proxy 的 get 拦截器 → step++。
+下面逐行拆解。
+
+---
+
+#### 第一行：`const handler = {};`
+
+创建一个空的普通 JavaScript 对象。这个对象将用来存放 Proxy 的所有拦截规则。
+
+---
+
+#### 第二行：`Reflect.ownKeys(Reflect).forEach(h => handler[h] = (a, b, c) => (step++) && Reflect[h](a, b, c));`
+
+这行最长，逐段拆。
+
+##### 2.1 `Reflect` 是什么
+
+`Reflect` 是 JavaScript 内置对象，它的每个方法对应一种对象操作：
+
+| Reflect 方法 | 等价于 |
+|-------------|--------|
+| `Reflect.get(obj, "name")` | `obj.name`（访问属性） |
+| `Reflect.set(obj, "name", "x")` | `obj.name = "x"`（设置属性） |
+| `Reflect.has(obj, "name")` | `"name" in obj`（检查属性是否存在） |
+| `Reflect.deleteProperty(obj, "name")` | `delete obj.name`（删除属性） |
+| `Reflect.apply(fn, thisArg, args)` | `fn.apply(thisArg, args)`（调用函数） |
+| `Reflect.construct(Fn, args)` | `new Fn(...args)`（构造实例） |
+| ... 共 13 个方法 | |
+
+`Reflect` 不是目标对象，它只是"操作对象的工具"。它不存数据，只提供方法。
+
+##### 2.2 `Reflect.ownKeys(Reflect)`
+
+获取 `Reflect` 对象身上所有自身方法的名字，返回一个数组：
+
+```javascript
+["get", "set", "has", "deleteProperty", "apply", "construct",
+ "getOwnPropertyDescriptor", "defineProperty", "getPrototypeOf",
+ "setPrototypeOf", "isExtensible", "preventExtensions", "ownKeys"]
+```
+
+一共 13 个方法名。这些名字既是 `Reflect` 的方法名，也是 Proxy handler 支持的拦截操作类型名——这不是巧合，而是 JavaScript 标准的设计：**Proxy handler 的 13 种操作类型，和 `Reflect` 的 13 个方法一一对应。**
+
+##### 2.3 `.forEach(h => ...)`
+
+遍历上面那个数组，`h` 每次循环取一个方法名。`h` 依次是 `"get"`、`"set"`、`"has"`、`"deleteProperty"` ... 直到 13 个全部处理完。
+
+##### 2.4 循环体：`handler[h] = (a, b, c) => (step++) && Reflect[h](a, b, c)`
+
+每次循环给 `handler` 对象加一条拦截规则。以 `h = "get"` 为例：
+
+```javascript
+handler["get"] = (a, b, c) => (step++) && Reflect["get"](a, b, c);
+```
+
+这是一个箭头函数，拆开看：
+
+- `(a, b, c)` — 三个参数。参数的值由 Proxy 自动传入（后面详细说）
+- `step++` — 先把 step 加 1，返回旧值（正数，truthy）
+- `&&` — 左边是 truthy，继续执行右边
+- `Reflect[h](a, b, c)` — 调用 `Reflect` 对应的方法，执行原始操作并返回结果
+
+再以 `h = "set"` 为例，循环到这次时等价于：
+
+```javascript
+handler["set"] = (a, b, c) => (step++) && Reflect["set"](a, b, c);
+```
+
+同样的模式：计数，然后执行原始操作。
+
+##### 2.5 出题人为什么不直接写
+
+完全可以直接写，效果一模一样：
+
+```javascript
+const handler = {
+    get:                (a,b,c) => (step++) && Reflect.get(a, b, c),
+    set:                (a,b,c) => (step++) && Reflect.set(a, b, c),
+    has:                (a,b,c) => (step++) && Reflect.has(a, b, c),
+    deleteProperty:     (a,b,c) => (step++) && Reflect.deleteProperty(a, b, c),
+    apply:              (a,b,c) => (step++) && Reflect.apply(a, b, c),
+    construct:          (a,b,c) => (step++) && Reflect.construct(a, b, c),
+    getOwnPropertyDescriptor: (a,b,c) => (step++) && Reflect.getOwnPropertyDescriptor(a, b, c),
+    defineProperty:     (a,b,c) => (step++) && Reflect.defineProperty(a, b, c),
+    getPrototypeOf:     (a,b,c) => (step++) && Reflect.getPrototypeOf(a, b, c),
+    setPrototypeOf:     (a,b,c) => (step++) && Reflect.setPrototypeOf(a, b, c),
+    isExtensible:       (a,b,c) => (step++) && Reflect.isExtensible(a, b, c),
+    preventExtensions:  (a,b,c) => (step++) && Reflect.preventExtensions(a, b, c),
+    ownKeys:            (a,b,c) => (step++) && Reflect.ownKeys(a, b, c),
+};
+```
+
+出题人用 `forEach` 只是因为 13 条规则的格式完全一样，只有方法名不同，用循环生成更简洁。这是代码风格的选择，不是技术上的必须。
+
+##### 2.6 循环结束后 handler 的内容
+
+```javascript
+handler = {
+    get:                (a,b,c) => (step++) && Reflect.get(a, b, c),
+    set:                (a,b,c) => (step++) && Reflect.set(a, b, c),
+    has:                (a,b,c) => (step++) && Reflect.has(a, b, c),
+    deleteProperty:     (a,b,c) => (step++) && Reflect.deleteProperty(a, b, c),
+    apply:              (a,b,c) => (step++) && Reflect.apply(a, b, c),
+    construct:          (a,b,c) => (step++) && Reflect.construct(a, b, c),
+    getOwnPropertyDescriptor: (a,b,c) => (step++) && Reflect.getOwnPropertyDescriptor(a, b, c),
+    defineProperty:     (a,b,c) => (step++) && Reflect.defineProperty(a, b, c),
+    getPrototypeOf:     (a,b,c) => (step++) && Reflect.getPrototypeOf(a, b, c),
+    setPrototypeOf:     (a,b,c) => (step++) && Reflect.setPrototypeOf(a, b, c),
+    isExtensible:       (a,b,c) => (step++) && Reflect.isExtensible(a, b, c),
+    preventExtensions:  (a,b,c) => (step++) && Reflect.preventExtensions(a, b, c),
+    ownKeys:            (a,b,c) => (step++) && Reflect.ownKeys(a, b, c),
+};
+```
+
+13 条规则，每一条都是同一个模式：**先 step++，然后调用 Reflect 对应的方法执行原始操作。**
+
+注意 handler 里的名字（`get`、`set`、`has` 等）是**操作类型**，不是属性名。`get` 表示"访问属性"这个动作，不管访问的是什么属性名，只要操作类型是"访问属性"，就走 `handler.get` 这条规则。属性名作为第二个参数 `b` 传进去，handler 不需要提前知道属性名是什么。
+
+---
+
+#### 第三行：`Object.setPrototypeOf(o, new Proxy(Object.getPrototypeOf(o), handler));`
+
+这行代码从内到外执行，按执行顺序拆：
+
+##### 3.1 `Object.getPrototypeOf(o)`
+
+`o` 是 `Array.prototype`。这行获取 `Array.prototype` 的上级原型：
+
+```javascript
+Object.getPrototypeOf(Array.prototype)
+// 结果：Object.prototype
+```
+
+##### 3.2 `new Proxy(Object.prototype, handler)`
+
+用 `Object.prototype` 作为目标对象，handler 作为拦截规则，创建一个 Proxy 对象。
+
+Proxy 接收两个参数：
+- 第一个参数：**目标对象**，这里是 `Object.prototype`。Proxy 不会修改这个对象，所有操作通过 handler 转发给它
+- 第二个参数：**拦截规则**，这里是 handler，里面有 13 条规则
+
+Proxy 对象本身不存任何数据，它只是一个中间人。所有对它的操作都转发给目标对象，但中间可以加自己的逻辑（比如 `step++`）。
+
+**Proxy 怎么使用 handler**：当有人对 Proxy 对象做任何操作时，Proxy 不直接操作目标对象，而是先调用 handler 里对应的方法。比如有人访问 Proxy 对象的 `toString` 属性：
+
+```
+1. Proxy 发现有人要"访问属性"（操作类型：get）
+2. Proxy 找到 handler 里的 "get" 这条规则
+3. Proxy 调用 handler.get，并且 Proxy 自动传入三个参数：
+   handler.get(目标对象, "toString", 最初发起访问的对象)
+   也就是：
+   handler.get(Object.prototype, "toString", pool)
+
+4. handler.get 的函数体执行：
+   (step++) && Reflect.get(Object.prototype, "toString", pool)
+   → step++，然后从 Object.prototype 上取 toString，返回这个函数
+
+5. Proxy 把 handler.get 的返回值返回给调用者
+```
+
+参数 `a`、`b`、`c` 的值由 Proxy 自动传入，不是代码里写死的。`a` 永远是创建 Proxy 时指定的目标对象（`Object.prototype`），因为 Proxy 每次调用 handler 时都会自动把目标对象作为第一个参数传进去。这就是为什么 handler 里能正确地从 `Object.prototype` 上获取属性——`a` 就是 `Object.prototype`，是 Proxy 传进来的。
+
+不同操作类型传入的参数不同：
+
+| handler 中的操作类型 | a | b | c |
+|---|---|---|---|
+| `get` | 目标对象 `Object.prototype` | 属性名（如 `"toString"`） | 接收者（发起访问的对象） |
+| `set` | 目标对象 `Object.prototype` | 属性名（如 `"toString"`） | 要设置的值 |
+| `has` | 目标对象 `Object.prototype` | 属性名（如 `"toString"`） | `undefined`（没用到） |
+| `deleteProperty` | 目标对象 `Object.prototype` | 属性名（如 `"toString"`） | `undefined`（没用到） |
+| `apply` | 目标函数 | `this` 指向 | 参数数组 |
+
+出题人统一写 `(a,b,c)` 三个参数，是因为大部分操作最多用 3 个参数。有的操作只用 2 个（`has`、`deleteProperty`），第三个 `c` 就是 `undefined`，不影响执行。有的操作需要 4 个（`set` 实际有 4 个参数），第 4 个丢了，但 `Reflect.set` 只传前 3 个也能正常工作。
+
+##### 3.3 `Object.setPrototypeOf(Array.prototype, Proxy对象)`
+
+把 `Array.prototype` 的上级原型从 `Object.prototype` 替换为这个 Proxy 对象。
+
+---
+
+#### 原型链变化
+
+**之前**：
+
+```
+pool（数组实例，比如 [1,2,3]）
+  → pool.__proto__ = Array.prototype（有 splice、push、map 等）
+    → Array.prototype.__proto__ = Object.prototype（有 toString、valueOf 等）
+      → Object.prototype.__proto__ = null（到头了）
+```
+
+**之后**：
+
+```
+pool（数组实例）
+  → pool.__proto__ = Array.prototype（有 splice、push、map 等）
+    → Array.prototype.__proto__ = Proxy对象（handler 拦截所有操作，每次 step++）
+      → Proxy对象内部代理的目标对象 = Object.prototype（有 toString、valueOf 等）
+        → Object.prototype.__proto__ = null（到头了）
+```
+
+Proxy 对象被插入到了原型链中，它既是 Proxy 对象，也是原型链中的一环。
+
+---
+
+#### 原型是什么
+
+原型就是一个普通的 JavaScript 对象。没有特殊标记，没有特殊类型。任何对象都可以当原型——就是把它放到另一个对象的 `__proto__` 位置上。属性查找在对象自身找不到时，就去原型上找，找不到就去原型的原型上找，直到 `null` 为止。
+
+---
+
+#### 实际触发时的完整过程
+
+假设题目代码执行 `pool.splice(0, 1)`：
+
+**第1步**：JavaScript 引擎在 `pool` 自身上找 `splice` → 没有。
+
+**第2步**：去 `pool.__proto__`（`Array.prototype`）上找 `splice` → 找到了。这一步没有经过 Proxy，因为 `splice` 在 `Array.prototype` 上就找到了。
+
+**第3步**：执行 `splice` 函数。`splice` 内部需要访问数组的各种属性，比如 `length`。`length` 在 `pool` 自身上就有，直接返回，不经过 Proxy。
+
+**第4步**：但 `splice` 内部可能还需要访问 `toString` 之类的方法。这些方法不在 `pool` 自身上，也不在 `Array.prototype` 上，而在 `Object.prototype` 上。查找过程：
+
+```
+第1站：pool 自身上找 toString → 没有
+第2站：Array.prototype 上找 toString → 没有
+第3站：Array.prototype.__proto__（即 Proxy对象）上找 → 遇到 Proxy！
+```
+
+**第5步**：JavaScript 引擎发现第3站是一个 Proxy 对象，不会直接在它上面找属性，而是调用 `handler.get`：
+
+```
+引擎调用：handler.get(目标对象, "toString", pool)
+也就是：  handler.get(Object.prototype, "toString", pool)
+```
+
+参数来源：
+- `a = Object.prototype`：创建 Proxy 时指定的第一个参数（目标对象），引擎自动传入
+- `b = "toString"`：要访问的属性名，引擎自动传入
+- `c = pool`：最初发起属性访问的对象，引擎自动传入
+
+**第6步**：handler.get 的函数体执行：
+
+```javascript
+(a, b, c) => (step++) && Reflect.get(a, b, c)
+```
+
+代入实际参数：
+
+```javascript
+(Object.prototype, "toString", pool) => (step++) && Reflect.get(Object.prototype, "toString", pool)
+```
+
+执行过程：
+1. `step++` — step 从比如 100 变成 101
+2. `Reflect.get(Object.prototype, "toString", pool)` — 从 `Object.prototype` 上获取 `toString` 属性，返回这个函数
+
+`Reflect.get(目标对象, 属性名)` 就是从目标对象上找属性，找不到就沿目标对象的原型链继续找。你传 `Object.prototype`，它就从 `Object.prototype` 找。`Object.prototype` 上有 `toString`，找到了，返回它。
+
+**第7步**：JavaScript 引擎拿到 `toString` 函数，返回给 `splice` 内部使用。
+
+**第8步**：`splice` 继续执行，如果还需要访问其他 `Object.prototype` 上的属性，每次都重复第4-7步的过程，每次 `step++`。
+
+---
+
+#### 完整调用链总结
+
+```
+代码：pool.toString
+
+JavaScript 引擎查找属性：
+  pool 自身 → 没有 toString
+  Array.prototype → 没有 toString
+  Proxy对象 → Proxy 拦截！
+    │
+    ▼
+  引擎调用 handler.get(Object.prototype, "toString", pool)
+    │
+    ▼
+  handler.get 内部：
+    1. step++
+    2. Reflect.get(Object.prototype, "toString", pool)
+       → 从 Object.prototype 上找到 toString，返回它
+    │
+    ▼
+  handler.get 返回 Object.prototype.toString
+    │
+    ▼
+  JavaScript 引擎把 Object.prototype.toString 返回给代码
+```
+
+对 `pool.toString` 的调用者来说，结果和不加 Proxy 完全一样（拿到了 toString 函数），但中间偷偷多了一步 `step++`。
+
+---
+
+#### 效果总结
+
+出题人在 `Array.prototype` 和 `Object.prototype` 之间插入了一个 Proxy 对象。这个 Proxy 对象：
+
+- **对外表现**：和 `Object.prototype` 一模一样（因为 handler 里用 Reflect 执行了原始操作，从 `Object.prototype` 上获取属性并返回）
+- **暗中多做的事**：每次经过时 `step++`
+
+对 `pool.splice(...)` 的调用者来说，结果完全正常。但 `splice` 内部每访问一次 `Object.prototype` 上的属性，step 就多 1。这就是"间谍"——干一样的事，偷偷记一笔。
 
 ### 3.5 机制四：check() 函数自检
 
