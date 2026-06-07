@@ -345,15 +345,34 @@ console.log(window.stepﾠ);   // 5
 
 **Object.defineProperty** 可以在对象上定义新属性或修改现有属性。第三个参数叫**属性描述符（descriptor）**，分为两种类型：
 
-| 类型 | 包含的字段 | 本质 |
-|------|-----------|------|
+| 类型 | 特有字段 | 本质 |
+|------|---------|------|
 | **数据描述符** | `value`、`writable` | 直接存一个值（任何类型） |
 | **访问器描述符** | `get`、`set` | 访问时调函数、赋值时调函数 |
 
-```javascript
-const obj = { name: "Alice" };
+两种类型还共享三个字段：
 
-// 数据描述符——直接存值（默认行为）
+| 共有字段 | 含义 | `true` 时 | `false` 时 |
+|---------|------|----------|-----------|
+| `enumerable`（可枚举） | 属性是否出现在遍历中 | `Object.keys(obj)` 能看到 | 属性存在但遍历看不到 |
+| `configurable`（可配置） | 描述符能否再修改 | 可以修改描述符、删除属性 | 锁死，不能改不能删 |
+| `writable`（可写） | 值能否修改（仅数据描述符） | `obj.name = "x"` 成功 | 赋值静默失败 |
+
+一个完整的描述符示例：
+
+```javascript
+Object.getOwnPropertyDescriptors(Array);
+// {
+//     length:    { value: 1, writable: false, enumerable: false, configurable: false },
+//     name:      { value: "Array", writable: false, enumerable: false, configurable: false },
+//     prototype: { value: Array.prototype, writable: false, enumerable: false, configurable: false },
+//     isArray:   { value: ƒ isArray(), writable: true, enumerable: true, configurable: true },
+//     from:      { value: ƒ from(), writable: true, enumerable: true, configurable: true },
+//     of:        { value: ƒ of(), writable: true, enumerable: true, configurable: true },
+// }
+```
+
+用 `Object.defineProperty` 设置属性的示例：
 Object.defineProperty(obj, "age", {
     value: 30,       // 存的值
     writable: true,  // 可以修改
@@ -394,7 +413,7 @@ arr[0];      // 打印 "访问了属性: 0"
 
 ### 1.9 什么是 Debugger.enable 和自动 resume
 
-在 CDP 中，Chrome 的调试器默认是关闭的。`Debugger.enable` 命令打开调试器，让它能处理断点和 debug condition。
+Chrome 的调试器默认是关闭的。通过 CDP 发送 `Debugger.enable` 命令，Chrome 会打开调试器，让它能处理断点和 debug condition。CDP 只是"指令手册"，真正执行命令的是 Chrome。
 
 当 debug condition 返回 `true` 时，Chrome 会**暂停执行**（就像你手动设置了一个断点）。在真实的 DevTools 中，这会让程序停下来等你操作。但在自动化脚本中，没有人去点"继续"按钮——程序就卡住了。
 
@@ -475,30 +494,164 @@ cdp.on("Debugger.paused", on_paused)
 
 ```javascript
 function anti(debug) {
+    // debug 参数：Chrome Console 的 debug 函数，anti 内部没有直接使用
+    // 传入它只是为了让题目描述 "anti(debug)" 看起来像"执行反调试初始化"
+    
     window.step = 0;           // 步数计数器清零
-    window.c = true;           // 启用 debug condition 计数（U+FFA0 后缀）
+    window.cﾠ = true;          // 启用 debug condition 计数（c 后面有 U+FFA0）
     window.success = false;    // 解锁状态：未解锁
     
-    window.r = function(s) { /* ROT47 */ };  // ROT47 解码函数
-    window.k = function(s) { /* ROT13 */ };  // ROT13 解码函数（变量名是 U+FFA0）
+    window.r = function(s) { /* ROT47 */ };   // ROT47 解码函数，变量名是 r
+    window.ﾠ = function(s) { /* ROT13 */ };   // ROT13 解码函数，变量名是 U+FFA0（不可见字符）
+    // 注：源码中 window.k 只是注释，实际赋值的变量名是 ﾠ（第 249 行）
     
     window.check = function() { /* 密码校验 */ };
     
     // 对所有关键函数加上 debug condition（性能计数器 + 篡改检测）
-    [Array, Array.prototype, String.prototype, Math, console, Reflect]
-        .map(o => /* 提取所有函数 */)
-        .flat().concat(check, eval)
-        .forEach(instrument);  // 每个函数都加上 debug condition
+    // 完整代码：
+    [Array, Array.prototype, String.prototype, Math, console, Reflect].map(o =>
+        Object.values(Object.getOwnPropertyDescriptors(o))  // 获取每个对象上所有属性的描述符
+        .map(x => x.value || x.get)                          // 提取属性值（普通值或 getter）
+        .filter(x => x instanceof Function)                  // 只保留函数
+    ).flat()              // 把 6 个数组合并成一个大数组（二维→一维）
+    .concat(check, eval)  // 再追加 check 和 eval 两个函数
+    .forEach(instrument);  // 对每个函数调用 instrument() 插桩
     
     instrumentPrototype(Array.prototype);            // 数组方法 getter 劫持
     instrumentPrototypeOfPrototype(Array.prototype);  // Proxy 拦截
 }
 ```
 
+> **详情导航**：
+> - `window.step`（步数计数器）→ 见 [3.2 机制一：debug condition 性能计数器](#32-机制一instrument-debug-condition-性能计数器)
+> - `window.cﾠ`（U+FFA0 隐藏标识符）→ 见 [3.8 机制七：U+FFA0 隐藏标识符](#38-机制七u+ffa0-隐藏标识符)
+> - `window.r`（ROT47 解码函数）→ 见 [1.6 什么是 ROT13 和 ROT47 编码](#16-什么是-rot13-和-rot47-编码)
+> - `window.ﾠ`（ROT13 解码函数，变量名是 U+FFA0）→ 见 [3.8 机制七：U+FFA0 隐藏标识符](#38-机制七u+ffa0-隐藏标识符) 和 [3.9 机制八：tagged template 隐式 ROT13](#39-机制八tagged-template-隐式-rot13)
+> - `instrument()`（给函数加 debug condition）→ 见 [3.2 机制一：debug condition 性能计数器](#32-机制一instrument-debug-condition-性能计数器)
+> - `instrumentPrototype()`（数组方法 getter 劫持）→ 见 [3.3 机制二：instrumentPrototype()——原型链 getter 劫持](#33-机制二instrumentprototype原型链-getter-劫持)
+> - `instrumentPrototypeOfPrototype()`（Proxy 原型拦截）→ 见 [3.4 机制三：instrumentPrototypeOfPrototype()——Proxy 原型拦截](#34-机制三instrumentprototypeofprototypeproxy-原型拦截)
+
+##### 提取函数的链式调用详解
+
+上面代码中最复杂的部分是这段链式调用：
+
+```javascript
+[Array, Array.prototype, String.prototype, Math, console, Reflect].map(o =>
+    Object.values(Object.getOwnPropertyDescriptors(o))
+    .map(x => x.value || x.get)
+    .filter(x => x instanceof Function)
+).flat().concat(check, eval).forEach(instrument);
+```
+
+逐步拆解。
+
+**`Array` 和 `Array.prototype` 的区别**：
+
+- `Array` 是构造函数本身。它身上挂的是**静态方法**：`Array.isArray()`、`Array.from()`、`Array.of()` 等。不需要创建数组就能用
+- `Array.prototype` 是所有数组实例共享的原型对象。它身上挂的是**实例方法**：`push`、`splice`、`map`、`join` 等。所有数组都能用
+
+```javascript
+Array.isArray([1,2,3]);  // true，静态方法，直接从 Array 上取
+[1,2,3].push(4);         // 实例方法，从 Array.prototype 上继承
+```
+
+题目需要给两种方法都加 debug condition，所以 `Array` 和 `Array.prototype` 都出现在列表中。`String.prototype`、`Math`、`console`、`Reflect` 同理——它们身上各有各的方法，都需要插桩。
+
+**第1步：`Object.getOwnPropertyDescriptors(o)`** — 获取对象上所有自身属性的完整描述符
+
+每个属性都有一个描述符，描述符有两种类型（见 [1.8 什么是 Proxy 和 Object.defineProperty](#18-什么是-proxy-和-objectdefineproperty)）：
+
+```javascript
+// 以 Array 为例：
+Object.getOwnPropertyDescriptors(Array);
+// {
+//     length:    { value: 1, writable: false, enumerable: false, configurable: false },
+//     name:      { value: "Array", writable: false, enumerable: false, configurable: false },
+//     prototype: { value: Array.prototype, writable: false, enumerable: false, configurable: false },
+//     isArray:   { value: ƒ isArray(), writable: true, enumerable: true, configurable: true },
+//     from:      { value: ƒ from(), writable: true, enumerable: true, configurable: true },
+//     of:        { value: ƒ of(), writable: true, enumerable: true, configurable: true },
+// }
+```
+
+描述符中的两个字段说明：
+- **enumerable**（可枚举的）：为 `true` 时，属性会出现在 `Object.keys()`、`for...in` 等遍历中。为 `false` 时，属性存在但遍历看不到
+- **configurable**（可配置的）：为 `true` 时，属性的描述符可以再修改或删除属性。为 `false` 时，属性被锁死
+
+**第2步：`Object.values(...)`** — 提取对象中所有属性的值，返回数组
+
+`Object.values` 不关心值是什么类型，它只做一件事：把对象里所有属性的值取出来变成数组。
+
+```javascript
+const obj = { a: 1, b: "hello", c: [1,2] };
+Object.values(obj);  // [1, "hello", [1,2]]
+```
+
+在这里，值恰好是描述符对象：
+
+```javascript
+Object.values(Object.getOwnPropertyDescriptors(Array));
+// [
+//     { value: 1, writable: false, ... },               // length 的描述符
+//     { value: "Array", writable: false, ... },          // name 的描述符
+//     { value: Array.prototype, writable: false, ... },  // prototype 的描述符
+//     { value: ƒ isArray(), writable: true, ... },       // isArray 的描述符
+//     { value: ƒ from(), writable: true, ... },          // from 的描述符
+//     { value: ƒ of(), writable: true, ... },            // of 的描述符
+// ]
+```
+
+**第3步：`.map(x => x.value || x.get)`** — 从描述符中取出实际的值
+
+- 数据描述符有 `value` 字段 → 取 `x.value`（函数就是 `ƒ push()`，非函数就是数字、字符串等）
+- 访问器描述符没有 `value`，有 `get` 字段 → `x.value` 是 `undefined`，取 `x.get`（getter 函数）
+- 如果一个属性只有 `set` 没有 `get` → `x.value` 和 `x.get` 都是 `undefined` → 丢失（但本题不关心这种情况）
+
+```javascript
+// Array 经过这步后：
+[1, "Array", Array.prototype, ƒ isArray(), ƒ from(), ƒ of()]
+```
+
+**第4步：`.filter(x => x instanceof Function)`** — 只保留函数类型
+
+数字、字符串、对象等全部丢掉，只留函数：
+
+```javascript
+// Array 经过这步后：
+[ƒ isArray(), ƒ from(), ƒ of()]
+```
+
+**第5步：`.flat()`** — 把 6 个数组合并成一个大数组
+
+前面 `.map()` 对 6 个对象（Array、Array.prototype、String.prototype、Math、console、Reflect）各生成一个函数数组，结果是一个二维数组（数组的数组）。`.flat()` 把它压平成一维数组。
+
+```javascript
+// 之前（二维）：
+[[ƒ isArray(), ƒ from(), ƒ of()], [ƒ push(), ƒ splice(), ƒ map(), ...], [ƒ split(), ...], ...]
+// 之后（一维）：
+[ƒ isArray(), ƒ from(), ƒ of(), ƒ push(), ƒ splice(), ƒ map(), ..., ƒ split(), ...]
+```
+
+**第6步：`.concat(check, eval)`** — 追加两个不在列表中的函数
+
+`check` 和 `eval` 不在前面 6 个对象中，需要单独加上。`concat` 把两个元素追加到数组末尾。
+
+**第7步：`.forEach(instrument)`** — 对每个函数调用 `instrument()` 插桩
+
+等价于：
+
+```javascript
+instrument(ƒ isArray());
+instrument(ƒ from());
+instrument(ƒ push());
+instrument(ƒ splice());
+// ... 所有函数都加一遍
+```
+
 `anti()` 做了三件事：
-1. 定义工具函数（r = ROT47, k = ROT13）和校验函数（check）
-2. 给大量函数加 debug condition（通过 `instrument()`）
-3. 修改 `Array.prototype` 的属性描述符和原型链（通过 `instrumentPrototype` 和 `instrumentPrototypeOfPrototype`）
+1. 定义工具函数（r = ROT47, ﾠ = ROT13）和校验函数（check）
+2. 给大量函数加 debug condition（通过 `instrument()`，详见 [3.2 机制一](#32-机制一instrument-debug-condition-性能计数器)）
+3. 修改 `Array.prototype` 的属性描述符和原型链（通过 `instrumentPrototype` 详见 [3.3 机制二](#33-机制二instrumentprototype原型链-getter-劫持) 和 `instrumentPrototypeOfPrototype` 详见 [3.4 机制三](#34-机制三instrumentprototypeofprototypeproxy-原型拦截)）
 
 #### check() —— 密码校验
 
@@ -520,7 +673,7 @@ function check() {
         let pool = ROT13`?o>...\`5`;  // 先 ROT13
         pool = r(pool).split('');       // 再 ROT47，得到真正的字符池
         
-        const double = Function.call`window.stepﾠ *= 2`;  // 障眼法，no-op
+        const double = Function.call`window.step[U+FFA0] *= 2`;  // 障眼法：Function.call + tagged template 创建的是空函数体，double() 什么都不做
         
         while (!window.success) {
             // 用 step 计数器和伪随机数决定取 pool 中的哪个字符
@@ -532,7 +685,7 @@ function check() {
                 flag.shift();           // 移除 flag 第一个字符 → step++
                 pool.splice(j % pool.length, 1);  // 移除 pool 中对应字符 → step++
                 renderFrame();           // 渲染一帧 → step 大幅增加
-                double();                // no-op（修改的是 window.stepﾠ）
+                double();                // 空函数，什么都不做（详见 3.7 机制六）
                 
                 if (!pool.length && !flag.length) window.success = true;
             }
@@ -1034,35 +1187,101 @@ debug(f, "document.documentElement.outerHTML.length !== 14347");
 
 ```javascript
 // 第 264 行：
-const double = Function.call`window.stepﾠ *= 2`;
+const double = Function.call`window.step[U+FFA0] *= 2`;
 ```
 
 **表面上看**：`double()` 会把 `window.step` 乘以 2。
 
-**实际上**：
+**实际上**：`double()` 是一个**空函数**，什么都不做。原因如下：
 
-1. `Function.call\`window.stepﾠ *= 2\`` — 这是 tagged template
-2. `Function.call(strings)` 创建一个新函数，函数体是 `window.stepﾠ *= 2`
-3. 注意 `step` 后面的 `ﾠ`（U+FFA0），它是半角韩文填充符
-4. 所以函数体实际是 `window.stepﾠ *= 2`（修改 `window["stepﾠ"]`），**不是** `window.step *= 2`
-5. `window.step`（无 U+FFA0）和 `window.stepﾠ`（有 U+FFA0）是两个**完全不同的变量**
-6. 调用 `double()` 只修改了 `window.stepﾠ`，对 `window.step` 没有任何影响
+1. `Function.call\`window.step[U+FFA0] *= 2\`` — 这是 tagged template
+2. tagged template 会把模板字符串包装成数组传给标签函数：`Function.call(["window.step[U+FFA0] *= 2"])`
+3. `call` 的语法是 `fn.call(thisArg, arg1, ...)`。传入的数组 `["window.step[U+FFA0] *= 2"]` 被当作 `thisArg`（this 指向），没有额外参数传给 `Function`
+4. 所以等价于 `Function()`，创建了一个**空函数体**的函数
+5. 验证：`double.toString()` 输出 `function anonymous() { }`——函数体是空的
 
-**这是一个精心设计的障眼法**——代码中有 `double()` 调用，让人以为 step 会被翻倍，但实际上什么都没发生。
+```javascript
+// 题目写法
+const double = Function.call`window.step[U+FFA0] *= 2`;
+// double 的函数体是空的，调用 double() 什么都不做
+
+// 对比：如果出题人想创建有函数体的函数，应该写：
+const double2 = Function`window.step[U+FFA0] *= 2`;
+// double2 的函数体是 "window.step[U+FFA0] *= 2"（但仍然修改的是错误的变量）
+```
+
+**两层障眼法**：
+- **第一层**：代码中写了 `window.step[U+FFA0] *= 2`，看起来会修改 step（但 [U+FFA0] 使其变成另一个变量）
+- **第二层**：由于 `Function.call` + tagged template 的特性，连这行代码都没有被执行——函数体是空的，调用 `double()` 什么都不做
+
+**这是一个精心设计的障眼法**——代码中写了看似翻倍 step 的逻辑，但实际上双重保护确保它什么影响都没有。
 
 ### 3.8 机制七：U+FFA0 隐藏标识符
 
-题目大量使用 U+FFA0（`ﾠ`）字符，它在编辑器中看起来像一个空格：
+题目大量使用不可见 Unicode 字符来混淆代码。VS Code 中这些字符会显示为黄框。
+
+#### 两种不可见字符，两种用途
+
+源码中使用的不可见字符分为两类：
+
+**第一类：U+FFA0（HALFWIDTH HANGUL FILLER，半角韩文填充符）——当变量名用**
 
 ```javascript
-window.cﾠ = true;    // 实际是 window["c" + U+FFA0]
-let iﾠ = 1337;       // 实际是变量 i + U+FFA0
+window.cﾠ = true;    // 实际是 window["c" + U+FFA0]，不是 window.c
+let iﾠ = 1337;       // 实际是变量 "i" + U+FFA0，不是变量 i
+ﾠ = function(s) { ... }  // 变量名就是 U+FFA0，即 ROT13 函数
 ```
 
-这些隐藏标识符使得：
-- 代码阅读时容易忽略关键变量
-- 搜索 "window.c" 找不到 "window.cﾠ"
+**第二类：U+2000-U+200A（各种 Unicode 空格）——当代码空格用**
+
+```javascript
+// 源码第 243-244 行实际内容（用 [U+XXXX] 标注不可见字符）：
+window.r[U+2002]//[U+2003]ROT47
+[U+2003]=[U+2000]function(s)[U+2003]{
+```
+
+这些字符在代码中起空格的作用，让代码看起来正常排版，但实际上每个"空格"都是不同的不可见字符。
+
+#### 为什么只有 U+FFA0 能当变量名
+
+JavaScript 对变量名有规则：只有 Unicode 分类为 **ID_Start**（标识符起始）和 **ID_Continue**（标识符续写）的字符才能当变量名。
+
+| 字符 | Unicode 分类 | 能当变量名？ | 用途 |
+|------|-------------|------------|------|
+| U+FFA0 | 韩文字母（ID_Start + ID_Continue） | ✅ 能 | 伪装成变量名的一部分 |
+| U+2002 | 空格类符号（Zs） | ❌ 不能 | 伪装成代码空格 |
+| U+2003 | 空格类符号（Zs） | ❌ 不能 | 伪装成代码空格 |
+| U+2005 | 空格类符号（Zs） | ❌ 不能 | 伪装成代码空格 |
+
+```javascript
+// ✅ U+FFA0 是合法的标识符字符
+let ﾠ = function() {};  // 不报错
+
+// ❌ U+2002 不是合法的标识符字符
+let   = function() {};  // SyntaxError: Invalid or unexpected token
+```
+
+出题人只在需要当变量名的地方用 U+FFA0，其他地方用 U+2002、U+2003 等只起空格作用的不可见字符。
+
+#### `window.k` 不是赋值
+
+源码第 248-249 行：
+
+```javascript
+window.k[U+2005]// ROT13 - TODO: use this for an additional encryption layer
+[U+FFA0]=[U+2003]function(s)[U+2009]{
+```
+
+第 248 行 `window.k` 只是一个表达式语句（访问 `window.k`），没有 `=`，不是赋值。真正的赋值是第 249 行的 `ﾠ = function(s) { ... }`，变量名是 `ﾠ`（U+FFA0）。
+
+出题人故意在第 248 行写 `window.k` 让读者以为是赋值给 `k`，但实际赋值的是不可见字符 `ﾠ`。这也是混淆手段之一。
+
+#### 这些隐藏标识符的效果
+
+- 代码阅读时容易忽略关键变量（`window.c` vs `window.cﾠ`）
+- 搜索 `window.c` 找不到 `window.cﾠ`
 - 以为 `window.c` 是一个布尔值，实际上是另一个完全不同的变量
+- VS Code 中黄框到处都是，反而让人分不清哪些是变量名、哪些只是空格
 
 ### 3.9 机制八：tagged template 隐式 ROT13
 
