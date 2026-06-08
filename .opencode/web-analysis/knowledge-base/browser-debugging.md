@@ -126,7 +126,7 @@ undebug(targetFunction);
 |------|------|
 | 返回 truthy → 暂停 | Chrome 在目标函数入口暂停执行 |
 | 返回 falsy → 不暂停 | 函数正常执行，但 `debug()` 第二个参数里的代码**已经执行过了** |
-| 副作用一定会执行 | 第二个参数里的赋值、自增等操作无论返回值如何都会执行。出题人常利用这个特性在 `debug()` 的字符串参数中隐藏关键逻辑（如累加计数器），绕过它就会破坏这些逻辑 |
+| 副作用一定会执行 | 第二个参数里的赋值、自增等操作无论返回值如何都会执行。出题人常利用这个特性在 `debug()` 的字符串参数中隐藏关键逻辑，绕过它就会破坏这些逻辑 |
 
 ### 嵌套 debug 调用会被抑制
 
@@ -144,11 +144,11 @@ undebug(targetFunction);
 
 ### 4.2 Headless 模式下行为差异
 
-某些反调试机制在 headless 模式下行为不同（如 debug condition 执行频率降低、setInterval 调度差异）。如果自动化脚本在 headless 下结果不对，尝试 `headless=False`。
+headless 模式下定时器调度、CPU 节流等行为可能与有头模式不同。如果自动化脚本的结果和手动操作不一致，优先用 `headless=False` 排查。
 
 ### 4.3 Console API 不等于普通 JS
 
-`debug()`、`undebug()`、`monitor()`、`copy()` 等 Console API 只在 DevTools Console 环境中可用。在 `Runtime.evaluate` 中需要 `includeCommandLineAPI: True`。
+`debug()`、`undebug()`、`monitor()`、`copy()` 等 Console API 只在 DevTools Console 环境中可用，`<script>` 标签里调用会报 `ReferenceError`。通过 CDP 的 `Runtime.evaluate` 使用这些函数时需要加 `includeCommandLineAPI: True`。
 
 ### 4.4 Page reload 后状态丢失
 

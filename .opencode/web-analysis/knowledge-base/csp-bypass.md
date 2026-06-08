@@ -177,7 +177,7 @@ add_header Content-Security-Policy "default-src 'self'" always;
 | 保持 `'unsafe-eval'` | CSP 同时允许 eval | 通过 `eval()` / `Function()` 执行修改后的代码，不受哈希校验 |
 | 重新计算哈希 | 可修改 CSP 声明本身 | `echo -n '脚本内容' \| openssl dgst -sha256 -binary \| base64` 得到新哈希，更新 CSP |
 
-**注意**：如果 CSP 通过 `<meta>` 标签声明且该标签有 `id`，代码可能通过 `document.getElementById()` 读取它。去掉 content 属性后，相关代码读到的值为空字符串。
+**注意**：如果 CSP 通过 `<meta>` 标签声明且该标签有 `id`，代码可能通过 `document.getElementById()` 读取它，去掉 content 属性后，相关代码读到的值为空字符串，去掉前先检查代码是否依赖这个值（如判断 CSP 策略是否存在），如果依赖则需要保留一个无害、能通过验证的值。
 
 ### 2.4 利用其他资源类型绕过
 
