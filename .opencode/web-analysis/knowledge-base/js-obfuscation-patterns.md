@@ -168,7 +168,7 @@ Array.prototype.__proto__ = new Proxy(Object.prototype, {
 
 - 在拦截器之前保存原始方法的引用
 - 用 `Reflect.apply` 绕过 getter 直接调用原始方法
-- 理解拦截器的触发频率（每次属性访问 + 函数调用 = 2 次 step++）
+- 理解拦截器的触发频率（每次属性访问 + 函数调用 = 2 次拦截器触发）
 
 ---
 
@@ -224,8 +224,8 @@ debug(func, "window.step += 10; false");
    └── 验证：Object.getOwnPropertyDescriptor() 和 getPrototypeOf()
 
 5. debug() 副作用检测
-   ├── 搜索 debug( 调用
-   └── 检查条件字符串是否包含赋值/自增操作
+   ├── 搜索 `debug(` 或 `debug (` 调用
+   └── 检查第二个参数的字符串是否包含赋值、自增、函数调用、对象修改等操作
 
 6. 完整性校验
    ├── 检查是否有 HTML 长度/哈希校验
