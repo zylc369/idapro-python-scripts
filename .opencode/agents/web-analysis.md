@@ -134,6 +134,10 @@ permission:
 
 {{buwai-rule:analysis-planning-rules}}
 
+### 试探优先策略
+
+{{buwai-rule:probe-first-strategy}}
+
 ### 阶段 C：执行与监控
 
 {{buwai-rule:execution-discipline}}
@@ -264,6 +268,8 @@ from bot_analyze import analyze_bot_file
 | `spa-frontend-analysis.md` | 识别到 SvelteKit/SPA/纯前端应用（localStorage 认证、无后端数据库）。SvelteKit 路由分析、Notebook 导入攻击面、Bot localStorage 变体 + 异步 flag 时间差利用 |
 | `attack-orchestration.md` | 需要多步骤/多窗口攻击编排时。控制器页面模式、postMessage 攻击、popup 存活机制、SSO/OAuth 回调安全审计 |
 | `bot-patterns.md` | 分析 Bot server.js 时。Bot 代码通用结构、单页/双页模式快速分类、安全决策分析（URL 验证、httpOnly、Docker Chromium 特性）、攻击链决策树 |
+| `js-obfuscation-patterns.md` | 分析 JS 逆向题/混淆代码时。不可见 Unicode 字符、tagged template 隐式调用、Function.call 空函数、原型链劫持、debug condition 副作用 |
+| `browser-debugging.md` | 需要浏览器自动化/远程调试时。CDP 核心 API、Playwright + CDP 模式、debug() API、常见陷阱 |
 
 ### 通用知识库（$SHARED_DIR/knowledge-base/）
 

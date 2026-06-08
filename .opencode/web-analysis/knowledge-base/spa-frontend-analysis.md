@@ -1,8 +1,6 @@
 # SPA/前端框架安全分析方法论
 
-> 本文档为 web-analysis Agent 的前端框架（SvelteKit、React SPA 等）安全分析参考。
-> 聚焦无后端数据库、数据全部存在客户端的场景（localStorage/sessionStorage）。
-> 不依赖主 prompt 上下文即可理解。
+> 前端框架（SvelteKit、React SPA 等）安全分析参考。聚焦无后端数据库、数据全部存在客户端的场景（localStorage/sessionStorage）。
 
 ---
 

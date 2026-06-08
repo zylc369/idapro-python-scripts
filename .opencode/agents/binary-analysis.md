@@ -90,6 +90,10 @@ Remove-Item Env:\IDA_ENV_JSON
 
 {{buwai-rule:analysis-planning-rules}}
 
+### 试探优先策略
+
+{{buwai-rule:probe-first-strategy}}
+
 ### 阶段 C：执行与监控
 
 {{buwai-rule:execution-discipline}}

@@ -1,7 +1,6 @@
 # Next.js App Router 安全分析方法论
 
-> 本文档为 web-analysis Agent 的 Next.js 应用深度分析参考。聚焦 App Router 模式的安全分析，包括 RSC/flight data 分析、node_modules 源码审计、middleware 审计。
-> 不依赖主 prompt 上下文即可理解。
+> Next.js App Router 安全分析参考。聚焦 App Router 模式的安全分析，包括 RSC/flight data 分析、node_modules 源码审计、middleware 审计。
 
 ---
 

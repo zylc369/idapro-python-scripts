@@ -1,7 +1,6 @@
 # Bot 模式分类与识别
 
-> 本文档为 web-analysis Agent 的 Bot 快速分类参考。聚焦 **Bot 代码结构分析**和**模式快速识别**。
-> 不依赖主 prompt 上下文即可理解。
+> Bot 快速分类参考。聚焦 **Bot 代码结构分析**和**模式快速识别**。
 >
 > **详细的分析流程**（攻击面枚举、外泄方式选择、CSP 绕过等）见 `$AGENT_DIR/knowledge-base/web-methodology.md` §1.5。
 > **多步骤攻击编排**（popup 存活、轮询模板、控制器页面）见 `$AGENT_DIR/knowledge-base/attack-orchestration.md` §3。

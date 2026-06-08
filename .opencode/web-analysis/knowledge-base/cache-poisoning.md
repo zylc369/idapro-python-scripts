@@ -1,7 +1,6 @@
 # Web Cache Poisoning 专题
 
-> 本文档为 web-analysis Agent 的 Web Cache Poisoning 深度参考。
-> 不依赖主 prompt 上下文即可理解。
+> Web Cache Poisoning 深度参考。
 
 ---
 

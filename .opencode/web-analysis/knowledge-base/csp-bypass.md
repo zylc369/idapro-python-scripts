@@ -1,6 +1,6 @@
 # CSP（Content Security Policy）绕过技术
 
-> 本文档为 web-analysis Agent 的 CSP 绕过参考。不依赖主 prompt 上下文即可理解。
+> CSP 绕过技术速查。
 
 ---
 
@@ -157,6 +157,27 @@ add_header Content-Security-Policy "default-src 'self'" always;
 | nonce 在 URL 中暴露 | nonce 是否出现在 URL/Referer 中 | 通过 Referer 泄露获取 nonce |
 | 固定 hash | `script-src 'sha256-xxx'` | 如果 hash 对应的脚本内容可控 |
 | nonce 被注入到攻击者控制的 script | 页面上是否有注入点可以创建 script 标签 | XSS 注入 `<script nonce="stolen">` |
+
+#### 2.3.5 CSP 脚本哈希防篡改与绕过
+
+**原理**：`script-src 'sha256-xxx'` 中 `xxx` 是 `<script>` 标签内容的 Base64 编码 SHA256 哈希。浏览器在执行内联脚本前计算脚本内容的哈希，与 CSP 声明的不匹配则拒绝执行。
+
+**场景**：CTF 题或安全加固的页面使用哈希 CSP 防止修改脚本内容。当你修改了 HTML 文件中的脚本（哪怕改一个字符），浏览器控制台报错 `Refused to execute inline script because it violates the following Content Security Policy directive: "script-src 'sha256-...'"`。
+
+**检测方法**：
+1. 查看 `<meta http-equiv="Content-Security-Policy">` 标签或 HTTP 响应头中 `script-src` 是否包含 `'sha256-'`
+2. 修改 HTML 后刷新，看浏览器控制台是否报 CSP 违规
+
+**绕过方法**：
+
+| 方法 | 适用场景 | 操作 |
+|------|---------|------|
+| 去掉 CSP content 属性 | `<meta>` 标签声明 CSP | `<meta http-equiv="Content-Security-Policy" id="c">` — 去掉 content 属性 |
+| 中间人修改响应头 | 可控代理/本地文件 | 用 Burp/mitmproxy 删除 CSP 响应头 |
+| 保持 `'unsafe-eval'` | CSP 同时允许 eval | 通过 `eval()` / `Function()` 执行修改后的代码，不受哈希校验 |
+| 重新计算哈希 | 可修改 CSP 声明本身 | `echo -n '脚本内容' \| openssl dgst -sha256 -binary \| base64` 得到新哈希，更新 CSP |
+
+**注意**：如果 CSP 通过 `<meta>` 标签声明且该标签有 `id`，代码可能通过 `document.getElementById()` 读取它。去掉 content 属性后，相关代码读到的值为空字符串。
 
 ### 2.4 利用其他资源类型绕过
 
