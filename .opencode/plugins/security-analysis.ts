@@ -1330,6 +1330,7 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         // 子 session（Task 工具创建，agent 为 "general" 等）不会触发恢复，
         // 被 requireSessionWithPrimary 过滤掉。
         // security-analysis-evolve Agent 不触发恢复（进化 Agent 不做分析工作）。
+        // 没有 taskDir 的 session 不触发恢复（简单问答，不是正式分析任务）。
         try {
           const session = await requireSessionWithPrimary(
             "session.idle",
@@ -1348,32 +1349,41 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
               sessionID,
             );
           } else {
-            const elapsed = Date.now() - session.createdAt;
-            const maxDuration = getMaxDuration(sessionID);
-            if (elapsed >= maxDuration) {
+            const taskDir = getTaskDir(sessionID);
+            if (!taskDir) {
               debugLog(
-                `session.idle: 跳过恢复 — 已超时 sessionID=${sessionID} elapsed=${Math.floor(elapsed / 60000)}m max=${Math.floor(maxDuration / 60000)}m`,
-                sessionID,
-              );
-            } else if (opencodeClient) {
-              debugLog(
-                `session.idle: 恢复分析 sessionID=${sessionID} agent=${session.primaryAgent} elapsed=${Math.floor(elapsed / 60000)}m max=${Math.floor(maxDuration / 60000)}m resume_count=${readPersistenceData(sessionID)?.resume_count ?? 0}`,
-                sessionID,
-              );
-              await opencodeClient.session.promptAsync({
-                sessionID,
-                parts: [{ type: "text", text: RESUME_PROMPT }],
-              });
-              recordResumeAttempt(sessionID);
-              debugLog(
-                `session.idle: 恢复消息已发送 sessionID=${sessionID}`,
+                `session.idle: 跳过恢复 — 无 taskDir（非正式分析任务）, sessionID=${sessionID}`,
                 sessionID,
               );
             } else {
-              debugLog(
-                `session.idle: 跳过恢复 — opencodeClient 未初始化`,
-                sessionID,
-              );
+              const elapsed = Date.now() - session.createdAt;
+              const maxDuration = getMaxDuration(sessionID);
+              if (elapsed >= maxDuration) {
+                debugLog(
+                  `session.idle: 跳过恢复 — 已超时 sessionID=${sessionID} elapsed=${Math.floor(elapsed / 60000)}m max=${Math.floor(maxDuration / 60000)}m`,
+                  sessionID,
+                );
+              } else if (opencodeClient) {
+                const persistenceData = readPersistenceData(sessionID);
+                debugLog(
+                  `session.idle: 恢复分析 sessionID=${sessionID} agent=${session.primaryAgent} elapsed=${Math.floor(elapsed / 60000)}m max=${Math.floor(maxDuration / 60000)}m resume_count=${persistenceData?.resume_count ?? 0}`,
+                  sessionID,
+                );
+                await opencodeClient.session.promptAsync({
+                  sessionID,
+                  parts: [{ type: "text", text: RESUME_PROMPT }],
+                });
+                recordResumeAttempt(sessionID);
+                debugLog(
+                  `session.idle: 恢复消息已发送 sessionID=${sessionID}`,
+                  sessionID,
+                );
+              } else {
+                debugLog(
+                  `session.idle: 跳过恢复 — opencodeClient 未初始化`,
+                  sessionID,
+                );
+              }
             }
           }
         } catch (e) {

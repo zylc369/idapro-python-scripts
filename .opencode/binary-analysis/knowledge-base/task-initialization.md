@@ -21,6 +21,20 @@ $PYTHON_CMD "$SHARED_DIR/scripts/create_task_dir.py"
 
 `$PYTHON_CMD` 和 `$SHARED_DIR` 由 Plugin 注入到上下文中，不是 shell 环境变量——执行时替换为实际路径。
 
+**`--max-duration` 参数（可选）**：
+
+如果用户指定了最大持续分析时间（如"分析 2 小时"），需要传入 `--max-duration` 参数：
+
+```
+$PYTHON_CMD "$SHARED_DIR/scripts/create_task_dir.py" --max-duration 2
+```
+
+- 单位：小时（浮点数，如 `0.5` 表示 30 分钟）
+- 范围：(0, 24]
+- 默认：6 小时（不传时使用默认值）
+- 作用：超过此时间后，安全分析 Agent 不再自动恢复空闲 session
+- 存储位置：`$TASK_DIR/.persistence.json` 的 `max_duration_hours` 字段
+
 ---
 
 ## Step 2：环境检测（强制 — 第二步）

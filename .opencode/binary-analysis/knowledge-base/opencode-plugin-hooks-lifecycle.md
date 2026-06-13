@@ -217,11 +217,18 @@ OpenCode 删除 session 时递归删除所有子 session，每个子 session 都
 ### 陷阱 5：`session.idle` 恢复机制
 
 - `session.idle` 事件在 session 空闲时触发，Plugin 利用此事件自动恢复安全分析 Agent 的主 session
-- 恢复逻辑：通过 `client.session.promptAsync()` 向空闲 session 发送恢复消息
-- 只对 PRIMARY_AGENTS 中的分析 Agent 触发恢复，排除子 session 和 security-analysis-evolve
-- 恢复前检查最大持续时间（默认 6 小时，可通过 `$TASK_DIR/.persistence.json` 文件的 `max_duration_hours` 字段指定）
-- 每次成功恢复后更新 `.persistence.json` 的 `resume_count` 和 `last_resume_at`
-- `event` hook 是 fire-and-forget，`promptAsync` 调用不阻塞宿主（选择 `promptAsync` 而非 `prompt` 的原因：`prompt` 流式返回会阻塞 event hook，`promptAsync` 立即返回适合 fire-and-forget）
+- 恢复条件（全部满足才触发恢复）:
+  1. session.idle 事件触发
+  2. `primaryAgent` 属于 PRIMARY_AGENTS（排除子 session）
+  3. `primaryAgent` 不是 security-analysis-evolve（进化 Agent 不做分析工作）
+  4. 该 session 有对应的 `$TASK_DIR`（无 taskDir = 简单问答，不需要恢复）
+  5. 未超过最大持续时间
+- 恢复方式：通过 `client.session.promptAsync()` 发送恢复消息
+- 选择 `promptAsync` 而非 `prompt` 的原因：event hook 是 fire-and-forget，`promptAsync` 立即返回不阻塞宿主；`prompt` 流式消费响应会阻塞 event hook
+- 持续性状态文件：`$TASK_DIR/.persistence.json`，格式 `{"max_duration_hours": 6, "resume_count": 3, "last_resume_at": "..."}`
+  - 由 `create_task_dir.py` 在任务初始化时创建（默认 6 小时，resume_count=0）
+  - 每次成功恢复后 resume_count +1，last_resume_at 更新为当前时间
+  - 用户或 Agent 可修改 `max_duration_hours` 自定义最大持续时间（0 < hours ≤ 24）
 
 ## 五、Plugin 数据架构模式
 
