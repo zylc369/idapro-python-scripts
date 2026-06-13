@@ -21,10 +21,11 @@
 
 **判断逻辑**:
 1. 事件类型为 `session.idle`
-2. 通过 `requireSessionWithPrimary("session.idle", sessionID)` 获取 session，确认 `primaryAgent` 属于 `PRIMARY_AGENTS`
-3. 非 PRIMARY_AGENT 的 session（包括子 session 和 security-analysis-evolve）直接跳过
-4. 当前时间 - session.createdAt < 最大持续时间（默认 6 小时或任务指定时间）
-5. `promptAsync` 调用参数: `{ sessionID, parts: [{ type: "text", text: RESUME_PROMPT }] }`
+2. 通过 `requireSessionWithPrimary` 判断是否为主 Agent 的主 session
+  3. 非 PRIMARY_AGENT 的 session（包括子 session 和 security-analysis-evolve）直接跳过
+  4. 当前时间 - session.createdAt < 最大持续时间（默认 6 小时或任务指定时间）
+  5. 该 session 有对应的 `$TASK_DIR`（无 taskDir = 简单问答，不需要恢复）
+  6. `promptAsync` 调用参数: `{ sessionID, parts: [{ type: "text", text: RESUME_PROMPT }] }`
 
 **子 session 判断**: 复用现有 `requireSessionWithPrimary` 逻辑。该函数在 Map miss 时通过 `client.session.get` API 查询 session info，并递归解析父链获取 `primaryAgent`。对于子 session（有 `parentID`），`agentName` 通常是 `"general"` 等非 PRIMARY_AGENT 名，会被 `PRIMARY_AGENTS.includes(agentName)` 过滤掉。
 
@@ -137,8 +138,10 @@ function recordResumeAttempt(sessionID: string): void {
   3. 超过最大持续时间时不发送
   4. 子 session（Task 工具创建的，agent 为 "general" 等）不触发恢复
   5. security-analysis-evolve agent 不触发恢复（进化 Agent 不做分析工作）
-  6. `promptAsync` 调用参数正确（`{ sessionID, parts: [{ type: "text", text: RESUME_PROMPT }] }`）
-  7. 日志正确输出（恢复前、恢复后、跳过时各有日志）
+  6. 无 taskDir 的 session 不触发恢复（简单问答，不是正式分析任务）
+  7. `promptAsync` 调用参数正确（`{ sessionID, parts: [{ type: "text", text: RESUME_PROMPT }] }`）
+  8. 日志正确输出（恢复前、恢复后、跳过时各有日志）
+  9. `recordResumeAttempt` 在成功恢复后更新 `.persistence.json`
 - **依赖**: 步骤 2、3
 
 关键逻辑：
@@ -160,7 +163,14 @@ if (event.type === "session.idle") {
     return;
   }
   
-  // 3. 计算已持续时间
+  // 3. 无 taskDir 的 session 不触发恢复（简单问答，不是正式分析任务）
+  const taskDir = getTaskDir(sessionID);
+  if (!taskDir) {
+    debugLog(`session.idle: 跳过 — 无 taskDir（非正式分析任务）, sessionID=${sessionID}`, sessionID);
+    return;
+  }
+  
+  // 4. 计算已持续时间
   const elapsed = Date.now() - session.createdAt;
   const maxDuration = getMaxDuration(sessionID);
   if (elapsed >= maxDuration) {
@@ -168,17 +178,13 @@ if (event.type === "session.idle") {
     return;
   }
   
-  // 4. 使用 promptAsync 发送恢复消息
-  debugLog(`session.idle: 恢复分析 sessionID=${sessionID} agent=${session.primaryAgent} elapsed=${Math.floor(elapsed/60000)}m max=${Math.floor(maxDuration/60000)}m`, sessionID);
-  try {
-    await opencodeClient.session.promptAsync({
-      sessionID,
-      parts: [{ type: "text", text: RESUME_PROMPT }],
-    });
-    debugLog(`session.idle: 恢复消息已发送 sessionID=${sessionID}`, sessionID);
-  } catch (e) {
-    debugLog(`session.idle: 恢复消息发送失败 sessionID=${sessionID} error=${e}`, sessionID);
-  }
+  // 5. 使用 promptAsync 发送恢复消息
+  debugLog(`session.idle: 恢复分析 sessionID=${sessionID} agent=${session.primaryAgent} elapsed=...`, sessionID);
+  await opencodeClient.session.promptAsync({
+    sessionID,
+    parts: [{ type: "text", text: RESUME_PROMPT }],
+  });
+  recordResumeAttempt(sessionID);
 }
 ```
 
@@ -207,8 +213,10 @@ if (event.type === "session.idle") {
 
 | 文件 | 改动类型 | 预估行数 |
 |------|---------|---------|
-| `.opencode/plugins/security-analysis.ts` | 修改 | ~120 行 |
-| `.opencode/binary-analysis/knowledge-base/opencode-plugin-hooks-lifecycle.md` | 修改 | ~20 行 |
+| `.opencode/plugins/security-analysis.ts` | 修改 | ~160 行 |
+| `.opencode/binary-analysis/scripts/create_task_dir.py` | 修改 | ~25 行（新增 `_init_persistence` 函数 + `--max-duration` 参数） |
+| `.opencode/binary-analysis/knowledge-base/opencode-plugin-hooks-lifecycle.md` | 修改 | ~15 行 |
+| `.opencode/binary-analysis/knowledge-base/task-initialization.md` | 修改 | ~15 行（新增 `--max-duration` 参数说明） |
 
 ### 3.3 编码规则
 
@@ -228,6 +236,7 @@ if (event.type === "session.idle") {
 - [ ] 恢复消息内容为："你之前的分析是否已经完成了？如果已经完成，请直接输出最终结论。如果尚未完成，请自主继续分析，不要停下来向用户提问。"
 - [ ] 子 session（Task 工具创建的子 Agent session，如 "general"）不触发恢复
 - [ ] security-analysis-evolve Agent 不触发恢复（进化 Agent 不做分析工作）
+- [ ] 无 taskDir 的 session 不触发恢复（简单问答，不是正式分析任务）
 - [ ] 超过最大持续时间（默认 6 小时）后不再恢复
 - [ ] 任务目录下存在 `.persistence.json` 文件时，使用 `max_duration_hours` 字段指定的持续时间
 - [ ] `.persistence.json` 文件格式为 JSON，包含 `max_duration_hours`、`resume_count`、`last_resume_at` 三个字段
@@ -242,9 +251,10 @@ if (event.type === "session.idle") {
 
 ### 4.3 架构验收
 
-- [ ] 新增代码在 `security-analysis.ts` 中，没有新增文件
+- [ ] 新增代码主要在 `security-analysis.ts` 中，`create_task_dir.py` 新增了 `--max-duration` 参数和 `_init_persistence` 函数
 - [ ] 恢复逻辑仅在 `event` hook 中，没有引入新 hook
 - [ ] 日志通过现有 `debugLog` 机制输出
+- [ ] 没有新增独立文件
 
 ## §5 与现有需求文档的关系
 
