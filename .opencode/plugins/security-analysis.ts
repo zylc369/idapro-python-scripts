@@ -47,11 +47,51 @@ for (const name of PRIMARY_AGENTS) {
   AGENT_SCRIPT_DIRS[name] = join(OPENCODE_ROOT, name);
 }
 
+// ─── 分析持续性恢复 ──────────────────────────────────────────────
+//
+// 当安全分析 Agent 的主 session 空闲时，自动发送恢复消息。
+// 避免 LLM 因上下文耗尽或自身判断而停止生成后，需要用户手动继续。
+//
+// 恢复条件:
+//   1. session.idle 事件触发
+//   2. 该 session 的 primaryAgent 属于 PRIMARY_AGENTS（排除子 session）
+//   3. primaryAgent 不是 security-analysis-evolve（进化 Agent 不做分析工作）
+//   4. 未超过最大持续时间（默认 6 小时，可通过 .max_duration 文件指定）
+
+const MAX_DURATION_DEFAULT = 6 * 60 * 60 * 1000; // 6 小时，单位毫秒
+const RESUME_PROMPT =
+  "问题解决了吗？如果没有解决，请自主继续解决，不要向用户提问。";
+
 function getLogFilePath(primaryAgent: string | undefined): string {
   if (primaryAgent && PRIMARY_AGENTS.includes(primaryAgent)) {
     return join(LOGS_DIR, `${primaryAgent}.log`);
   }
   return DEFAULT_LOG;
+}
+
+// ─── 分析持续性恢复：持续时间控制 ──────────────────────────────
+//
+// 从任务目录下的 .max_duration 文件读取最大持续时间（小时数）。
+// 文件不存在或内容无效时，返回默认值 6 小时。
+
+function getMaxDuration(sessionID: string): number {
+  const taskDir = getTaskDir(sessionID);
+  if (!taskDir) return MAX_DURATION_DEFAULT;
+  const filePath = join(taskDir, ".max_duration");
+  try {
+    const content = readFileSync(filePath, "utf-8").trim();
+    const hours = parseFloat(content);
+    if (!isNaN(hours) && hours > 0 && hours <= 24) {
+      return Math.floor(hours * 3600 * 1000);
+    }
+    debugLog(
+      `getMaxDuration: invalid .max_duration content="${content}", using default`,
+      sessionID,
+    );
+  } catch {
+    // 文件不存在，使用默认值
+  }
+  return MAX_DURATION_DEFAULT;
 }
 
 function trimLogFile(logFile: string): void {
@@ -540,6 +580,12 @@ let opencodeClient: {
       data?: { id: string; parentID?: string; [k: string]: unknown };
       error?: unknown;
     }>;
+    promptAsync: (options: {
+      sessionID: string;
+      directory?: string;
+      workspace?: string;
+      parts?: Array<{ type: string; text: string }>;
+    }) => Promise<unknown>;
   };
 } | null = null;
 
@@ -932,6 +978,12 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         } else {
           debugLog(`compacting: TASK_DIR not found for sessionID=${sid}`, sid);
         }
+
+        // 分析持续性恢复：压缩后如果分析尚未完成，AI 应继续自主分析
+        if (session.primaryAgent && PRIMARY_AGENTS.includes(session.primaryAgent) && session.primaryAgent !== AGENT_SECURITY_ANALYSIS_EVOLVE) {
+          output.context.push(`## 分析持续性（压缩后必须遵守）
+这是安全分析会话，分析可能尚未完成。压缩后请继续执行未完成的分析步骤，不要输出状态报告后停下来等待用户。如果分析已完成，直接输出最终结论即可。`);
+        }
       }
     },
 
@@ -1206,21 +1258,85 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
         debugLog(`event: session.compacted id=${sessionID}`, sessionID);
       }
 
-      // 时间线记录：session 状态变化和错误
+      // session idle: 尝试恢复安全分析 + flush 时间线
+      if (event.type === "session.idle" && sessionID) {
+        // 时间线记录
+        recordTimeline(sessionID, {
+          timestamp: Date.now(),
+          type: "session.status",
+          detail: "session.idle",
+        });
+        flushTimeline(sessionID);
+
+        // ─── 分析持续性恢复 ────────────────────────────────────
+        // 安全分析 Agent 的主 session 空闲时，自动发送恢复消息。
+        // 子 session（Task 工具创建，agent 为 "general" 等）不会触发恢复，
+        // 被 requireSessionWithPrimary 过滤掉。
+        // security-analysis-evolve Agent 不触发恢复（进化 Agent 不做分析工作）。
+        try {
+          const session = await requireSessionWithPrimary(
+            "session.idle",
+            sessionID,
+          );
+          if (!session) {
+            debugLog(
+              `session.idle: 跳过恢复 — 非 PRIMARY sessionID=${sessionID}`,
+              sessionID,
+            );
+          } else if (
+            session.primaryAgent === AGENT_SECURITY_ANALYSIS_EVOLVE
+          ) {
+            debugLog(
+              `session.idle: 跳过恢复 — evolve agent 不做分析工作, sessionID=${sessionID}`,
+              sessionID,
+            );
+          } else {
+            const elapsed = Date.now() - session.createdAt;
+            const maxDuration = getMaxDuration(sessionID);
+            if (elapsed >= maxDuration) {
+              debugLog(
+                `session.idle: 跳过恢复 — 已超时 sessionID=${sessionID} elapsed=${Math.floor(elapsed / 60000)}m max=${Math.floor(maxDuration / 60000)}m`,
+                sessionID,
+              );
+            } else if (opencodeClient) {
+              debugLog(
+                `session.idle: 恢复分析 sessionID=${sessionID} agent=${session.primaryAgent} elapsed=${Math.floor(elapsed / 60000)}m max=${Math.floor(maxDuration / 60000)}m`,
+                sessionID,
+              );
+              await opencodeClient.session.promptAsync({
+                sessionID,
+                parts: [{ type: "text", text: RESUME_PROMPT }],
+              });
+              debugLog(
+                `session.idle: 恢复消息已发送 sessionID=${sessionID}`,
+                sessionID,
+              );
+            } else {
+              debugLog(
+                `session.idle: 跳过恢复 — opencodeClient 未初始化`,
+                sessionID,
+              );
+            }
+          }
+        } catch (e) {
+          debugLog(
+            `session.idle: 恢复异常 sessionID=${sessionID} error=${e}`,
+            sessionID,
+          );
+        }
+      }
+
+      // session 状态变化和错误（非 idle）
       if (
         sessionID &&
         PRIMARY_AGENTS.includes(sessions.get(sessionID)?.primaryAgent || "")
       ) {
-        if (event.type === "session.status" || event.type === "session.idle") {
+        if (event.type === "session.status") {
           recordTimeline(sessionID, {
             timestamp: Date.now(),
             type: "session.status",
             detail: event.type,
           });
-          // session idle 时 flush 时间线 buffer
-          if (event.type === "session.idle") {
-            flushTimeline(sessionID);
-          }
         }
 
         if (event.type === "session.error" && props.error) {

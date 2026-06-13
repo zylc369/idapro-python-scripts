@@ -214,6 +214,14 @@ OpenCode 删除 session 时递归删除所有子 session，每个子 session 都
 - `experimental.session.compacting`（hook）：压缩**前**触发，可注入保留信息到 `output.context`
 - `session.compacted`（event）：压缩**后**触发，只读，可用于状态恢复
 
+### 陷阱 5：`session.idle` 恢复机制
+
+- `session.idle` 事件在 session 空闲时触发，Plugin 利用此事件自动恢复安全分析 Agent 的主 session
+- 恢复逻辑：通过 `client.session.promptAsync()` 向空闲 session 发送恢复消息
+- 只对 PRIMARY_AGENTS 中的分析 Agent 触发恢复，排除子 session 和 security-analysis-evolve
+- 恢复前检查最大持续时间（默认 6 小时，可通过 `$TASK_DIR/.max_duration` 文件指定）
+- `event` hook 是 fire-and-forget，`promptAsync` 调用不阻塞宿主
+
 ## 五、Plugin 数据架构模式
 
 ### 推荐：多 Map 模式
