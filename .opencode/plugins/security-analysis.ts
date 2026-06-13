@@ -56,42 +56,99 @@ for (const name of PRIMARY_AGENTS) {
 //   1. session.idle 事件触发
 //   2. 该 session 的 primaryAgent 属于 PRIMARY_AGENTS（排除子 session）
 //   3. primaryAgent 不是 security-analysis-evolve（进化 Agent 不做分析工作）
-//   4. 未超过最大持续时间（默认 6 小时，可通过 .max_duration 文件指定）
+//   4. 未超过最大持续时间（默认 6 小时，可通过 .persistence.json 文件指定）
+//
+// 持续性状态文件 ($TASK_DIR/.persistence.json):
+//   {
+//     "max_duration_hours": 6,      // 最大持续时间（小时），默认 6
+//     "resume_count": 3,            // 已发送恢复消息的次数
+//     "last_resume_at": "2026-06-13T10:30:00.000Z"  // 最近一次恢复时间
+//   }
 
 const MAX_DURATION_DEFAULT = 6 * 60 * 60 * 1000; // 6 小时，单位毫秒
+const PERSISTENCE_FILE = ".persistence.json";
 const RESUME_PROMPT =
-  "问题解决了吗？如果没有解决，请自主继续解决，不要向用户提问。";
+  "你之前的分析是否已经完成了？如果已经完成，请直接输出最终结论。如果尚未完成，请自主继续分析，不要停下来向用户提问。";
+
+// ─── 分析持续性恢复：状态文件读写 ──────────────────────────────
+
+interface PersistenceData {
+  max_duration_hours: number;
+  resume_count: number;
+  last_resume_at: string | null;
+}
+
+function readPersistenceData(sessionID: string): PersistenceData | null {
+  const taskDir = getTaskDir(sessionID);
+  if (!taskDir) return null;
+  const filePath = join(taskDir, PERSISTENCE_FILE);
+  try {
+    const content = readFileSync(filePath, "utf-8").trim();
+    const data = JSON.parse(content) as PersistenceData;
+    if (
+      typeof data.max_duration_hours === "number" &&
+      data.max_duration_hours > 0 &&
+      data.max_duration_hours <= 24
+    ) {
+      return {
+        max_duration_hours: data.max_duration_hours,
+        resume_count: typeof data.resume_count === "number" ? data.resume_count : 0,
+        last_resume_at: data.last_resume_at ?? null,
+      };
+    }
+    debugLog(
+      `readPersistenceData: invalid max_duration_hours in ${filePath}, using default`,
+      sessionID,
+    );
+  } catch {
+    // 文件不存在或 JSON 解析失败，使用默认值
+  }
+  return null;
+}
+
+function getMaxDuration(sessionID: string): number {
+  const data = readPersistenceData(sessionID);
+  if (data) {
+    return Math.floor(data.max_duration_hours * 3600 * 1000);
+  }
+  return MAX_DURATION_DEFAULT;
+}
+
+function recordResumeAttempt(sessionID: string): void {
+  const taskDir = getTaskDir(sessionID);
+  if (!taskDir) {
+    debugLog(
+      `recordResumeAttempt: no taskDir for sessionID=${sessionID}`,
+      sessionID,
+    );
+    return;
+  }
+  const filePath = join(taskDir, PERSISTENCE_FILE);
+  const existing = readPersistenceData(sessionID);
+  const data: PersistenceData = {
+    max_duration_hours: existing?.max_duration_hours ?? MAX_DURATION_DEFAULT / (3600 * 1000),
+    resume_count: (existing?.resume_count ?? 0) + 1,
+    last_resume_at: new Date().toISOString(),
+  };
+  try {
+    writeFileSync(filePath, JSON.stringify(data, null, 2));
+    debugLog(
+      `recordResumeAttempt: written resume_count=${data.resume_count} to ${filePath}`,
+      sessionID,
+    );
+  } catch (e) {
+    debugLog(
+      `recordResumeAttempt: failed to write ${filePath} error=${e}`,
+      sessionID,
+    );
+  }
+}
 
 function getLogFilePath(primaryAgent: string | undefined): string {
   if (primaryAgent && PRIMARY_AGENTS.includes(primaryAgent)) {
     return join(LOGS_DIR, `${primaryAgent}.log`);
   }
   return DEFAULT_LOG;
-}
-
-// ─── 分析持续性恢复：持续时间控制 ──────────────────────────────
-//
-// 从任务目录下的 .max_duration 文件读取最大持续时间（小时数）。
-// 文件不存在或内容无效时，返回默认值 6 小时。
-
-function getMaxDuration(sessionID: string): number {
-  const taskDir = getTaskDir(sessionID);
-  if (!taskDir) return MAX_DURATION_DEFAULT;
-  const filePath = join(taskDir, ".max_duration");
-  try {
-    const content = readFileSync(filePath, "utf-8").trim();
-    const hours = parseFloat(content);
-    if (!isNaN(hours) && hours > 0 && hours <= 24) {
-      return Math.floor(hours * 3600 * 1000);
-    }
-    debugLog(
-      `getMaxDuration: invalid .max_duration content="${content}", using default`,
-      sessionID,
-    );
-  } catch {
-    // 文件不存在，使用默认值
-  }
-  return MAX_DURATION_DEFAULT;
 }
 
 function trimLogFile(logFile: string): void {
@@ -1300,13 +1357,14 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
               );
             } else if (opencodeClient) {
               debugLog(
-                `session.idle: 恢复分析 sessionID=${sessionID} agent=${session.primaryAgent} elapsed=${Math.floor(elapsed / 60000)}m max=${Math.floor(maxDuration / 60000)}m`,
+                `session.idle: 恢复分析 sessionID=${sessionID} agent=${session.primaryAgent} elapsed=${Math.floor(elapsed / 60000)}m max=${Math.floor(maxDuration / 60000)}m resume_count=${readPersistenceData(sessionID)?.resume_count ?? 0}`,
                 sessionID,
               );
               await opencodeClient.session.promptAsync({
                 sessionID,
                 parts: [{ type: "text", text: RESUME_PROMPT }],
               });
+              recordResumeAttempt(sessionID);
               debugLog(
                 `session.idle: 恢复消息已发送 sessionID=${sessionID}`,
                 sessionID,

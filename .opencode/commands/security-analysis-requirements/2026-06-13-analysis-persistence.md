@@ -17,7 +17,7 @@
 
 **原理**: OpenCode 在 session 空闲时发出 `session.idle` 事件。Plugin 的 `event` hook 可以捕获此事件，判断该 session 是否属于安全分析 Agent 的主 session，如果是且未超过最大持续时间，则通过 `client.session.promptAsync()` API 自动向该 session 发送一条恢复提示消息。
 
-**恢复提示内容**: `问题解决了吗？如果没有解决，请自主继续解决，不要向用户提问。`
+**恢复提示内容**: `你之前的分析是否已经完成了？如果已经完成，请直接输出最终结论。如果尚未完成，请自主继续分析，不要停下来向用户提问。`
 
 **判断逻辑**:
 1. 事件类型为 `session.idle`
@@ -34,8 +34,17 @@
 
 - 默认最大持续时间：6 小时（21600000 毫秒）
 - 用户可以在任务启动时通过提示词指定最大持续时间（如"分析 2 小时"）
-- 指定时间写入 `$TASK_DIR/.max_duration` 文件
+- 指定时间写入 `$TASK_DIR/.persistence.json` 文件
 - 恢复前读取该文件，优先使用任务指定时间
+- 文件格式为 JSON：
+  ```json
+  {
+    "max_duration_hours": 6,
+    "resume_count": 3,
+    "last_resume_at": "2026-06-13T10:30:00.000Z"
+  }
+  ```
+- 每次成功发送恢复消息后，`resume_count` +1，`last_resume_at` 更新为当前时间
 
 ### 2.3 子 Agent 不恢复
 
@@ -70,29 +79,51 @@
 
 ```
 const MAX_DURATION_DEFAULT = 6 * 60 * 60 * 1000; // 6 小时，单位毫秒
-const RESUME_PROMPT = "问题解决了吗？如果没有解决，请自主继续解决，不要向用户提问。";
+const PERSISTENCE_FILE = ".persistence.json";
+const RESUME_PROMPT = "你之前的分析是否已经完成了？如果已经完成，请直接输出最终结论。如果尚未完成，请自主继续分析，不要停下来向用户提问。";
 ```
 
-#### 步骤 3: 添加持续时间读取函数
+#### 步骤 3: 添加持续性状态文件读写函数
 
 - **文件**: `.opencode/plugins/security-analysis.ts`
-- **预估行数**: ~25 行
-- **验证点**: 函数从 `$TASK_DIR/.max_duration` 文件读取持续时间，文件不存在时返回默认值
+- **预估行数**: ~60 行
+- **验证点**: 
+  1. `readPersistenceData` 从 `$TASK_DIR/.persistence.json` 读取 JSON，文件不存在或无效时返回 null
+  2. `getMaxDuration` 使用 `readPersistenceData` 获取 `max_duration_hours`，回退到默认 6 小时
+  3. `recordResumeAttempt` 在成功恢复后更新 `.persistence.json` 的 `resume_count` 和 `last_resume_at`
+  4. 文件格式包含 `max_duration_hours`、`resume_count`、`last_resume_at` 三个字段
 - **依赖**: 步骤 2
 
 ```typescript
-function getMaxDuration(sessionID: string): number {
+interface PersistenceData {
+  max_duration_hours: number;
+  resume_count: number;
+  last_resume_at: string | null;
+}
+
+function readPersistenceData(sessionID: string): PersistenceData | null {
   const taskDir = getTaskDir(sessionID);
-  if (!taskDir) return MAX_DURATION_DEFAULT;
-  const filePath = join(taskDir, ".max_duration");
+  if (!taskDir) return null;
+  const filePath = join(taskDir, ".persistence.json");
   try {
     const content = readFileSync(filePath, "utf-8").trim();
-    const hours = parseFloat(content);
-    if (!isNaN(hours) && hours > 0) {
-      return Math.floor(hours * 3600 * 1000);
+    const data = JSON.parse(content) as PersistenceData;
+    // 校验 max_duration_hours
+    if (typeof data.max_duration_hours === "number" && data.max_duration_hours > 0 && data.max_duration_hours <= 24) {
+      return { ... };
     }
-  } catch {}
+  } catch { /* 文件不存在或 JSON 解析失败 */ }
+  return null;
+}
+
+function getMaxDuration(sessionID: string): number {
+  const data = readPersistenceData(sessionID);
+  if (data) return Math.floor(data.max_duration_hours * 3600 * 1000);
   return MAX_DURATION_DEFAULT;
+}
+
+function recordResumeAttempt(sessionID: string): void {
+  // 读取现有数据 → 递增 resume_count → 更新 last_resume_at → 写回文件
 }
 ```
 
@@ -194,12 +225,13 @@ if (event.type === "session.idle") {
 ### 4.1 功能验收
 
 - [ ] 安全分析 Agent 的主 session 空闲后，Plugin 自动发送恢复消息
-- [ ] 恢复消息内容为："问题解决了吗？如果没有解决，请自主继续解决，不要向用户提问。"
+- [ ] 恢复消息内容为："你之前的分析是否已经完成了？如果已经完成，请直接输出最终结论。如果尚未完成，请自主继续分析，不要停下来向用户提问。"
 - [ ] 子 session（Task 工具创建的子 Agent session，如 "general"）不触发恢复
 - [ ] security-analysis-evolve Agent 不触发恢复（进化 Agent 不做分析工作）
 - [ ] 超过最大持续时间（默认 6 小时）后不再恢复
-- [ ] 任务目录下存在 `.max_duration` 文件时，使用该文件指定的持续时间
-- [ ] `.max_duration` 文件内容为小时数（如 `2` 表示 2 小时）
+- [ ] 任务目录下存在 `.persistence.json` 文件时，使用 `max_duration_hours` 字段指定的持续时间
+- [ ] `.persistence.json` 文件格式为 JSON，包含 `max_duration_hours`、`resume_count`、`last_resume_at` 三个字段
+- [ ] 每次成功发送恢复消息后，`.persistence.json` 的 `resume_count` +1，`last_resume_at` 更新为当前时间
 - [ ] `promptAsync` 调用使用 `{ sessionID, parts: [{ type: "text", text: RESUME_PROMPT }] }` 格式
 
 ### 4.2 回归验收

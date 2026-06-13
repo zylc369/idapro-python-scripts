@@ -219,8 +219,9 @@ OpenCode 删除 session 时递归删除所有子 session，每个子 session 都
 - `session.idle` 事件在 session 空闲时触发，Plugin 利用此事件自动恢复安全分析 Agent 的主 session
 - 恢复逻辑：通过 `client.session.promptAsync()` 向空闲 session 发送恢复消息
 - 只对 PRIMARY_AGENTS 中的分析 Agent 触发恢复，排除子 session 和 security-analysis-evolve
-- 恢复前检查最大持续时间（默认 6 小时，可通过 `$TASK_DIR/.max_duration` 文件指定）
-- `event` hook 是 fire-and-forget，`promptAsync` 调用不阻塞宿主
+- 恢复前检查最大持续时间（默认 6 小时，可通过 `$TASK_DIR/.persistence.json` 文件的 `max_duration_hours` 字段指定）
+- 每次成功恢复后更新 `.persistence.json` 的 `resume_count` 和 `last_resume_at`
+- `event` hook 是 fire-and-forget，`promptAsync` 调用不阻塞宿主（选择 `promptAsync` 而非 `prompt` 的原因：`prompt` 流式返回会阻塞 event hook，`promptAsync` 立即返回适合 fire-and-forget）
 
 ## 五、Plugin 数据架构模式
 
