@@ -50,4 +50,9 @@
 ### 纯审计轮（只记录问题，不修复）
 发现问题 0 个。
 
+### 审计后修复：opencodeClient 类型声明和 promptAsync 调用格式
+发现并修复 2 个问题:
+1. `opencodeClient` 手写窄类型声明 → 替换为 `OpencodeClient`（SDK 完整类型），消除维护负担
+2. `promptAsync` 调用格式错误：v1 SDK 格式是 `{path: {id}, body: {parts}}`，而非 v2 的 `{sessionID, parts}` → 已修正
+
 **结论: 审计通过**

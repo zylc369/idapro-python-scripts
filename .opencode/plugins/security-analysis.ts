@@ -11,6 +11,7 @@ import { homedir } from "os";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import type { Plugin } from "@opencode-ai/plugin";
+import type { OpencodeClient } from "@opencode-ai/sdk";
 
 const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
 const OPENCODE_ROOT = dirname(PLUGIN_DIR);
@@ -627,24 +628,7 @@ const sessions = new Map<string, SessionData>();
 const nonPrimarySessions = new Set<string>();
 
 // OpenCode client，在 Plugin 函数中初始化
-// 类型声明只列出实际使用的方法；运行时 client 是完整 SDK，包含所有 session API
-let opencodeClient: {
-  session: {
-    get: (options: {
-      path: { id: string };
-      query?: { directory?: string };
-    }) => Promise<{
-      data?: { id: string; parentID?: string; [k: string]: unknown };
-      error?: unknown;
-    }>;
-    promptAsync: (options: {
-      sessionID: string;
-      directory?: string;
-      workspace?: string;
-      parts?: Array<{ type: string; text: string }>;
-    }) => Promise<unknown>;
-  };
-} | null = null;
+let opencodeClient: OpencodeClient | null = null;
 
 // 并发去重：同一 sessionID 的并发 ensureSession 调用共享同一个 Promise
 const pendingEnsures = new Map<string, Promise<SessionData | undefined>>();
@@ -1370,8 +1354,10 @@ export const SecurityAnalysisPlugin: Plugin = async (input) => {
                   sessionID,
                 );
                 await opencodeClient.session.promptAsync({
-                  sessionID,
-                  parts: [{ type: "text", text: RESUME_PROMPT }],
+                  path: { id: sessionID },
+                  body: {
+                    parts: [{ type: "text" as const, text: RESUME_PROMPT }],
+                  },
                 });
                 recordResumeAttempt(sessionID);
                 debugLog(

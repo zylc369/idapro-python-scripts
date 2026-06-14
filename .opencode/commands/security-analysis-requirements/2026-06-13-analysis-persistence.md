@@ -25,7 +25,7 @@
   3. 非 PRIMARY_AGENT 的 session（包括子 session 和 security-analysis-evolve）直接跳过
   4. 当前时间 - session.createdAt < 最大持续时间（默认 6 小时或任务指定时间）
   5. 该 session 有对应的 `$TASK_DIR`（无 taskDir = 简单问答，不需要恢复）
-  6. `promptAsync` 调用参数: `{ sessionID, parts: [{ type: "text", text: RESUME_PROMPT }] }`
+  6. `promptAsync` 调用参数（v1 SDK 格式）: `{ path: { id: sessionID }, body: { parts: [{ type: "text", text: RESUME_PROMPT }] } }`
 
 **子 session 判断**: 复用现有 `requireSessionWithPrimary` 逻辑。该函数在 Map miss 时通过 `client.session.get` API 查询 session info，并递归解析父链获取 `primaryAgent`。对于子 session（有 `parentID`），`agentName` 通常是 `"general"` 等非 PRIMARY_AGENT 名，会被 `PRIMARY_AGENTS.includes(agentName)` 过滤掉。
 
@@ -139,7 +139,7 @@ function recordResumeAttempt(sessionID: string): void {
   4. 子 session（Task 工具创建的，agent 为 "general" 等）不触发恢复
   5. security-analysis-evolve agent 不触发恢复（进化 Agent 不做分析工作）
   6. 无 taskDir 的 session 不触发恢复（简单问答，不是正式分析任务）
-  7. `promptAsync` 调用参数正确（`{ sessionID, parts: [{ type: "text", text: RESUME_PROMPT }] }`）
+  8. `promptAsync` 调用参数正确（v1 SDK 格式: `{ path: { id: sessionID }, body: { parts: [{ type: "text", text: RESUME_PROMPT }] } }`）
   8. 日志正确输出（恢复前、恢复后、跳过时各有日志）
   9. `recordResumeAttempt` 在成功恢复后更新 `.persistence.json`
 - **依赖**: 步骤 2、3
@@ -178,11 +178,11 @@ if (event.type === "session.idle") {
     return;
   }
   
-  // 5. 使用 promptAsync 发送恢复消息
+  // 5. 使用 promptAsync 发送恢复消息（v1 SDK 格式）
   debugLog(`session.idle: 恢复分析 sessionID=${sessionID} agent=${session.primaryAgent} elapsed=...`, sessionID);
   await opencodeClient.session.promptAsync({
-    sessionID,
-    parts: [{ type: "text", text: RESUME_PROMPT }],
+    path: { id: sessionID },
+    body: { parts: [{ type: "text" as const, text: RESUME_PROMPT }] },
   });
   recordResumeAttempt(sessionID);
 }
@@ -225,7 +225,7 @@ if (event.type === "session.idle") {
 3. 持续时间计算使用 `Date.now() - session.createdAt`
 4. 所有恢复动作前后必须写日志（`debugLog`）
 5. 子 session 判断：复用 `requireSessionWithPrimary` 函数。子 session 的 `agentName` 通常为 "general" 等非 PRIMARY_AGENT 名，会被 `PRIMARY_AGENTS.includes()` 过滤。无需额外检查 `parentID`。
-6. `promptAsync` 调用必须包含 `sessionID` 和 `parts` 参数。`parts` 为 `[{ type: "text", text: RESUME_PROMPT }]`——这是 v2 SDK 的 `TextPartInput` 格式
+6. `promptAsync` 调用必须使用 v1 SDK 格式: `{ path: { id: sessionID }, body: { parts: [{ type: "text" as const, text: RESUME_PROMPT }] } }`。注意 v1 和 v2 SDK 的参数格式不同，v1 用 `path` + `body`，v2 用扁平 `sessionID` + `parts`
 7. `security-analysis-evolve` Agent 虽然在 `PRIMARY_AGENTS` 列表中，但它是进化 Agent 不做分析工作，应排除恢复
 
 ## §4 验收标准
@@ -241,7 +241,7 @@ if (event.type === "session.idle") {
 - [ ] 任务目录下存在 `.persistence.json` 文件时，使用 `max_duration_hours` 字段指定的持续时间
 - [ ] `.persistence.json` 文件格式为 JSON，包含 `max_duration_hours`、`resume_count`、`last_resume_at` 三个字段
 - [ ] 每次成功发送恢复消息后，`.persistence.json` 的 `resume_count` +1，`last_resume_at` 更新为当前时间
-- [ ] `promptAsync` 调用使用 `{ sessionID, parts: [{ type: "text", text: RESUME_PROMPT }] }` 格式
+- [ ] `promptAsync` 调用使用 v1 SDK 格式：`{ path: { id: sessionID }, body: { parts: [{ type: "text", text: RESUME_PROMPT }] } }`
 
 ### 4.2 回归验收
 
